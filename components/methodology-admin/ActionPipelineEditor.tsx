@@ -7,6 +7,10 @@ import { ActionCatalog, getActionIcon, type ActionDefinitionItem } from './Actio
 import { ActionInputPanel } from './ActionInputPanel';
 import { getCategoryStyle } from '@/lib/action-registry';
 import type { InputFieldDef, OutputFieldDef } from '@/lib/action-registry';
+import {
+  TEST_PIPELINE_STAGES, TEST_PIPELINE_STAGE_THEME, STAGE_CATEGORIES,
+  readStepStage, withStepStage, type TestPipelineStage,
+} from '@/lib/test-pipeline-stages';
 
 interface PipelineStep {
   id: string;
@@ -41,6 +45,11 @@ export function ActionPipelineEditor({ testId, testDescription, initialSteps, on
   );
   const [catalogOpen, setCatalogOpen] = useState(false);
   const [insertAfterIndex, setInsertAfterIndex] = useState(-1); // -1 = append at end
+  // Stage the next-added step belongs to. Set when the user clicks
+  // "Add action to <stage>" so the new step lands in the right
+  // bucket; defaults to obtain_population when the user uses the
+  // generic Add Action button at the bottom.
+  const [pendingStage, setPendingStage] = useState<TestPipelineStage>('obtain_population');
   const [saving, setSaving] = useState(false);
   const [actions, setActions] = useState<ActionDefinitionItem[]>([]);
   const [loadingActions, setLoadingActions] = useState(true);
@@ -88,24 +97,51 @@ export function ActionPipelineEditor({ testId, testDescription, initialSteps, on
   }, [testId]);
 
   const handleAddAction = useCallback((action: ActionDefinitionItem) => {
+    // Stamp the step with its stage so the renderer groups it under
+    // the right header. Stored on inputBindings.__stage to avoid a
+    // schema migration — see lib/test-pipeline-stages.ts for the
+    // wider rationale.
     const newStep: PipelineStep = {
       id: uid(),
       actionDefinitionId: action.id,
       actionDefinition: action,
       stepOrder: 0,
-      inputBindings: buildDefaultBindings(action.inputSchema),
+      inputBindings: withStepStage(buildDefaultBindings(action.inputSchema), pendingStage),
       isExpanded: true,
     };
 
     setSteps(prev => {
-      const idx = insertAfterIndex >= 0 ? insertAfterIndex + 1 : prev.length;
+      // When inserting at a specific index (the +-button between two
+      // existing steps) the user has chosen a precise position.
+      // When the user clicked "Add action to <stage>" we drop the
+      // new step at the end of that stage's group so the stages stay
+      // contiguous in the saved order.
+      let idx: number;
+      if (insertAfterIndex >= 0) {
+        idx = insertAfterIndex + 1;
+      } else {
+        // Find the last step currently in pendingStage, insert
+        // immediately after it. If the stage is empty, insert before
+        // the first step of the next stage; if there's no later
+        // stage, append at the end.
+        const stageOrder = TEST_PIPELINE_STAGES.findIndex(s => s.key === pendingStage);
+        let lastInStage = -1;
+        let firstAfterStage = prev.length;
+        prev.forEach((s, i) => {
+          const sStage = readStepStage(s.inputBindings);
+          const sStageOrder = TEST_PIPELINE_STAGES.findIndex(x => x.key === sStage);
+          if (sStageOrder === stageOrder) lastInStage = i;
+          else if (sStageOrder > stageOrder && i < firstAfterStage) firstAfterStage = i;
+        });
+        idx = lastInStage >= 0 ? lastInStage + 1 : firstAfterStage;
+      }
       const updated = [...prev];
       updated.splice(idx, 0, newStep);
       return updated.map((s, i) => ({ ...s, stepOrder: i }));
     });
     setCatalogOpen(false);
     setInsertAfterIndex(-1);
-  }, [insertAfterIndex]);
+  }, [insertAfterIndex, pendingStage]);
 
   const handleRemoveStep = useCallback((stepId: string) => {
     setSteps(prev => prev.filter(s => s.id !== stepId).map((s, i) => ({ ...s, stepOrder: i })));
@@ -153,6 +189,85 @@ export function ActionPipelineEditor({ testId, testDescription, initialSteps, on
     return steps[stepIndex - 1]?.actionDefinition?.outputSchema || [];
   };
 
+  // Per-step card render — pulled into a helper so the per-stage
+  // grouping below can call it without re-deriving any of the
+  // step-local data each time the loop fires.
+  function renderStep(step: PipelineStep, idx: number) {
+    const Icon = getActionIcon(step.actionDefinition.icon);
+    const userInputs = step.actionDefinition.inputSchema.filter(f => f.source === 'user');
+    const autoInputs = step.actionDefinition.inputSchema.filter(f => f.source === 'auto');
+    const prevOutputs = getPreviousOutputs(idx);
+    return (
+      <div key={step.id} className="mb-2">
+        <div className="border border-slate-200 rounded-lg overflow-hidden shadow-sm hover:shadow-md transition-shadow">
+          <div className="flex items-center gap-3 px-3 py-2 bg-white cursor-pointer" onClick={() => toggleExpand(step.id)}>
+            <div className="flex items-center gap-1 text-slate-300 cursor-grab"><GripVertical className="h-4 w-4" /></div>
+            <div className="w-6 h-6 rounded-full bg-slate-100 flex items-center justify-center text-[10px] font-bold text-slate-500 shrink-0">{idx + 1}</div>
+            <div className="w-7 h-7 rounded-lg flex items-center justify-center shrink-0 bg-slate-100" style={{ color: step.actionDefinition.color || '#64748b' }}>
+              {Icon && <Icon className="h-3.5 w-3.5 text-current" />}
+            </div>
+            <div className="flex-1 min-w-0">
+              <div className="flex items-center gap-2">
+                <span className="text-sm font-medium text-slate-800">{step.actionDefinition.name}</span>
+                <span className={`text-[9px] px-1.5 py-0.5 rounded-full font-medium ${getCategoryStyle(step.actionDefinition.category)}`}>{step.actionDefinition.category}</span>
+              </div>
+            </div>
+            <div className="flex items-center gap-1">
+              <button
+                onClick={e => { e.stopPropagation(); handleMoveStep(step.id, 'up'); }}
+                className="p-1 hover:bg-slate-100 rounded text-slate-300 hover:text-slate-600"
+                title="Move up"
+              ><ArrowDown className="h-3.5 w-3.5 rotate-180" /></button>
+              <button
+                onClick={e => { e.stopPropagation(); handleMoveStep(step.id, 'down'); }}
+                className="p-1 hover:bg-slate-100 rounded text-slate-300 hover:text-slate-600"
+                title="Move down"
+              ><ArrowDown className="h-3.5 w-3.5" /></button>
+              {step.isExpanded ? <ChevronDown className="h-4 w-4 text-slate-400" /> : <ChevronRight className="h-4 w-4 text-slate-400" />}
+              <button onClick={e => { e.stopPropagation(); handleRemoveStep(step.id); }} className="p-1 hover:bg-red-50 rounded text-slate-300 hover:text-red-500 transition-colors"><Trash2 className="h-3.5 w-3.5" /></button>
+            </div>
+          </div>
+          {step.isExpanded && (
+            <div className="border-t px-4 py-3 bg-slate-50/50 space-y-4">
+              {userInputs.length > 0 && (
+                <div>
+                  <h5 className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider mb-2">Configuration</h5>
+                  <div className="space-y-3">
+                    {userInputs.map(field => (
+                      <ActionInputPanel key={field.code} field={field} value={step.inputBindings[field.code]} onChange={(code, val) => handleInputChange(step.id, code, val)} previousOutputs={prevOutputs} stepIndex={idx} />
+                    ))}
+                  </div>
+                </div>
+              )}
+              {autoInputs.length > 0 && (
+                <div>
+                  <h5 className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider mb-2">Auto-Mapped Inputs</h5>
+                  <div className="space-y-2">
+                    {autoInputs.map(field => (
+                      <ActionInputPanel key={field.code} field={field} value={step.inputBindings[field.code] ?? field.autoMapFrom} onChange={(code, val) => handleInputChange(step.id, code, val)} previousOutputs={prevOutputs} stepIndex={idx} />
+                    ))}
+                  </div>
+                </div>
+              )}
+              <div>
+                <h5 className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider mb-2">Outputs</h5>
+                <div className="flex flex-wrap gap-1.5">
+                  {step.actionDefinition.outputSchema.map(out => (
+                    <span key={out.code} className="inline-flex items-center gap-1 text-[10px] px-2 py-1 rounded-full bg-green-50 text-green-700 border border-green-100">
+                      <span className="w-1 h-1 rounded-full bg-green-400" />
+                      {out.label}
+                      <span className="text-green-400">({out.type})</span>
+                    </span>
+                  ))}
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="fixed inset-0 z-[70] flex flex-col bg-white">
       {/* Header */}
@@ -181,152 +296,82 @@ export function ActionPipelineEditor({ testId, testDescription, initialSteps, on
             </div>
           ) : (
             <>
-              {steps.length === 0 && (
-                <div className="text-center py-12">
-                  <p className="text-slate-400 text-sm mb-4">No actions in this pipeline yet.</p>
-                  <Button onClick={() => { setInsertAfterIndex(-1); setCatalogOpen(true); }} size="sm" variant="outline" className="text-xs">
-                    <Plus className="h-3.5 w-3.5 mr-1" />Add First Action
-                  </Button>
-                </div>
-              )}
-
-              {steps.map((step, idx) => {
-                const Icon = getActionIcon(step.actionDefinition.icon);
-                const userInputs = step.actionDefinition.inputSchema.filter(f => f.source === 'user');
-                const autoInputs = step.actionDefinition.inputSchema.filter(f => f.source === 'auto');
-                const prevOutputs = getPreviousOutputs(idx);
-
-                return (
-                  <div key={step.id}>
-                    {/* Step Card */}
-                    <div className="border border-slate-200 rounded-xl overflow-hidden shadow-sm hover:shadow-md transition-shadow">
-                      {/* Step Header */}
-                      <div
-                        className="flex items-center gap-3 px-4 py-3 bg-white cursor-pointer"
-                        onClick={() => toggleExpand(step.id)}
-                      >
-                        <div className="flex items-center gap-1 text-slate-300 cursor-grab">
-                          <GripVertical className="h-4 w-4" />
-                        </div>
-                        <div className="w-6 h-6 rounded-full bg-slate-100 flex items-center justify-center text-[10px] font-bold text-slate-500 shrink-0">
-                          {idx + 1}
-                        </div>
-                        <div className="w-7 h-7 rounded-lg flex items-center justify-center shrink-0 bg-slate-100" style={{ color: step.actionDefinition.color || '#64748b' }}>
-                          {Icon && <Icon className="h-3.5 w-3.5 text-current" />}
-                        </div>
-                        <div className="flex-1 min-w-0">
-                          <div className="flex items-center gap-2">
-                            <span className="text-sm font-medium text-slate-800">{step.actionDefinition.name}</span>
-                            <span className={`text-[9px] px-1.5 py-0.5 rounded-full font-medium ${getCategoryStyle(step.actionDefinition.category)}`}>
-                              {step.actionDefinition.category}
-                            </span>
-                          </div>
-                        </div>
-                        <div className="flex items-center gap-1">
-                          {step.isExpanded ? <ChevronDown className="h-4 w-4 text-slate-400" /> : <ChevronRight className="h-4 w-4 text-slate-400" />}
-                          <button
-                            onClick={e => { e.stopPropagation(); handleRemoveStep(step.id); }}
-                            className="p-1 hover:bg-red-50 rounded text-slate-300 hover:text-red-500 transition-colors"
-                          >
-                            <Trash2 className="h-3.5 w-3.5" />
-                          </button>
-                        </div>
-                      </div>
-
-                      {/* Step Body (expanded) */}
-                      {step.isExpanded && (
-                        <div className="border-t px-4 py-3 bg-slate-50/50 space-y-4">
-                          {/* User Inputs */}
-                          {userInputs.length > 0 && (
-                            <div>
-                              <h5 className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider mb-2">Configuration</h5>
-                              <div className="space-y-3">
-                                {userInputs.map(field => (
-                                  <ActionInputPanel
-                                    key={field.code}
-                                    field={field}
-                                    value={step.inputBindings[field.code]}
-                                    onChange={(code, val) => handleInputChange(step.id, code, val)}
-                                    previousOutputs={prevOutputs}
-                                    stepIndex={idx}
-                                  />
-                                ))}
-                              </div>
-                            </div>
-                          )}
-
-                          {/* Auto-mapped Inputs */}
-                          {autoInputs.length > 0 && (
-                            <div>
-                              <h5 className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider mb-2">Auto-Mapped Inputs</h5>
-                              <div className="space-y-2">
-                                {autoInputs.map(field => (
-                                  <ActionInputPanel
-                                    key={field.code}
-                                    field={field}
-                                    value={step.inputBindings[field.code] ?? field.autoMapFrom}
-                                    onChange={(code, val) => handleInputChange(step.id, code, val)}
-                                    previousOutputs={prevOutputs}
-                                    stepIndex={idx}
-                                  />
-                                ))}
-                              </div>
-                            </div>
-                          )}
-
-                          {/* Outputs Preview */}
+              {/* Group steps by stage for rendering — every audit
+                  test moves through the same five stages, and the
+                  admin chooses which actions plug into each one. */}
+              {(() => {
+                const stagesWithSteps = TEST_PIPELINE_STAGES.map(stageDef => ({
+                  stageDef,
+                  entries: steps
+                    .map((step, idx) => ({ step, idx }))
+                    .filter(({ step }) => readStepStage(step.inputBindings) === stageDef.key),
+                }));
+                return stagesWithSteps.map(({ stageDef, entries }) => {
+                  const theme = TEST_PIPELINE_STAGE_THEME[stageDef.key];
+                  return (
+                    <div key={stageDef.key} className="mb-6">
+                      {/* Stage header */}
+                      <div className={`flex items-center justify-between px-3 py-2 rounded-t-lg ${theme.headerBg} border ${theme.border}`}>
+                        <div className="flex items-center gap-2">
+                          <span className={`inline-flex items-center justify-center w-5 h-5 rounded-full text-[10px] font-bold ${theme.pillBg} ${theme.pillText}`}>{stageDef.order}</span>
                           <div>
-                            <h5 className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider mb-2">Outputs</h5>
-                            <div className="flex flex-wrap gap-1.5">
-                              {step.actionDefinition.outputSchema.map(out => (
-                                <span key={out.code} className="inline-flex items-center gap-1 text-[10px] px-2 py-1 rounded-full bg-green-50 text-green-700 border border-green-100">
-                                  <span className="w-1 h-1 rounded-full bg-green-400" />
-                                  {out.label}
-                                  <span className="text-green-400">({out.type})</span>
-                                </span>
-                              ))}
-                            </div>
+                            <div className={`text-xs font-bold ${theme.headerText}`}>{stageDef.label}</div>
+                            <div className={`text-[10px] ${theme.headerText} opacity-70`}>{stageDef.description}</div>
                           </div>
                         </div>
-                      )}
+                        <Button
+                          onClick={() => { setPendingStage(stageDef.key); setInsertAfterIndex(-1); setCatalogOpen(true); }}
+                          size="sm" variant="outline" className="text-[10px] h-7"
+                        >
+                          <Plus className="h-3 w-3 mr-1" /> Add action
+                        </Button>
+                      </div>
+                      <div className={`border-l border-r border-b ${theme.border} rounded-b-lg p-3 bg-white`}>
+                        {entries.length === 0 ? (
+                          <p className="text-[10px] text-slate-400 italic text-center py-2">
+                            No actions configured for this stage.
+                          </p>
+                        ) : (
+                          entries.map(({ step, idx }) => renderStep(step, idx))
+                        )}
+                      </div>
                     </div>
+                  );
+                });
+              })()}
 
-                    {/* Connector + Insert Button */}
-                    <div className="flex flex-col items-center py-2">
-                      <div className="w-px h-4 bg-slate-200" />
-                      <button
-                        onClick={() => { setInsertAfterIndex(idx); setCatalogOpen(true); }}
-                        className="w-6 h-6 rounded-full border-2 border-dashed border-slate-200 flex items-center justify-center text-slate-300 hover:border-blue-300 hover:text-blue-400 hover:bg-blue-50 transition-colors"
-                      >
-                        <Plus className="h-3 w-3" />
-                      </button>
-                      {idx < steps.length - 1 && <div className="w-px h-4 bg-slate-200" />}
-                    </div>
-                  </div>
-                );
-              })}
-
-              {/* Add at End */}
-              {steps.length > 0 && (
-                <div className="text-center">
-                  <Button onClick={() => { setInsertAfterIndex(-1); setCatalogOpen(true); }} size="sm" variant="outline" className="text-xs">
-                    <Plus className="h-3.5 w-3.5 mr-1" />Add Action
-                  </Button>
+              {/* Empty-state panel — shown only when there isn't a
+                  single step in any stage, so the user knows where
+                  to start. */}
+              {steps.length === 0 && (
+                <div className="text-center py-2 text-[11px] text-slate-400">
+                  Add actions to each stage above to build the pipeline.
                 </div>
               )}
+
             </>
           )}
         </div>
       </div>
 
-      {/* Action Catalog Modal */}
-      {catalogOpen && (
-        <ActionCatalog
-          actions={actions}
-          onSelect={handleAddAction}
-          onClose={() => { setCatalogOpen(false); setInsertAfterIndex(-1); }}
-        />
-      )}
+      {/* Action Catalog Modal — filtered to actions whose category
+          matches the stage being added to. STAGE_CATEGORIES is
+          permissive (most stages allow 'general'), so unusual or
+          ambiguous actions still surface where they could plausibly
+          be useful. */}
+      {catalogOpen && (() => {
+        const allowed = new Set(STAGE_CATEGORIES[pendingStage] || []);
+        const filteredActions = allowed.size > 0
+          ? actions.filter(a => allowed.has((a.category || 'general').toLowerCase()))
+          : actions;
+        return (
+          <ActionCatalog
+            actions={filteredActions.length > 0 ? filteredActions : actions}
+            onSelect={handleAddAction}
+            onClose={() => { setCatalogOpen(false); setInsertAfterIndex(-1); }}
+          />
+        );
+      })()}
     </div>
   );
 }

@@ -8,6 +8,7 @@ import { InlineSamplingPanel } from './InlineSamplingPanel';
 import { AuditVerificationPanel } from './AuditVerificationPanel';
 import { ErrorInvestigationPanel } from './ErrorInvestigationPanel';
 import { PropertyVerificationSection } from './PropertyVerificationSection';
+import { PopulationSourcePicker } from './PopulationSourcePicker';
 import { PlanCustomiserModal } from './PlanCustomiserModal';
 
 // ─── Types ───
@@ -584,6 +585,50 @@ export function TestExecutionPanel({ testId, testDescription, testType, engageme
                   <p className="text-xs text-red-600 mt-0.5">{executionError}</p>
                 </div>
               </div>
+            </div>
+          )}
+
+          {/* Action-specific: Obtain Population (stage 1 of the
+              5-stage audit-test pipeline). Renders a per-line
+              radio picker letting the user choose Client vs GL,
+              with an agreement check against the expected balance.
+              See lib/test-pipeline-stages.ts for the wider pipeline
+              model. The actual GL fetch / portal request handlers
+              get wired into the execution backend separately —
+              this surface gives the UI shape the rest of the test
+              pipeline can plug into. */}
+          {currentAction?.code === 'obtain_population' && executionId && (
+            <div className="p-4">
+              <PopulationSourcePicker
+                lines={[{
+                  id: tbRow?.accountCode || fsLine || 'line',
+                  label: tbRow ? `${tbRow.accountCode} · ${tbRow.description}` : (fsLine || 'Line item'),
+                  expectedAmount: Number(tbRow?.currentYear) || 0,
+                }]}
+                initialChoices={(currentStepState as any)?.populationChoices}
+                initialObtained={(currentStepState as any)?.populationObtained}
+                onObtain={async (line, source) => {
+                  // Fire a continue with the source choice — the
+                  // server-side obtain_population handler picks it
+                  // up and either pulls the GL or opens a portal
+                  // request. The poll loop refreshes the
+                  // pipelineState so the obtained block re-renders
+                  // with the result.
+                  await fetch(`/api/engagements/${engagementId}/test-execution/${executionId}`, {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ action: 'resume', responseData: { lineId: line.id, source } }),
+                  }).catch(() => {});
+                }}
+                onContinue={() => {
+                  // Advance to Sampling — server handles stage
+                  // transition, this just signals "user is happy
+                  // with the obtained populations".
+                  fetch(`/api/engagements/${engagementId}/test-execution/${executionId}`, {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ action: 'continue' }),
+                  }).catch(() => {});
+                }}
+              />
             </div>
           )}
 
