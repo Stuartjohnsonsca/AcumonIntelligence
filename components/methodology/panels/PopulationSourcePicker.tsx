@@ -58,9 +58,14 @@ export interface PopulationPickerState {
 
 interface Props {
   lines: PopulationLine[];
-  /** % tolerance for the agree-to-expected check. Defaults to 0.5%
-   *  (half a percent), in line with how most firms cope with normal
-   *  rounding differences. */
+  /** Absolute tolerance for the agree-to-expected check, in the
+   *  engagement currency. Defaults to 0.01 — i.e. rounding to the
+   *  nearest penny. Anything beyond this lights amber/red. */
+  toleranceAmount?: number;
+  /** Optional % tolerance — when set, the effective tolerance is
+   *  the GREATER of toleranceAmount and (expectedAmount * pct/100).
+   *  Useful for big balances where a one-penny gate would amber on
+   *  every fetch. Off by default. */
   tolerancePct?: number;
   initialChoices?: Record<string, PopulationSource>;
   initialObtained?: Record<string, ObtainedPopulation>;
@@ -75,30 +80,35 @@ function fmt(n: number): string {
 }
 
 export function PopulationSourcePicker({
-  lines, tolerancePct = 0.5, initialChoices, initialObtained, busyLineIds, onObtain, onContinue,
+  lines, toleranceAmount = 0.01, tolerancePct, initialChoices, initialObtained, busyLineIds, onObtain, onContinue,
 }: Props) {
   const [choices, setChoices] = useState<Record<string, PopulationSource>>(initialChoices || {});
   const [obtained, setObtained] = useState<Record<string, ObtainedPopulation>>(initialObtained || {});
 
+  // Effective per-line tolerance — the bigger of the absolute amount
+  // (default 1p — rounding only) and the % tolerance applied to the
+  // expected balance, when one is configured. The amber band sits
+  // at 10× the effective tolerance; anything beyond 10× is red.
+  function effectiveTolerance(expected: number): number {
+    const fromPct = tolerancePct ? Math.abs(expected) * (tolerancePct / 100) : 0;
+    return Math.max(toleranceAmount, fromPct);
+  }
+
   // Per-line agreement status. The picker can't move on until every
-  // line is either green (within tolerance) or has been overridden;
-  // amber means obtained, but the totals are out by more than the
-  // tolerance allows.
+  // line has been obtained; agreement bands then drive amber/red
+  // surfacing rather than blocking.
   const lineStatus = useMemo(() => {
     const status: Record<string, 'pending' | 'green' | 'amber' | 'red'> = {};
     for (const line of lines) {
       const obt = obtained[line.id];
       if (!obt) { status[line.id] = 'pending'; continue; }
-      const expected = Math.abs(line.expectedAmount);
-      if (expected === 0) {
-        status[line.id] = obt.obtainedAmount === 0 ? 'green' : 'amber';
-        continue;
-      }
-      const diffPct = Math.abs(obt.obtainedAmount - line.expectedAmount) / expected * 100;
-      status[line.id] = diffPct <= tolerancePct ? 'green' : diffPct <= tolerancePct * 10 ? 'amber' : 'red';
+      const tol = effectiveTolerance(line.expectedAmount);
+      const diff = Math.abs(obt.obtainedAmount - line.expectedAmount);
+      status[line.id] = diff <= tol ? 'green' : diff <= tol * 10 ? 'amber' : 'red';
     }
     return status;
-  }, [lines, obtained, tolerancePct]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [lines, obtained, toleranceAmount, tolerancePct]);
 
   const allObtained = lines.length > 0 && lines.every(l => obtained[l.id]);
   const anyMaterialMismatch = lines.some(l => lineStatus[l.id] === 'red');
@@ -120,7 +130,10 @@ export function PopulationSourcePicker({
     <div className="space-y-2">
       <div className="flex items-center justify-between text-[11px] text-slate-500">
         <span className="uppercase tracking-wide font-semibold">Obtain Population</span>
-        <span>Tolerance ±{tolerancePct}% on the agree-to-expected check.</span>
+        <span>
+          Tolerance ±{fmt(toleranceAmount)}
+          {tolerancePct ? <> or {tolerancePct}% (whichever is greater)</> : <> (rounding only)</>}
+        </span>
       </div>
 
       <div className="border border-slate-200 rounded-lg overflow-hidden bg-white">
