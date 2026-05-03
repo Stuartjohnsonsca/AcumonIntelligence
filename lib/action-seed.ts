@@ -1281,6 +1281,131 @@ export const SYSTEM_ACTIONS: ActionDefinitionData[] = [
     ],
   },
 
+  // ─── Interest Expense Recalculation Actions ────────────────────────────────
+
+  {
+    code: 'extract_loan_agreements',
+    name: 'Extract Loan Agreements',
+    description: 'Parses signed loan agreements / facility letters returned by the client and produces a normalised tranche-level data_table. Each loan can have multiple tranches with different terms. For every tranche the AI extracts: (a) drawdown date if it falls in the period — otherwise the prior-period closing balance carried forward as the opening balance; (b) scheduled and actual payments (capital + interest) made in the period; (c) interest rate and rate type (fixed / floating + benchmark + margin); (d) maturity / repayment date; (e) arrangement, commitment and other fees with their treatment (upfront, amortised, on-demand). Currency, day-count convention, lender, security and covenants are captured for context. Documents that cannot be parsed are reported in extraction_issues without blocking.',
+    category: 'evidence',
+    handlerName: 'extractLoanAgreements',
+    icon: 'Banknote',
+    color: '#ea580c',
+    isSystem: true,
+    inputSchema: [
+      { code: 'source_documents', label: 'Loan Agreements', type: 'file', required: true, source: 'auto', autoMapFrom: '$prev.documents', group: 'Input', description: 'Signed loan agreements, facility letters, amendments and side-letters returned by the client. Mixed formats (PDF / DOCX / scanned images / zip) are auto-detected.' },
+      { code: 'period_start', label: 'Period Start', type: 'date', required: false, source: 'auto', autoMapFrom: '$ctx.engagement.periodStart', group: 'Period' },
+      { code: 'period_end', label: 'Period End', type: 'date', required: false, source: 'auto', autoMapFrom: '$ctx.engagement.periodEnd', group: 'Period' },
+      { code: 'prior_period_balances', label: 'Prior-Period Closing Balances', type: 'json_table', required: false, source: 'user', group: 'Roll-Forward', description: 'Optional table of { loan_ref, tranche_ref, closing_balance, unamortised_fee_balance } as at the start of the period. Used as the opening balance whenever a tranche’s drawdown date is before period start.' },
+      { code: 'currency', label: 'Default Currency', type: 'select', required: false, source: 'user', group: 'Conventions', defaultValue: 'GBP', options: [
+        { value: 'GBP', label: 'GBP' }, { value: 'USD', label: 'USD' }, { value: 'EUR', label: 'EUR' },
+      ]},
+      { code: 'day_count_convention', label: 'Day-Count Convention', type: 'select', required: false, source: 'user', group: 'Conventions', defaultValue: 'actual_365', description: 'Used downstream by the interest schedule when the agreement is silent on day-count.', options: [
+        { value: 'actual_365', label: 'Actual / 365' },
+        { value: 'actual_360', label: 'Actual / 360' },
+        { value: 'actual_actual', label: 'Actual / Actual' },
+        { value: '30_360', label: '30 / 360' },
+      ]},
+    ],
+    outputSchema: [
+      { code: 'data_table', label: 'Loan Tranches', type: 'data_table', description: 'One row per tranche: loan_ref, tranche_ref, lender, currency, principal, drawdown_date, opening_balance, opening_balance_source ("agreement" | "prior_period"), payments_in_period (json: capital + interest splits), interest_rate, rate_type, benchmark, margin, maturity_date, fee_amount, fee_type, fee_treatment, day_count_convention, security, covenants_summary.' },
+      { code: 'tranches', label: 'Tranches (alias)', type: 'data_table' },
+      { code: 'loan_count', label: 'Loan Count', type: 'number' },
+      { code: 'tranche_count', label: 'Tranche Count', type: 'number' },
+      { code: 'extraction_issues', label: 'Extraction Issues', type: 'data_table', description: 'Documents that could not be parsed or where required terms (rate / maturity / principal) were missing.' },
+      { code: 'pass_fail', label: 'Extraction OK', type: 'pass_fail' },
+    ],
+  },
+
+  {
+    code: 'compute_loan_interest_schedule',
+    name: 'Compute Loan Interest Schedule',
+    description: 'Independent recalculation of the period’s interest charge for every loan tranche. For each tranche, builds a day-by-day schedule of opening balance, capital movements (drawdowns / repayments), closing balance, days outstanding, applicable interest rate, and resulting interest charge. Floating-rate tranches are split into segments whenever the benchmark resets in the period. Per-tranche interest is summed to a per-loan total and then to a single grand total ready for comparison against the booked interest expense.',
+    category: 'verification',
+    handlerName: 'computeLoanInterestSchedule',
+    icon: 'Calculator',
+    color: '#ea580c',
+    isSystem: true,
+    inputSchema: [
+      { code: 'loan_data', label: 'Loan Tranches', type: 'json_table', required: true, source: 'auto', autoMapFrom: '$prev.data_table', group: 'Data', description: 'Output of Extract Loan Agreements (or any table with the same shape).' },
+      { code: 'period_start', label: 'Period Start', type: 'date', required: false, source: 'auto', autoMapFrom: '$ctx.engagement.periodStart', group: 'Period' },
+      { code: 'period_end', label: 'Period End', type: 'date', required: false, source: 'auto', autoMapFrom: '$ctx.engagement.periodEnd', group: 'Period' },
+      { code: 'day_count_convention', label: 'Default Day-Count Convention', type: 'select', required: false, source: 'user', group: 'Conventions', defaultValue: 'actual_365', description: 'Used when the tranche row does not specify its own day-count.', options: [
+        { value: 'actual_365', label: 'Actual / 365' },
+        { value: 'actual_360', label: 'Actual / 360' },
+        { value: 'actual_actual', label: 'Actual / Actual' },
+        { value: '30_360', label: '30 / 360' },
+      ]},
+      { code: 'compounding', label: 'Compounding', type: 'select', required: false, source: 'user', group: 'Conventions', defaultValue: 'simple', options: [
+        { value: 'simple', label: 'Simple' },
+        { value: 'daily', label: 'Daily compounding' },
+        { value: 'monthly', label: 'Monthly compounding' },
+      ]},
+    ],
+    outputSchema: [
+      { code: 'data_table', label: 'Interest Schedule', type: 'data_table', description: 'Row per tranche-segment: loan_ref, tranche_ref, segment_start, segment_end, opening_balance, capital_movements, closing_balance, days, interest_rate, interest_charge.' },
+      { code: 'schedule', label: 'Interest Schedule (alias)', type: 'data_table' },
+      { code: 'per_loan_totals', label: 'Per-Loan Totals', type: 'data_table', description: 'One row per loan_ref: total_interest_charge for the period.' },
+      { code: 'total_interest', label: 'Total Interest Charge', type: 'number', description: 'Sum of interest across every tranche in the period — the figure compared to the TB interest account.' },
+      { code: 'tranche_count', label: 'Tranche Count', type: 'number' },
+    ],
+  },
+
+  {
+    code: 'compute_loan_fees_schedule',
+    name: 'Compute Loan Fees Schedule',
+    description: 'Recalculates the period’s loan-fee charge using the effective-interest-rate method. For each tranche, takes the unamortised fee balance brought forward from the prior period plus any new fees drawn in the period, applies the loan’s interest rate to the carrying balance, and amortises the resulting charge into the P&L. Outputs a per-tranche fee schedule with brought-forward balance, additions, period charge and carried-forward balance, plus a single grand total ready for comparison against the booked fee expense.',
+    category: 'verification',
+    handlerName: 'computeLoanFeesSchedule',
+    icon: 'Calculator',
+    color: '#ea580c',
+    isSystem: true,
+    inputSchema: [
+      { code: 'loan_data', label: 'Loan Tranches', type: 'json_table', required: true, source: 'auto', autoMapFrom: '$prev.data_table', group: 'Data', description: 'Output of Extract Loan Agreements — needed for fee_amount, interest_rate, drawdown_date and maturity_date.' },
+      { code: 'prior_fee_balances', label: 'Prior-Period Unamortised Fee Balances', type: 'json_table', required: false, source: 'user', group: 'Roll-Forward', description: 'Optional table of { loan_ref, tranche_ref, unamortised_fee_balance } at start of period. Falls back to the same column on loan_data when blank.' },
+      { code: 'amortisation_method', label: 'Amortisation Method', type: 'select', required: false, source: 'user', group: 'Method', defaultValue: 'effective_interest', options: [
+        { value: 'effective_interest', label: 'Effective interest rate (loan rate × fee balance)' },
+        { value: 'straight_line', label: 'Straight-line over loan life' },
+      ]},
+      { code: 'period_start', label: 'Period Start', type: 'date', required: false, source: 'auto', autoMapFrom: '$ctx.engagement.periodStart', group: 'Period' },
+      { code: 'period_end', label: 'Period End', type: 'date', required: false, source: 'auto', autoMapFrom: '$ctx.engagement.periodEnd', group: 'Period' },
+    ],
+    outputSchema: [
+      { code: 'data_table', label: 'Fees Schedule', type: 'data_table', description: 'Row per tranche: loan_ref, tranche_ref, opening_unamortised, additions_in_period, fee_charge, closing_unamortised, method, rate_applied.' },
+      { code: 'schedule', label: 'Fees Schedule (alias)', type: 'data_table' },
+      { code: 'total_fees_charge', label: 'Total Fees Charge', type: 'number', description: 'Sum of period fee charge across every tranche — compared to the TB fees account.' },
+      { code: 'closing_unamortised_total', label: 'Closing Unamortised Fee Balance', type: 'number' },
+    ],
+  },
+
+  {
+    code: 'compare_interest_expense_to_tb',
+    name: 'Compare Interest & Fees to Trial Balance',
+    description: 'Reconciles the independently recalculated interest charge and loan-fees charge to the trial balance. Two parallel comparisons (interest line and fees line), each emitting its own marker (green within tolerance, red otherwise). Differences are formatted for the Findings & Conclusions section so the auditor can post them straight to the error schedule.',
+    category: 'verification',
+    handlerName: 'compareInterestExpenseToTb',
+    icon: 'Scale',
+    color: '#ea580c',
+    isSystem: true,
+    inputSchema: [
+      { code: 'calculated_interest', label: 'Calculated Interest', type: 'number', required: true, source: 'auto', autoMapFrom: '$step.2.total_interest', group: 'Calculated' },
+      { code: 'calculated_fees', label: 'Calculated Fees', type: 'number', required: true, source: 'auto', autoMapFrom: '$prev.total_fees_charge', group: 'Calculated' },
+      { code: 'interest_account_codes', label: 'Interest Expense Account Codes', type: 'text', required: true, source: 'user', group: 'TB Mapping', description: 'Comma-separated TB codes whose period movement represents interest charged in the P&L.' },
+      { code: 'fees_account_codes', label: 'Loan Fees Account Codes', type: 'text', required: true, source: 'user', group: 'TB Mapping', description: 'Comma-separated TB codes whose period movement represents loan / facility fees charged in the P&L.' },
+      { code: 'tolerance_gbp', label: 'Tolerance (GBP)', type: 'number', required: false, source: 'user', group: 'Thresholds', defaultValue: 1, description: 'Absolute variance allowed on each line before its marker flips red.' },
+      { code: 'period_start', label: 'Period Start', type: 'date', required: false, source: 'auto', autoMapFrom: '$ctx.engagement.periodStart', group: 'Context' },
+      { code: 'period_end', label: 'Period End', type: 'date', required: false, source: 'auto', autoMapFrom: '$ctx.engagement.periodEnd', group: 'Context' },
+    ],
+    outputSchema: [
+      { code: 'reconciliation', label: 'Reconciliation', type: 'data_table', description: 'Two rows (interest, fees): line, calculated, tb_total, tb_accounts, variance, marker ("green" | "red"), tooltip.' },
+      { code: 'data_table', label: 'Reconciliation (alias)', type: 'data_table' },
+      { code: 'variance_interest', label: 'Interest Variance', type: 'number' },
+      { code: 'variance_fees', label: 'Fees Variance', type: 'number' },
+      { code: 'findings', label: 'Findings (Differences)', type: 'data_table', description: 'Red lines formatted for the Evidence & Conclusions section — ready to book to the Error Schedule.' },
+      { code: 'pass_fail', label: 'Overall Result', type: 'pass_fail' },
+    ],
+  },
+
   {
     code: 'payroll_totals_to_tb',
     name: 'Payroll Totals → Trial Balance',
