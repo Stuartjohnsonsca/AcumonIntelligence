@@ -104,6 +104,52 @@ async function handleRequestDocuments(ctx: ActionHandlerContext): Promise<Action
     select: { name: true, email: true },
   });
 
+  // Pre-flight dedup: before bothering the client, look at what we
+  // already have. Documents on the engagement library, prior portal
+  // responses, and outputs from earlier pipeline steps each get a
+  // shot at satisfying the request. Anything found surfaces on
+  // `already_have`; the count we still need lands in
+  // outstanding_count and originally_requested_count keeps the full
+  // ask for reporting.
+  const { findExistingClientResponses, readDedupOptions, dedupHitsToTable } = await import('@/lib/client-request-dedup');
+  const transactions = Array.isArray(inputs.transactions) ? inputs.transactions : [];
+  const matchTokens: string[] = [];
+  for (const t of transactions) {
+    if (!t || typeof t !== 'object') continue;
+    const ref = (t as any).ref || (t as any).reference || (t as any).id;
+    const counterparty = (t as any).counterparty || (t as any).vendor || (t as any).customer;
+    if (ref) matchTokens.push(String(ref));
+    if (counterparty) matchTokens.push(String(counterparty));
+  }
+  const dedupOptions = readDedupOptions(inputs, {
+    engagementId,
+    documentType: inputs.document_type || null,
+    areaOfWork: inputs.area_of_work || ctx.config.fsLine || null,
+    match: matchTokens.length > 0 ? matchTokens : undefined,
+  });
+  const dedupResult = await findExistingClientResponses(dedupOptions, ctx);
+  const alreadyHave = dedupHitsToTable(dedupResult);
+  const originallyRequestedCount = transactions.length || 1;
+  const stillNeededCount = Math.max(0, originallyRequestedCount - alreadyHave.length);
+
+  // If everything is already on file, skip the portal request
+  // entirely — the action completes with the dedup hits as its
+  // documents output so the next step keeps moving.
+  if (dedupResult.enabled && stillNeededCount === 0 && alreadyHave.length > 0) {
+    return {
+      action: 'continue',
+      outputs: {
+        documents: alreadyHave,
+        portal_request_id: null,
+        chat_response: null,
+        outstanding_count: 0,
+        already_have: alreadyHave,
+        originally_requested_count: originallyRequestedCount,
+        dedup_summary: dedupResult.summary,
+      },
+    };
+  }
+
   // Portal Principal routing — derive (fsLineId, tbAccountCode) from
   // the test's configured area so the new request auto-assigns to the
   // right staff member per the work-allocation grid. Silent fallback:
@@ -116,6 +162,14 @@ async function handleRequestDocuments(ctx: ActionHandlerContext): Promise<Action
     routingTbAccountCode: null,
   });
 
+  // Compose the portal message — when dedup found partial matches,
+  // include a brief note so the client knows which items we already
+  // have and only need the remainder.
+  let messageToClient = inputs.message_to_client || 'Please provide the requested documents.';
+  if (dedupResult.enabled && alreadyHave.length > 0) {
+    messageToClient += `\n\nNote: ${alreadyHave.length} item(s) are already on file with us, so we only need the remaining ${stillNeededCount}. We've removed the duplicates from this request.`;
+  }
+
   // Create a portal request for the client
   try {
     const portalRequest = await prisma.portalRequest.create({
@@ -123,7 +177,7 @@ async function handleRequestDocuments(ctx: ActionHandlerContext): Promise<Action
         clientId: engagement.clientId,
         engagementId,
         section: 'evidence',
-        question: inputs.message_to_client || 'Please provide the requested documents.',
+        question: messageToClient,
         status: 'outstanding',
         requestedById: ctx.config.userId,
         requestedByName: requestingUser?.name || requestingUser?.email || 'Audit Team',
@@ -139,7 +193,7 @@ async function handleRequestDocuments(ctx: ActionHandlerContext): Promise<Action
         executionId: ctx.executionId,
         type: 'portal_request',
         title: `Document request: ${inputs.document_type || 'documents'}`,
-        description: inputs.message_to_client,
+        description: messageToClient,
         source: 'flow',
         assignedTo: 'client',
         status: 'awaiting_client',
@@ -151,7 +205,13 @@ async function handleRequestDocuments(ctx: ActionHandlerContext): Promise<Action
 
     return {
       action: 'pause',
-      outputs: { portal_request_id: portalRequest.id },
+      outputs: {
+        portal_request_id: portalRequest.id,
+        outstanding_count: stillNeededCount,
+        already_have: alreadyHave,
+        originally_requested_count: originallyRequestedCount,
+        dedup_summary: dedupResult.summary,
+      },
       pauseReason: 'portal_response',
       pauseRefId: portalRequest.id,
     };

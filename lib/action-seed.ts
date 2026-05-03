@@ -1,8 +1,16 @@
 import type { ActionDefinitionData } from './action-registry';
+import { DEDUP_INPUT_FIELDS, DEDUP_OUTPUT_FIELDS } from './client-request-dedup';
 
 /**
  * System Action definitions seeded for all firms.
  * Each wraps one or more existing flow-engine handlers.
+ *
+ * Every action whose primary purpose is to ask the client for
+ * information spreads `DEDUP_INPUT_FIELDS` into its inputSchema and
+ * `DEDUP_OUTPUT_FIELDS` into its outputSchema. The runtime helper
+ * (lib/client-request-dedup.ts) reads those inputs, looks for
+ * already-on-file evidence, and emits the matches on `already_have`
+ * — handlers then shrink or skip the portal request accordingly.
  */
 export const SYSTEM_ACTIONS: ActionDefinitionData[] = [
   // ─── Evidence Actions ──────────────────────────────────────────────────────
@@ -56,6 +64,7 @@ export const SYSTEM_ACTIONS: ActionDefinitionData[] = [
       { code: 'transactions', label: 'Requested Transactions', type: 'json_table', required: false, source: 'auto', autoMapFrom: '$prev.data_table', group: 'Data', description: 'Table with Date, Ref Number, CounterParty, Gross Amount, Net Amount, Account Code columns.' },
       { code: 'request_id', label: 'Request ID', type: 'text', required: false, source: 'auto', autoMapFrom: '$prev.request_id' },
       { code: 'document_ids', label: 'Document IDs', type: 'json_table', required: false, source: 'auto', autoMapFrom: '$prev.document_ids' },
+      ...DEDUP_INPUT_FIELDS,
     ],
     outputSchema: [
       { code: 'documents', label: 'Accepted Documents', type: 'file_array', description: 'Array of documents that passed validation, each associated with a document ID.' },
@@ -65,6 +74,7 @@ export const SYSTEM_ACTIONS: ActionDefinitionData[] = [
       { code: 'portal_request_id', label: 'Portal Request ID', type: 'text' },
       { code: 'chat_response', label: 'Client Response', type: 'text' },
       { code: 'outstanding_count', label: 'Outstanding Documents', type: 'number' },
+      ...DEDUP_OUTPUT_FIELDS,
     ],
   },
 
@@ -315,6 +325,7 @@ export const SYSTEM_ACTIONS: ActionDefinitionData[] = [
         { value: 'register_summary', label: 'Parse from Register Extract (no extra cost)' },
         { value: 'dedicated_search', label: 'Call dedicated Restrictions Search API (extra fee)' },
       ]},
+      ...DEDUP_INPUT_FIELDS,
     ],
     outputSchema: [
       { code: 'properties', label: 'Tested Properties', type: 'data_table', description: 'Per-property rows: address, title number, registered proprietor, AI summary, document count, flags.' },
@@ -322,6 +333,7 @@ export const SYSTEM_ACTIONS: ActionDefinitionData[] = [
       { code: 'total_cost_gbp', label: 'Total Land Registry Spend (GBP)', type: 'number' },
       { code: 'exception_count', label: 'Exceptions', type: 'number' },
       { code: 'pass_fail', label: 'Overall Result', type: 'pass_fail' },
+      ...DEDUP_OUTPUT_FIELDS,
     ],
   },
 
@@ -341,6 +353,7 @@ export const SYSTEM_ACTIONS: ActionDefinitionData[] = [
       { code: 'period_end', label: 'Period End', type: 'date', required: false, source: 'auto', autoMapFrom: '$ctx.engagement.periodEnd', group: 'Context' },
       { code: 'tolerance_gbp', label: 'Reconciliation Tolerance (GBP)', type: 'number', required: false, source: 'user', group: 'Reconciliation', defaultValue: 1, description: 'Listing total vs TB accrual-account sum is treated as reconciled if the absolute variance is within this amount. Larger variances pause the step and raise an outstanding item for the client.' },
       { code: 'accrual_account_codes', label: 'Accrual Account Codes (optional)', type: 'text', required: false, source: 'user', group: 'Reconciliation', description: 'Comma-separated TB account codes to sum for the reconciliation. If left blank, all TB rows marked is_accrual_account for the engagement are summed.' },
+      ...DEDUP_INPUT_FIELDS,
     ],
     outputSchema: [
       { code: 'data_table', label: 'Accruals Population', type: 'data_table', description: 'Parsed accruals listing rows (supplier, description, period, amount, nominal, refs) ready for sampling.' },
@@ -349,6 +362,7 @@ export const SYSTEM_ACTIONS: ActionDefinitionData[] = [
       { code: 'variance', label: 'Variance', type: 'number' },
       { code: 'tb_reconciled', label: 'Reconciled', type: 'pass_fail' },
       { code: 'portal_request_id', label: 'Portal Request ID', type: 'text' },
+      ...DEDUP_OUTPUT_FIELDS,
     ],
   },
 
@@ -517,12 +531,14 @@ export const SYSTEM_ACTIONS: ActionDefinitionData[] = [
       { code: 'tolerance_pct', label: 'Tolerance (% point)', type: 'number', required: false, source: 'auto', autoMapFrom: '$ctx.execution.config.tolerance_pct', group: 'Thresholds', description: 'Investigate any GM% movement greater than this number of percentage points.' },
       { code: 'tolerance_pm_multiple', label: 'Tolerance (× PM)', type: 'number', required: false, source: 'auto', autoMapFrom: '$ctx.execution.config.tolerance_pm_multiple', group: 'Thresholds', description: 'Investigate variance whose £ impact exceeds this multiple of performance materiality.' },
       { code: 'period_end', label: 'Period End', type: 'date', required: false, source: 'auto', autoMapFrom: '$ctx.engagement.periodEnd', group: 'Context' },
+      ...DEDUP_INPUT_FIELDS,
     ],
     outputSchema: [
       { code: 'data_table', label: 'P&L Summary', type: 'data_table', description: 'Row per period: period_label, revenue, cost_of_sales, gross_profit, gm_pct, source (client | tb | benchmark).' },
       { code: 'management_commentary', label: 'Management Commentary', type: 'text', description: 'Any explanation text the client supplied alongside the figures.' },
       { code: 'tb_reconciled', label: 'CY Revenue / COS agrees to TB', type: 'pass_fail' },
       { code: 'portal_request_id', label: 'Portal Request ID', type: 'text' },
+      ...DEDUP_OUTPUT_FIELDS,
     ],
   },
 
@@ -570,10 +586,12 @@ export const SYSTEM_ACTIONS: ActionDefinitionData[] = [
     inputSchema: [
       { code: 'variances', label: 'Flagged Variances', type: 'json_table', required: true, source: 'auto', autoMapFrom: '$prev.variances', group: 'Context' },
       { code: 'message_to_client', label: 'Message to Client', type: 'textarea', required: false, source: 'user', group: 'Request Details', defaultValue: 'Our gross-margin analytical review has flagged the following variances for investigation. For each, please provide a business explanation (pricing, mix, volume, input cost changes, FX, one-off items) and any supporting evidence (management reports, pricing analyses, cost breakdowns).' },
+      ...DEDUP_INPUT_FIELDS,
     ],
     outputSchema: [
       { code: 'portal_request_id', label: 'Portal Request ID', type: 'text' },
       { code: 'explanations', label: 'Received Explanations', type: 'data_table', description: 'Row per flagged variance: variance_ref, explanation_text, attachments.' },
+      ...DEDUP_OUTPUT_FIELDS,
     ],
   },
 
@@ -738,6 +756,7 @@ export const SYSTEM_ACTIONS: ActionDefinitionData[] = [
       { code: 'account_codes', label: 'TB Account Codes (optional)', type: 'text', required: false, source: 'user', group: 'Reconciliation', description: 'Comma-separated codes. If provided, action reconciles listing total to the sum of these codes at period end.' },
       { code: 'tolerance_gbp', label: 'Reconciliation Tolerance (GBP)', type: 'number', required: false, source: 'user', group: 'Reconciliation', defaultValue: 1 },
       { code: 'period_end', label: 'Period End', type: 'date', required: false, source: 'auto', autoMapFrom: '$ctx.engagement.periodEnd', group: 'Context' },
+      ...DEDUP_INPUT_FIELDS,
     ],
     outputSchema: [
       { code: 'data_table', label: 'Parsed Listing', type: 'data_table' },
@@ -746,6 +765,7 @@ export const SYSTEM_ACTIONS: ActionDefinitionData[] = [
       { code: 'variance', label: 'Variance', type: 'number' },
       { code: 'tb_reconciled', label: 'Reconciled', type: 'pass_fail' },
       { code: 'portal_request_id', label: 'Portal Request ID', type: 'text' },
+      ...DEDUP_OUTPUT_FIELDS,
     ],
   },
 
@@ -806,6 +826,7 @@ export const SYSTEM_ACTIONS: ActionDefinitionData[] = [
       { code: 'message_to_counterparty', label: 'Message to Counterparty', type: 'textarea', required: false, source: 'user', group: 'Request', description: 'Template message; {{placeholders}} filled per row.' },
       { code: 'chase_schedule_days', label: 'Chase Schedule (days)', type: 'text', required: false, source: 'user', group: 'Chase', defaultValue: '7,14,21', description: 'Comma-separated days after initial send to chase non-responses.' },
       { code: 'alternative_procedures', label: 'Alternative Procedures for Non-Responses', type: 'textarea', required: false, source: 'user', group: 'Fallback' },
+      ...DEDUP_INPUT_FIELDS,
     ],
     outputSchema: [
       { code: 'confirmations', label: 'Confirmation Results', type: 'data_table', description: 'Per counterparty: expected, confirmed, variance, response_status (confirmed | partial | non_response | disputed).' },
@@ -813,6 +834,7 @@ export const SYSTEM_ACTIONS: ActionDefinitionData[] = [
       { code: 'exception_count', label: 'Exception Count', type: 'number' },
       { code: 'non_response_count', label: 'Non-Response Count', type: 'number' },
       { code: 'pass_fail', label: 'Overall Result', type: 'pass_fail' },
+      ...DEDUP_OUTPUT_FIELDS,
     ],
   },
 
@@ -1293,11 +1315,13 @@ export const SYSTEM_ACTIONS: ActionDefinitionData[] = [
       { code: 'gate_on_count', label: 'Gate: Only Ask When Prior Step Returned &gt; 0 Rows', type: 'boolean', required: false, source: 'user', group: 'Gate', defaultValue: true, description: 'When true, this step is auto-skipped if the previous step\u2019s data_table is empty (e.g. no leavers / joiners in period). When false, always asks the client even with a zero-row population.' },
       { code: 'gating_count', label: 'Prior-step Count', type: 'number', required: false, source: 'auto', autoMapFrom: '$prev.movement_count', group: 'Gate' },
       { code: 'area_of_work', label: 'Area of Work', type: 'text', required: false, source: 'auto', autoMapFrom: '$ctx.test.fsLine', group: 'Context' },
+      ...DEDUP_INPUT_FIELDS,
     ],
     outputSchema: [
       { code: 'data_table', label: 'Questionnaire Responses', type: 'data_table', description: 'Row per question: code, question, answer, supporting_text, answered_at. Empty data_table when the step was skipped via gate_on_count.' },
       { code: 'skipped', label: 'Step Skipped (no rows)', type: 'pass_fail' },
       { code: 'portal_request_id', label: 'Portal Request ID', type: 'text' },
+      ...DEDUP_OUTPUT_FIELDS,
     ],
   },
 
