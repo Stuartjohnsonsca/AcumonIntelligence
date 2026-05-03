@@ -59,9 +59,13 @@ export const TEST_PIPELINE_STAGE_THEME: Record<TestPipelineStage, { headerBg: st
  * picker.
  */
 export const STAGE_CATEGORIES: Record<TestPipelineStage, string[]> = {
-  obtain_population:   ['population', 'data', 'evidence', 'general'],
+  // 'verification' is allowed in obtain_population AND request_and_extract
+  // because "agree to the expected balance" / reconcile-to-TB is a verification
+  // step that naturally lives next to the listing request, not deferred to the
+  // Analyse stage.
+  obtain_population:   ['population', 'data', 'evidence', 'verification', 'general'],
   sampling:            ['sampling',   'general'],
-  request_and_extract: ['evidence',   'data',  'general'],
+  request_and_extract: ['evidence',   'data',  'verification', 'general'],
   analyse:             ['analysis',   'verification', 'general'],
   conclude:            ['reporting',  'verification', 'general'],
 };
