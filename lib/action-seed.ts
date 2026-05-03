@@ -904,6 +904,62 @@ export const SYSTEM_ACTIONS: ActionDefinitionData[] = [
   },
 
   {
+    code: 'aggregate_balances',
+    name: 'Combine / Aggregate Balances',
+    description: 'Combines amounts collected by separate upstream steps into a single aggregate, with a per-source breakdown on the output. Built for the "gather A and B independently, then combine and verify" pattern — e.g. request deferred tax assets, request deferred tax liabilities, then aggregate to net deferred tax for a TB tie. Up to four source slots; each carries its own label, an amount (typically auto-bound to `$step.N.<field>`), and a sign multiplier (+1 default, set to −1 to net out a contra balance like DTL against DTA). Operation is plain sum: each source\'s amount × sign is added to produce `total`. Optional `expected_total` triggers a tolerance check so the action also emits `pass_fail`. The output `breakdown` is a small data_table ready to feed Reconcile to Trial Balance / Compare Interest & Fees / Extract & Verify Listing downstream.',
+    category: 'verification',
+    handlerName: 'aggregateBalances',
+    icon: 'GitMerge',
+    color: '#22c55e',
+    isSystem: true,
+    inputSchema: [
+      { code: 'aggregate_label', label: 'Aggregate Label', type: 'text', required: false, source: 'user', defaultValue: 'Net balance', group: 'Aggregate', description: 'Name of the resulting aggregate balance (e.g. "Net deferred tax", "Total prepayments + accruals"). Echoed on the output for downstream reporting.' },
+      // ─── Source A ────────────────────────────────────────────────────────
+      { code: 'source_a_label', label: 'Source A Label', type: 'text', required: true, source: 'user', defaultValue: 'Source A', group: 'Source A' },
+      { code: 'source_a_amount', label: 'Source A Amount', type: 'number', required: true, source: 'user', group: 'Source A', description: 'Bind to the upstream step\'s amount, e.g. `$step.0.listing_total` or `$step.0.tb_total`.' },
+      { code: 'source_a_sign', label: 'Source A Sign', type: 'select', required: false, source: 'user', defaultValue: '1', group: 'Source A', description: 'Set to −1 for a contra balance (e.g. liabilities being netted off assets).', options: [
+        { value: '1',  label: '+1 (add)' },
+        { value: '-1', label: '−1 (subtract)' },
+      ]},
+      // ─── Source B ────────────────────────────────────────────────────────
+      { code: 'source_b_label', label: 'Source B Label', type: 'text', required: true, source: 'user', defaultValue: 'Source B', group: 'Source B' },
+      { code: 'source_b_amount', label: 'Source B Amount', type: 'number', required: true, source: 'user', group: 'Source B' },
+      { code: 'source_b_sign', label: 'Source B Sign', type: 'select', required: false, source: 'user', defaultValue: '1', group: 'Source B', options: [
+        { value: '1',  label: '+1 (add)' },
+        { value: '-1', label: '−1 (subtract)' },
+      ]},
+      // ─── Source C (optional) ─────────────────────────────────────────────
+      { code: 'source_c_label', label: 'Source C Label (optional)', type: 'text', required: false, source: 'user', group: 'Source C' },
+      { code: 'source_c_amount', label: 'Source C Amount (optional)', type: 'number', required: false, source: 'user', group: 'Source C' },
+      { code: 'source_c_sign', label: 'Source C Sign', type: 'select', required: false, source: 'user', defaultValue: '1', group: 'Source C', options: [
+        { value: '1',  label: '+1 (add)' },
+        { value: '-1', label: '−1 (subtract)' },
+      ]},
+      // ─── Source D (optional) ─────────────────────────────────────────────
+      { code: 'source_d_label', label: 'Source D Label (optional)', type: 'text', required: false, source: 'user', group: 'Source D' },
+      { code: 'source_d_amount', label: 'Source D Amount (optional)', type: 'number', required: false, source: 'user', group: 'Source D' },
+      { code: 'source_d_sign', label: 'Source D Sign', type: 'select', required: false, source: 'user', defaultValue: '1', group: 'Source D', options: [
+        { value: '1',  label: '+1 (add)' },
+        { value: '-1', label: '−1 (subtract)' },
+      ]},
+      // ─── Optional expected-total tolerance check ─────────────────────────
+      { code: 'expected_total', label: 'Expected Total (optional)', type: 'number', required: false, source: 'user', group: 'Verification', description: 'When supplied, the action compares `total` against this value and emits `variance` + a pass/fail. Useful when the aggregate has a known TB target.' },
+      { code: 'tolerance_gbp', label: 'Tolerance (GBP)', type: 'number', required: false, source: 'user', defaultValue: 1, group: 'Verification' },
+      { code: 'account_codes', label: 'TB Account Codes (echo)', type: 'text', required: false, source: 'user', group: 'Chaining', description: 'Optional — echoed on the output so a downstream Reconcile to TB / Extract & Verify Listing step can chain off `$prev.account_codes` without re-typing.' },
+    ],
+    outputSchema: [
+      { code: 'total', label: 'Aggregate Total', type: 'number', description: 'Sum of (amount × sign) across every populated source.' },
+      { code: 'breakdown', label: 'Per-Source Breakdown', type: 'data_table', description: 'One row per populated source: label, amount, sign, contribution (= amount × sign).' },
+      { code: 'data_table', label: 'Per-Source Breakdown (alias)', type: 'data_table' },
+      { code: 'aggregate_label', label: 'Aggregate Label', type: 'text' },
+      { code: 'expected_total', label: 'Expected Total (echo)', type: 'number' },
+      { code: 'variance', label: 'Variance vs Expected', type: 'number', description: 'total − expected_total. Null when expected_total is not supplied.' },
+      { code: 'account_codes', label: 'TB Account Codes (echo)', type: 'text' },
+      { code: 'pass_fail', label: 'Within Tolerance', type: 'pass_fail', description: 'Pass when |variance| ≤ tolerance, or pass-by-default when no expected_total was supplied.' },
+    ],
+  },
+
+  {
     code: 'request_confirmations',
     name: 'Request Third-Party Confirmations',
     description: 'Sends confirmation letters to third parties (bank, debtor, creditor, loan counterparty, legal, pension administrator). Tracks responses via portal/email, chases non-responses on a schedule, extracts confirmed balances, reconciles to the entity\'s books, and emits an exceptions table with guidance on alternative procedures for non-responses.',

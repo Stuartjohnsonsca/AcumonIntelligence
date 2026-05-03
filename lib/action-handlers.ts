@@ -61,6 +61,7 @@ const HANDLERS: Record<string, ActionHandler> = {
   reconcileToTb: handleReconcileToTb,
   extractAndVerifyListing: handleExtractAndVerifyListing,
   requestCalculation: handleRequestCalculation,
+  aggregateBalances: handleAggregateBalances,
   verifyEvidence: handleVerifyEvidence,
   teamReview: handleTeamReview,
   verifyPropertyAssets: handleVerifyPropertyAssets,
@@ -1044,6 +1045,64 @@ async function handleRequestCalculation(ctx: ActionHandlerContext): Promise<Acti
   } catch (err: any) {
     return { action: 'error', outputs: {}, errorMessage: `Failed to create portal request: ${err.message}` };
   }
+}
+
+async function handleAggregateBalances(ctx: ActionHandlerContext): Promise<ActionHandlerResult> {
+  const { inputs } = ctx;
+  const aggregateLabel = (inputs.aggregate_label as string) || 'Net balance';
+  // Each source is built from its three input fields. Sources A and
+  // B are required (the simplest "DTA + DTL" use case has exactly
+  // two); C and D are populated only when the operator filled in
+  // both a label and an amount on that slot.
+  const slots: Array<{ key: 'a' | 'b' | 'c' | 'd'; required: boolean }> = [
+    { key: 'a', required: true },
+    { key: 'b', required: true },
+    { key: 'c', required: false },
+    { key: 'd', required: false },
+  ];
+  const sources: Array<{ label: string; amount: number; sign: number; contribution: number }> = [];
+  for (const slot of slots) {
+    const label = (inputs[`source_${slot.key}_label`] as string | undefined)?.trim();
+    const rawAmount = inputs[`source_${slot.key}_amount`];
+    const amountStr = rawAmount === undefined || rawAmount === null ? '' : String(rawAmount);
+    const hasAmount = amountStr !== '';
+    if (!slot.required && (!label || !hasAmount)) continue;
+    if (slot.required && (!label || !hasAmount)) {
+      return { action: 'error', outputs: {}, errorMessage: `Source ${slot.key.toUpperCase()} requires both a label and an amount.` };
+    }
+    const amount = toAmount(rawAmount);
+    const signRaw = inputs[`source_${slot.key}_sign`];
+    const sign = String(signRaw) === '-1' ? -1 : 1;
+    const contribution = Math.round(amount * sign * 100) / 100;
+    sources.push({ label: label!, amount: Math.round(amount * 100) / 100, sign, contribution });
+  }
+
+  const total = Math.round(sources.reduce((acc, s) => acc + s.contribution, 0) * 100) / 100;
+
+  // Optional tolerance check against an expected total. When the
+  // operator hasn't supplied one we pass-by-default — most uses of
+  // this action are pure aggregation, with the verify step coming
+  // immediately after via reconcile_to_tb / extract_and_verify_listing.
+  const rawExpected = inputs.expected_total;
+  const expectedSupplied = rawExpected !== undefined && rawExpected !== null && String(rawExpected) !== '';
+  const expectedTotal = expectedSupplied ? Math.round(toAmount(rawExpected) * 100) / 100 : null;
+  const tolerance = Number(inputs.tolerance_gbp || 1);
+  const variance = expectedTotal === null ? null : Math.round((total - expectedTotal) * 100) / 100;
+  const passFail = expectedTotal === null ? 'pass' : (Math.abs((variance ?? 0)) <= tolerance ? 'pass' : 'fail');
+
+  return {
+    action: 'continue',
+    outputs: {
+      total,
+      breakdown: sources,
+      data_table: sources,
+      aggregate_label: aggregateLabel,
+      expected_total: expectedTotal,
+      variance,
+      account_codes: (inputs.account_codes as string) || '',
+      pass_fail: passFail,
+    },
+  };
 }
 
 async function handleVerifyEvidence(ctx: ActionHandlerContext): Promise<ActionHandlerResult> {
