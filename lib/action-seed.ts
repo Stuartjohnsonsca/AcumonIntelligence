@@ -686,6 +686,7 @@ export const SYSTEM_ACTIONS: ActionDefinitionData[] = [
         { value: 'profit_loss',   label: 'Profit & Loss only' },
         { value: 'balance_sheet', label: 'Balance Sheet only' },
       ]},
+      { code: 'fs_level', label: 'FS Level (optional)', type: 'text', required: false, source: 'user', group: 'FS Mapping', description: 'Restrict to TB rows whose FS level matches this value (e.g. "Revenue", "Cost of Sales", "Operating Expenses", "Trade Debtors"). Case-insensitive substring match — multiple values can be supplied as a comma-separated list ("Revenue, Other Operating Income"). Leave blank to skip this filter.' },
       { code: 'code_pattern', label: 'Code Pattern (optional)', type: 'text', required: false, source: 'user', group: 'Code Filter', description: 'Restricts to specific codes. Supports prefix wildcards (e.g. "5*"), inclusive ranges ("5000-5099"), and comma-separated explicit lists ("5000,5010,5020"). Multiple patterns can be combined with semicolons ("5*;6000-6099"). Leave blank to match every code.' },
       { code: 'description_contains', label: 'Description Contains', type: 'text', required: false, source: 'user', group: 'Code Filter', description: 'Case-insensitive substring match against the TB row description / account name.' },
       { code: 'balance_sign', label: 'Balance Sign', type: 'select', required: false, source: 'user', defaultValue: 'any', group: 'Balance Filter', options: [

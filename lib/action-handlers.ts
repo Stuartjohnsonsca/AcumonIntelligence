@@ -357,6 +357,13 @@ async function handleSelectTbAccountCodes(ctx: ActionHandlerContext): Promise<Ac
   const fsLineMatch = (inputs.fs_line_match as string) || 'this_test';
   const specificFsLine = (inputs.specific_fs_line as string | undefined)?.trim() || null;
   const statement = (inputs.statement as string) || 'any';
+  // fs_level can be a single value or a comma-separated list. Each
+  // entry is a case-insensitive substring match against the TB row's
+  // fsLevel field. An empty list disables the filter.
+  const fsLevelTokens = ((inputs.fs_level as string | undefined) || '')
+    .split(',')
+    .map(s => s.trim().toLowerCase())
+    .filter(Boolean);
   const codePattern = (inputs.code_pattern as string | undefined) || null;
   const descriptionContains = ((inputs.description_contains as string | undefined) || '').trim().toLowerCase();
   const balanceSign = (inputs.balance_sign as string) || 'any';
@@ -404,6 +411,10 @@ async function handleSelectTbAccountCodes(ctx: ActionHandlerContext): Promise<Ac
     if (isAccrualOnly && !r.isAccrualAccount) return false;
     if (wantsPL && !((r.fsStatement || '').toLowerCase().includes('profit') || (r.fsStatement || '').toLowerCase().includes('p&l') || (r.fsStatement || '').toLowerCase().includes('income'))) return false;
     if (wantsBS && !((r.fsStatement || '').toLowerCase().includes('balance'))) return false;
+    if (fsLevelTokens.length > 0) {
+      const lvl = (r.fsLevel || '').toLowerCase();
+      if (!fsLevelTokens.some(t => lvl.includes(t))) return false;
+    }
     const cy = Number(r.currentYear || 0);
     if (balanceSign === 'dr' && !(cy > 0)) return false;
     if (balanceSign === 'cr' && !(cy < 0)) return false;
