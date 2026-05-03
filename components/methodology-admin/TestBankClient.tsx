@@ -127,6 +127,26 @@ export function TestBankClient({ firmId, initialTestTypes, initialTests, initial
   const [testBankFsLineFilter, setTestBankFsLineFilter] = useState<Set<string>>(new Set());
   const [fsLineFilterOpen, setFsLineFilterOpen] = useState(false);
   const [fsLineFilterSearch, setFsLineFilterSearch] = useState('');
+
+  // Per-column header filters for the Test Bank table. Each column
+  // gets a tiny input/select rendered in the second header row. Text
+  // columns use case-insensitive substring matching against the
+  // column's display value; the boolean columns (Flow / Pipeline)
+  // use a tri-state Any / Yes / No select. Stored as plain strings
+  // so the row predicate stays trivial.
+  const [colFilters, setColFilters] = useState({
+    name: '',
+    status: '',     // '' | 'draft' | 'live'
+    mode: '',       // '' | 'pipeline' | 'flow' | 'none'
+    actionType: '',
+    assertions: '',
+    framework: '',
+    fsLines: '',
+    flow: '',       // '' | 'yes' | 'no'
+    pipeline: '',   // '' | 'yes' | 'no'
+    sig: '',        // '' | 'Significant Risk' | 'Area of Focus' | 'Analytical Review' | 'Mandatory' | 'Normal' | 'Other'
+  });
+  const anyColFilter = Object.values(colFilters).some(v => v && v !== '');
   const fsLineFilterRef = useRef<HTMLDivElement>(null);
   React.useEffect(() => {
     if (!fsLineFilterOpen) return;
@@ -701,19 +721,143 @@ export function TestBankClient({ firmId, initialTestTypes, initialTests, initial
           </div>
           <div className="border rounded-lg overflow-hidden">
             <table className="w-full text-sm">
-              <thead><tr className="bg-slate-100 border-b">
-                <th className="text-left px-3 py-2 text-slate-600 font-semibold">Test Name</th>
-                <th className="text-center px-3 py-2 text-slate-600 font-semibold w-16">Status</th>
-                <th className="text-center px-3 py-2 text-slate-600 font-semibold w-16">Mode</th>
-                <th className="text-left px-3 py-2 text-slate-600 font-semibold w-28">Action Type</th>
-                <th className="text-left px-3 py-2 text-slate-600 font-semibold w-32">Assertions</th>
-                <th className="text-left px-3 py-2 text-slate-600 font-semibold w-20">Framework</th>
-                <th className="text-left px-3 py-2 text-slate-600 font-semibold min-w-[160px]" title="FS lines this test is allocated to (from Test Allocations tab)">FS Lines</th>
-                <th className="text-center px-3 py-2 text-slate-600 font-semibold w-12" title="Flow chart (legacy). Click to open existing flow, but new tests should use Pipeline.">Flow</th>
-                <th className="text-center px-3 py-2 text-slate-600 font-semibold w-12" title="Action Pipeline (current). Click to open the pipeline editor.">Pipeline</th>
-                <th className="text-center px-3 py-2 text-slate-600 font-semibold w-10">Sig.</th>
-                <th className="w-20 px-3 py-2"></th>
-              </tr></thead>
+              <thead>
+                <tr className="bg-slate-100 border-b">
+                  <th className="text-left px-3 py-2 text-slate-600 font-semibold">Test Name</th>
+                  <th className="text-center px-3 py-2 text-slate-600 font-semibold w-16">Status</th>
+                  <th className="text-center px-3 py-2 text-slate-600 font-semibold w-16">Mode</th>
+                  <th className="text-left px-3 py-2 text-slate-600 font-semibold w-28">Action Type</th>
+                  <th className="text-left px-3 py-2 text-slate-600 font-semibold w-32">Assertions</th>
+                  <th className="text-left px-3 py-2 text-slate-600 font-semibold w-20">Framework</th>
+                  <th className="text-left px-3 py-2 text-slate-600 font-semibold min-w-[160px]" title="FS lines this test is allocated to (from Test Allocations tab)">FS Lines</th>
+                  <th className="text-center px-3 py-2 text-slate-600 font-semibold w-12" title="Flow chart (legacy). Click to open existing flow, but new tests should use Pipeline.">Flow</th>
+                  <th className="text-center px-3 py-2 text-slate-600 font-semibold w-12" title="Action Pipeline (current). Click to open the pipeline editor.">Pipeline</th>
+                  <th className="text-center px-3 py-2 text-slate-600 font-semibold w-10">Sig.</th>
+                  <th className="w-20 px-3 py-2 text-right">
+                    {anyColFilter && (
+                      <button
+                        onClick={() => setColFilters({ name: '', status: '', mode: '', actionType: '', assertions: '', framework: '', fsLines: '', flow: '', pipeline: '', sig: '' })}
+                        className="text-[10px] text-blue-600 hover:text-blue-800"
+                        title="Clear all column filters"
+                      >
+                        Clear
+                      </button>
+                    )}
+                  </th>
+                </tr>
+                {/* Column-header filters: text inputs for free-text
+                    columns, narrow selects for the constrained-value
+                    columns. Filters AND with the global search /
+                    framework / FS-line filters above the table. */}
+                <tr className="bg-slate-50 border-b border-slate-200">
+                  <th className="px-2 py-1">
+                    <input
+                      type="text"
+                      value={colFilters.name}
+                      onChange={e => setColFilters(p => ({ ...p, name: e.target.value }))}
+                      placeholder="Filter…"
+                      className="w-full px-2 py-1 text-[10px] border border-slate-200 rounded bg-white"
+                    />
+                  </th>
+                  <th className="px-1 py-1">
+                    <select
+                      value={colFilters.status}
+                      onChange={e => setColFilters(p => ({ ...p, status: e.target.value }))}
+                      className="w-full px-1 py-1 text-[10px] border border-slate-200 rounded bg-white"
+                    >
+                      <option value="">All</option>
+                      <option value="draft">Draft</option>
+                      <option value="live">Live</option>
+                    </select>
+                  </th>
+                  <th className="px-1 py-1">
+                    <select
+                      value={colFilters.mode}
+                      onChange={e => setColFilters(p => ({ ...p, mode: e.target.value }))}
+                      className="w-full px-1 py-1 text-[10px] border border-slate-200 rounded bg-white"
+                    >
+                      <option value="">All</option>
+                      <option value="pipeline">Pipeline</option>
+                      <option value="flow">Flow</option>
+                      <option value="none">— (none)</option>
+                    </select>
+                  </th>
+                  <th className="px-1 py-1">
+                    <input
+                      type="text"
+                      value={colFilters.actionType}
+                      onChange={e => setColFilters(p => ({ ...p, actionType: e.target.value }))}
+                      placeholder="Filter…"
+                      className="w-full px-2 py-1 text-[10px] border border-slate-200 rounded bg-white"
+                    />
+                  </th>
+                  <th className="px-1 py-1">
+                    <input
+                      type="text"
+                      value={colFilters.assertions}
+                      onChange={e => setColFilters(p => ({ ...p, assertions: e.target.value }))}
+                      placeholder="e.g. existence"
+                      className="w-full px-2 py-1 text-[10px] border border-slate-200 rounded bg-white"
+                    />
+                  </th>
+                  <th className="px-1 py-1">
+                    <input
+                      type="text"
+                      value={colFilters.framework}
+                      onChange={e => setColFilters(p => ({ ...p, framework: e.target.value }))}
+                      placeholder="Filter…"
+                      className="w-full px-2 py-1 text-[10px] border border-slate-200 rounded bg-white"
+                    />
+                  </th>
+                  <th className="px-1 py-1">
+                    <input
+                      type="text"
+                      value={colFilters.fsLines}
+                      onChange={e => setColFilters(p => ({ ...p, fsLines: e.target.value }))}
+                      placeholder="Filter…"
+                      className="w-full px-2 py-1 text-[10px] border border-slate-200 rounded bg-white"
+                    />
+                  </th>
+                  <th className="px-1 py-1">
+                    <select
+                      value={colFilters.flow}
+                      onChange={e => setColFilters(p => ({ ...p, flow: e.target.value }))}
+                      className="w-full px-1 py-1 text-[10px] border border-slate-200 rounded bg-white"
+                    >
+                      <option value="">Any</option>
+                      <option value="yes">Yes</option>
+                      <option value="no">No</option>
+                    </select>
+                  </th>
+                  <th className="px-1 py-1">
+                    <select
+                      value={colFilters.pipeline}
+                      onChange={e => setColFilters(p => ({ ...p, pipeline: e.target.value }))}
+                      className="w-full px-1 py-1 text-[10px] border border-slate-200 rounded bg-white"
+                    >
+                      <option value="">Any</option>
+                      <option value="yes">Yes</option>
+                      <option value="no">No</option>
+                    </select>
+                  </th>
+                  <th className="px-1 py-1">
+                    <select
+                      value={colFilters.sig}
+                      onChange={e => setColFilters(p => ({ ...p, sig: e.target.value }))}
+                      className="w-full px-1 py-1 text-[10px] border border-slate-200 rounded bg-white"
+                    >
+                      <option value="">All</option>
+                      <option value="Significant Risk">Significant Risk</option>
+                      <option value="Area of Focus">Area of Focus</option>
+                      <option value="Analytical Review">Analytical Review</option>
+                      <option value="Mandatory">Mandatory</option>
+                      <option value="Normal">Normal</option>
+                      <option value="Other">Other</option>
+                    </select>
+                  </th>
+                  <th className="px-1 py-1" />
+                </tr>
+              </thead>
               <tbody>
                 {tests.filter(t => {
                   // Search filter
@@ -734,6 +878,59 @@ export function TestBankClient({ firmId, initialTestTypes, initialTests, initial
                   if (testBankFsLineFilter.size > 0) {
                     const allocated = allocatedFsLinesByTest.get(t.id) || [];
                     if (!allocated.some(fl => testBankFsLineFilter.has(fl.id))) return false;
+                  }
+                  // Per-column header filters — AND with each other and
+                  // with the global filters above. Text filters do
+                  // case-insensitive substring matching against the
+                  // column's display value; selects use exact / boolean
+                  // matches as appropriate.
+                  if (colFilters.name) {
+                    const q = colFilters.name.toLowerCase();
+                    if (!t.name.toLowerCase().includes(q) && !(t.description || '').toLowerCase().includes(q)) return false;
+                  }
+                  if (colFilters.status) {
+                    const wantsDraft = colFilters.status === 'draft';
+                    if (!!t.isDraft !== wantsDraft) return false;
+                  }
+                  if (colFilters.mode) {
+                    const isPipeline = t.executionMode === 'action_pipeline';
+                    const hasFlowVal = !!t.flow?.nodes?.length;
+                    if (colFilters.mode === 'pipeline' && !isPipeline) return false;
+                    if (colFilters.mode === 'flow' && (isPipeline || !hasFlowVal)) return false;
+                    if (colFilters.mode === 'none' && (isPipeline || hasFlowVal)) return false;
+                  }
+                  if (colFilters.actionType) {
+                    const ttDef = testTypes.find(x => x.code === t.testTypeCode);
+                    const label = (ttDef?.name || t.testTypeCode || '').toLowerCase();
+                    if (!label.includes(colFilters.actionType.toLowerCase())) return false;
+                  }
+                  if (colFilters.assertions) {
+                    const q = colFilters.assertions.toLowerCase();
+                    const list = ((t.assertions as string[]) || []).map(a => `${a} ${assertionShortLabel(a)}`).join(' ').toLowerCase();
+                    if (!list.includes(q)) return false;
+                  }
+                  if (colFilters.framework) {
+                    const q = colFilters.framework.toLowerCase();
+                    if (!String(t.framework || 'all').toLowerCase().includes(q)) return false;
+                  }
+                  if (colFilters.fsLines) {
+                    const q = colFilters.fsLines.toLowerCase();
+                    const allocated = allocatedFsLinesByTest.get(t.id) || [];
+                    if (allocated.length === 0) return false;
+                    if (!allocated.some(fl => fl.name.toLowerCase().includes(q))) return false;
+                  }
+                  if (colFilters.flow) {
+                    const has = !!t.flow?.nodes?.length;
+                    if (colFilters.flow === 'yes' && !has) return false;
+                    if (colFilters.flow === 'no' && has) return false;
+                  }
+                  if (colFilters.pipeline) {
+                    const isPipeline = t.executionMode === 'action_pipeline';
+                    if (colFilters.pipeline === 'yes' && !isPipeline) return false;
+                    if (colFilters.pipeline === 'no' && isPipeline) return false;
+                  }
+                  if (colFilters.sig) {
+                    if ((t.category || 'Other') !== colFilters.sig) return false;
                   }
                   return true;
                 }).map((test, i) => {
