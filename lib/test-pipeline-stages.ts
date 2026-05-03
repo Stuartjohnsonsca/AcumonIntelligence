@@ -96,3 +96,26 @@ export function withoutStageMeta<T extends Record<string, unknown>>(inputBinding
   const { __stage, ...rest } = inputBindings as Record<string, unknown> & { __stage?: unknown };
   return rest as Omit<T, '__stage'>;
 }
+
+// ─── Editor-only metadata (per-test) ────────────────────────────────────────
+
+export interface PipelineEditorConfig {
+  hiddenStages?: TestPipelineStage[];
+}
+
+/** Read the hidden-stages list out of a test's editorConfig blob. */
+export function readHiddenStages(editorConfig: unknown): TestPipelineStage[] {
+  if (!editorConfig || typeof editorConfig !== 'object') return [];
+  const raw = (editorConfig as Record<string, unknown>).hiddenStages;
+  if (!Array.isArray(raw)) return [];
+  return raw.filter(isStageKey);
+}
+
+/** Toggle a stage's hidden flag in an editorConfig blob, returning a new copy. */
+export function toggleHiddenStage(editorConfig: unknown, stage: TestPipelineStage): PipelineEditorConfig {
+  const current = readHiddenStages(editorConfig);
+  const next = current.includes(stage)
+    ? current.filter(s => s !== stage)
+    : [...current, stage];
+  return { ...((editorConfig as PipelineEditorConfig) || {}), hiddenStages: next };
+}

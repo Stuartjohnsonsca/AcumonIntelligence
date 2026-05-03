@@ -3262,8 +3262,19 @@ export async function processPipelineStep(executionId: string): Promise<void> {
   const duration = Date.now() - startTime;
 
   if (result.action === 'continue') {
-    // Store outputs and advance
+    // Store outputs and advance — honouring the step's branchRules so
+    // conditional / goto / skip flow control routes the pipeline
+    // correctly. Linear flow remains the default when branchRules is
+    // null (existing tests need no migration).
     const updatedState = { ...pipelineState, [currentStepIndex]: result.outputs };
+    const { nextStepIndex } = await import('@/lib/action-registry');
+    const advanceTo = nextStepIndex(
+      (step as any).branchRules || null,
+      currentStepIndex,
+      steps.length,
+      updatedState,
+      execution.context as Record<string, any>,
+    );
     await prisma.testExecutionNodeRun.update({
       where: { id: nodeRun.id },
       data: { status: 'completed', output: result.outputs as any, duration, completedAt: new Date() },
@@ -3271,7 +3282,7 @@ export async function processPipelineStep(executionId: string): Promise<void> {
     await prisma.testExecution.update({
       where: { id: executionId },
       data: {
-        currentStepIndex: currentStepIndex + 1,
+        currentStepIndex: advanceTo,
         actionStepId: step.id,
         pipelineState: updatedState as any,
       },
@@ -3348,12 +3359,33 @@ export async function resumePipelineExecution(executionId: string, externalData?
   });
 
   // Advance to next step — unless the current step is a multi-phase action
-  // that asked to be re-run at the same index.
+  // that asked to be re-run at the same index. Honour branchRules on
+  // the resumed step so conditional flow works the same as the
+  // continue path in processPipelineStep.
+  let advanceTo = currentStepIndex + 1;
+  if (!shouldRepeat && execution.actionStepId) {
+    const step = await prisma.testActionStep.findUnique({ where: { id: execution.actionStepId } });
+    if (step) {
+      // Total steps for the pipeline — needed by nextStepIndex to
+      // bound `skip` targets. We re-query rather than threading it
+      // through because resume is a cold path on a fresh request.
+      const total = await prisma.testActionStep.count({ where: { testId: step.testId, isActive: true } });
+      const { nextStepIndex } = await import('@/lib/action-registry');
+      advanceTo = nextStepIndex(
+        (step as any).branchRules || null,
+        currentStepIndex,
+        total,
+        pipelineState,
+        execution.context as Record<string, any>,
+      );
+    }
+  }
+
   await prisma.testExecution.update({
     where: { id: executionId },
     data: {
       status: 'running',
-      currentStepIndex: shouldRepeat ? currentStepIndex : currentStepIndex + 1,
+      currentStepIndex: shouldRepeat ? currentStepIndex : advanceTo,
       pauseReason: null,
       pauseRefId: null,
       pipelineState: pipelineState as any,

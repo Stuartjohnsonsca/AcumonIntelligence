@@ -112,6 +112,7 @@ export async function PATCH(req: NextRequest) {
   if (updates.sortOrder !== undefined) data.sortOrder = updates.sortOrder;
   if (updates.isActive !== undefined) data.isActive = updates.isActive;
   if (updates.executionMode !== undefined) data.executionMode = updates.executionMode;
+  if (updates.editorConfig !== undefined) data.editorConfig = updates.editorConfig;
 
   // Handle action pipeline steps
   if (updates.actionSteps !== undefined) {
@@ -124,6 +125,7 @@ export async function PATCH(req: NextRequest) {
           actionDefinitionId: step.actionDefinitionId,
           stepOrder: step.stepOrder ?? i,
           inputBindings: step.inputBindings || {},
+          branchRules: step.branchRules ?? null,
         })),
       });
     }

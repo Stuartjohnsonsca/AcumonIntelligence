@@ -368,12 +368,16 @@ export function TestBankClient({ firmId, initialTestTypes, initialTests, initial
     setFlowEditorOpen(false);
   }
 
-  async function handleSavePipeline(testId: string, steps: { actionDefinitionId: string; stepOrder: number; inputBindings: Record<string, any> }[]) {
+  async function handleSavePipeline(
+    testId: string,
+    steps: { actionDefinitionId: string; stepOrder: number; inputBindings: Record<string, any>; branchRules?: any }[],
+    editorConfig?: any,
+  ) {
     // Save action steps and set execution mode to action_pipeline
     const res = await fetch('/api/methodology-admin/tests', {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ id: testId, executionMode: 'action_pipeline', actionSteps: steps }),
+      body: JSON.stringify({ id: testId, executionMode: 'action_pipeline', actionSteps: steps, editorConfig }),
     });
     if (res.ok) {
       const { test } = await res.json();
@@ -918,7 +922,7 @@ export function TestBankClient({ firmId, initialTestTypes, initialTests, initial
       {pipelineEditorOpen && pipelineTestId && (() => {
         const pipelineTest = tests.find(t => t.id === pipelineTestId);
         if (!pipelineTest) return null;
-        return (<Suspense fallback={<div className="fixed inset-0 z-[70] bg-black/40 flex items-center justify-center"><Loader2 className="h-8 w-8 animate-spin text-white" /></div>}><ActionPipelineEditor testId={pipelineTest.id} testDescription={pipelineTest.name} onSave={async (steps) => handleSavePipeline(pipelineTest.id, steps)} onClose={() => setPipelineEditorOpen(false)} /></Suspense>);
+        return (<Suspense fallback={<div className="fixed inset-0 z-[70] bg-black/40 flex items-center justify-center"><Loader2 className="h-8 w-8 animate-spin text-white" /></div>}><ActionPipelineEditor testId={pipelineTest.id} testDescription={pipelineTest.name} onSave={async (steps, editorConfig) => handleSavePipeline(pipelineTest.id, steps, editorConfig)} onClose={() => setPipelineEditorOpen(false)} /></Suspense>);
       })()}
 
       {/* ─── TEST MODAL (Add/Edit) ─── */}

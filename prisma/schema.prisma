@@ -2571,6 +2571,14 @@ model MethodologyTest {
   // TestExecution.configJson for $ctx.execution.config.<code> access.
   pipelineConfigSchema Json? @map("pipeline_config_schema")
 
+  // Editor-only metadata for the pipeline editor. Currently:
+  //   { hiddenStages: TestPipelineStage[] }
+  // hiddenStages lets a test hide stages it doesn't use (the global
+  // skeleton stays — this is per-test). Runtime ignores this; an empty
+  // stage was already pass-through because there are no TestActionStep
+  // rows for it.
+  editorConfig Json? @map("editor_config")
+
   firm        Firm                        @relation(fields: [firmId], references: [id], onDelete: Cascade)
   allocations MethodologyTestAllocation[]
   actionSteps TestActionStep[]
@@ -3453,6 +3461,17 @@ model TestActionStep {
 
   inputBindings   Json  @map("input_bindings") // { fieldCode: value | "$prev.outputField" | "$step.2.outputField" }
   configOverrides Json? @map("config_overrides") // Optional overrides
+
+  // Branch rules controlling what runs after this step. Null / absent =
+  // linear (next step in stepOrder, the existing behaviour). Shape:
+  //   { mode: 'continue'|'goto'|'skip'|'conditional',
+  //     target?: number,                              // stepOrder for goto / skip; -1 = end
+  //     rules?: [{ when: string, target: number }],   // for conditional
+  //     default?: number }                            // for conditional fall-through
+  // `when` expressions reference $prev.<field> / $step.N.<field> /
+  // $ctx.<path> / step output fields, evaluated against the same shape
+  // resolveBindingValue uses.
+  branchRules Json? @map("branch_rules")
 
   isActive  Boolean  @default(true) @map("is_active")
   createdAt DateTime @default(now()) @map("created_at")
