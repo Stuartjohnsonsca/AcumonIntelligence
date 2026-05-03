@@ -666,9 +666,51 @@ export const SYSTEM_ACTIONS: ActionDefinitionData[] = [
   },
 
   {
+    code: 'select_tb_account_codes',
+    name: 'Select TB Account Codes',
+    description: 'Interrogates the engagement\'s trial balance and returns the subset of account codes matching the supplied criteria. Filters can combine FS line, code pattern (prefix / range / explicit list), description match, statement (P&L vs BS), balance sign / minimum, and the is_accrual_account flag. Outputs a comma-separated `account_codes` string ready to feed straight into Request Listing from Client / Reconcile to Trial Balance / Compare Interest & Fees, plus the matching TB rows for chaining or reporting. Use as the first step of a test that needs to operate against a dynamic group of GL codes (e.g. "every overhead-expense account with an in-period balance over £10k").',
+    category: 'data',
+    handlerName: 'selectTbAccountCodes',
+    icon: 'Filter',
+    color: '#0ea5e9',
+    isSystem: true,
+    inputSchema: [
+      { code: 'fs_line_match', label: 'FS Line Filter', type: 'select', required: false, source: 'user', defaultValue: 'this_test', group: 'FS Mapping', description: 'How to use the engagement\'s FS-line mapping. "This test\'s FS line" uses the FS line the test is configured against. "None" disables the FS-line filter. "Specific FS line" uses the value below.', options: [
+        { value: 'this_test', label: 'This test\'s FS line' },
+        { value: 'none',      label: 'None — don\'t filter by FS line' },
+        { value: 'specific',  label: 'Specific FS line (set below)' },
+      ]},
+      { code: 'specific_fs_line', label: 'Specific FS Line Name', type: 'text', required: false, source: 'user', group: 'FS Mapping', description: 'Only used when FS Line Filter is "Specific FS line". Match is case-insensitive against the canonical FS-line name.' },
+      { code: 'statement', label: 'Statement', type: 'select', required: false, source: 'user', defaultValue: 'any', group: 'FS Mapping', options: [
+        { value: 'any',           label: 'Any (P&L or BS)' },
+        { value: 'profit_loss',   label: 'Profit & Loss only' },
+        { value: 'balance_sheet', label: 'Balance Sheet only' },
+      ]},
+      { code: 'code_pattern', label: 'Code Pattern (optional)', type: 'text', required: false, source: 'user', group: 'Code Filter', description: 'Restricts to specific codes. Supports prefix wildcards (e.g. "5*"), inclusive ranges ("5000-5099"), and comma-separated explicit lists ("5000,5010,5020"). Multiple patterns can be combined with semicolons ("5*;6000-6099"). Leave blank to match every code.' },
+      { code: 'description_contains', label: 'Description Contains', type: 'text', required: false, source: 'user', group: 'Code Filter', description: 'Case-insensitive substring match against the TB row description / account name.' },
+      { code: 'balance_sign', label: 'Balance Sign', type: 'select', required: false, source: 'user', defaultValue: 'any', group: 'Balance Filter', options: [
+        { value: 'any', label: 'Any sign' },
+        { value: 'dr',  label: 'Debit balances only (current year > 0)' },
+        { value: 'cr',  label: 'Credit balances only (current year < 0)' },
+      ]},
+      { code: 'min_abs_balance_gbp', label: 'Minimum Absolute Balance (GBP)', type: 'number', required: false, source: 'user', group: 'Balance Filter', description: 'Drops rows whose |current year| is below this value. Defaults to 0 (no minimum).' },
+      { code: 'is_accrual_only', label: 'Restrict to Accrual Accounts', type: 'boolean', required: false, source: 'user', defaultValue: false, group: 'Code Filter', description: 'When on, only TB rows flagged is_accrual_account by Methodology Admin are returned. Pairs with the accruals listing pipeline.' },
+      { code: 'period_end', label: 'Period End', type: 'date', required: false, source: 'auto', autoMapFrom: '$ctx.engagement.periodEnd', group: 'Context' },
+    ],
+    outputSchema: [
+      { code: 'account_codes', label: 'Account Codes (comma-separated)', type: 'text', description: 'Ready to bind into request_listing.account_codes / reconcile_to_tb.account_codes / compare_interest_expense_to_tb. Empty string when no rows match.' },
+      { code: 'data_table', label: 'Matching TB Rows', type: 'data_table', description: 'Row per matched code: account_code, description, current_year, prior_year, fs_line, fs_statement, fs_level, is_accrual_account.' },
+      { code: 'tb_rows', label: 'Matching TB Rows (alias)', type: 'data_table' },
+      { code: 'match_count', label: 'Match Count', type: 'number' },
+      { code: 'tb_total', label: 'TB Total (Current Year)', type: 'number', description: 'Sum of current-year balances for the matched rows.' },
+      { code: 'tb_total_prior', label: 'TB Total (Prior Year)', type: 'number' },
+    ],
+  },
+
+  {
     code: 'request_listing',
     name: 'Request Listing from Client',
-    description: 'Generic listing request. Asks the client via the portal for a schedule / ledger / register (debtors ageing, creditors ageing, fixed asset register, inventory listing, loan schedule, share register, ECL schedule, deferred tax computation, prepayment schedule, etc.), parses the returned file into a data_table, and (where account codes are provided) reconciles the total to the TB.',
+    description: 'Generic listing request. Asks the client via the portal for a schedule / ledger / register (debtors ageing, creditors ageing, fixed asset register, inventory listing, loan schedule, share register, ECL schedule, deferred tax computation, prepayment schedule, etc.), parses the returned file into a data_table, and (where account codes are provided) reconciles the total to the TB. Pair with `select_tb_account_codes` upstream to populate `account_codes` automatically from a TB-criteria query (e.g. all overhead codes, all accrual accounts, every balance > £10k).',
     category: 'evidence',
     handlerName: 'requestListing',
     icon: 'FileSearch',

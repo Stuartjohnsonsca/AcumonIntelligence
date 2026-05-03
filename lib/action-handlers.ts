@@ -57,6 +57,7 @@ const HANDLERS: Record<string, ActionHandler> = {
   analyseLargeUnusual: handleAnalyseLargeUnusual,
   analyseCutOff: handleAnalyseCutOff,
   compareBankToTB: handleCompareBankToTB,
+  selectTbAccountCodes: handleSelectTbAccountCodes,
   verifyEvidence: handleVerifyEvidence,
   teamReview: handleTeamReview,
   verifyPropertyAssets: handleVerifyPropertyAssets,
@@ -317,6 +318,122 @@ async function handleCompareBankToTB(ctx: ActionHandlerContext): Promise<ActionH
       variance,
       pass_fail: reconciled ? 'pass' : 'fail',
       data_table: [{ bank_total: bankTotal, tb_balance: Number(tbBalance), variance, reconciled }],
+    },
+  };
+}
+
+// Parses the `code_pattern` input — supports prefix wildcards ("5*"),
+// inclusive numeric ranges ("5000-5099"), comma-separated explicit
+// lists ("5000,5010,5020"), and any combination joined by semicolons
+// or pipes. Returns a predicate; absent / empty pattern matches every
+// code so the rest of the filter chain still applies.
+function buildCodePatternPredicate(pattern: string | null | undefined): (code: string) => boolean {
+  const raw = (pattern || '').trim();
+  if (!raw) return () => true;
+  const segments = raw.split(/[;|]/).map(s => s.trim()).filter(Boolean);
+  const matchers: ((code: string) => boolean)[] = [];
+  for (const seg of segments) {
+    if (seg.includes('-') && /^\d+\s*-\s*\d+$/.test(seg)) {
+      const [lo, hi] = seg.split('-').map(s => parseInt(s.trim(), 10));
+      matchers.push((code) => {
+        const n = parseInt(code, 10);
+        return Number.isFinite(n) && n >= Math.min(lo, hi) && n <= Math.max(lo, hi);
+      });
+    } else if (seg.includes(',')) {
+      const list = new Set(seg.split(',').map(s => s.trim()).filter(Boolean));
+      matchers.push((code) => list.has(code));
+    } else if (seg.endsWith('*')) {
+      const prefix = seg.slice(0, -1);
+      matchers.push((code) => code.startsWith(prefix));
+    } else {
+      matchers.push((code) => code === seg);
+    }
+  }
+  return (code) => matchers.some(m => m(code));
+}
+
+async function handleSelectTbAccountCodes(ctx: ActionHandlerContext): Promise<ActionHandlerResult> {
+  const { inputs, engagementId, config } = ctx;
+  const fsLineMatch = (inputs.fs_line_match as string) || 'this_test';
+  const specificFsLine = (inputs.specific_fs_line as string | undefined)?.trim() || null;
+  const statement = (inputs.statement as string) || 'any';
+  const codePattern = (inputs.code_pattern as string | undefined) || null;
+  const descriptionContains = ((inputs.description_contains as string | undefined) || '').trim().toLowerCase();
+  const balanceSign = (inputs.balance_sign as string) || 'any';
+  const minAbs = Number(inputs.min_abs_balance_gbp) || 0;
+  const isAccrualOnly = !!inputs.is_accrual_only;
+
+  // Resolve the FS-line ID to filter on. `this_test` uses the test's
+  // configured FS line (passed through ctx.config); `specific` looks
+  // the FS line up by name within the firm's MethodologyFsLine table.
+  let fsLineId: string | null | 'skip' = 'skip';
+  if (fsLineMatch === 'this_test') {
+    fsLineId = config.fsLineId || null;
+  } else if (fsLineMatch === 'specific' && specificFsLine) {
+    const fsLine = await prisma.methodologyFsLine.findFirst({
+      where: { firmId: config.firmId, name: { equals: specificFsLine, mode: 'insensitive' } },
+      select: { id: true },
+    });
+    fsLineId = fsLine?.id || null;
+  }
+
+  // Pull every TB row for the engagement and apply the in-memory
+  // filters. The set is small (typically a few hundred rows even for
+  // large entities) so a single fetch + filter is faster and more
+  // expressive than chaining Prisma where clauses for each criterion.
+  const rows = await prisma.auditTBRow.findMany({
+    where: {
+      engagementId,
+      ...(fsLineMatch !== 'none' && fsLineId !== 'skip' ? { fsLineId } : {}),
+    },
+    select: {
+      accountCode: true, description: true, currentYear: true, priorYear: true,
+      fsLineId: true, fsStatement: true, fsLevel: true, isAccrualAccount: true,
+      canonicalFsLine: { select: { name: true } },
+    },
+    orderBy: { accountCode: 'asc' },
+  });
+
+  const codeMatcher = buildCodePatternPredicate(codePattern);
+  const wantsPL = statement === 'profit_loss';
+  const wantsBS = statement === 'balance_sheet';
+
+  const matched = rows.filter(r => {
+    if (!codeMatcher(r.accountCode)) return false;
+    if (descriptionContains && !(r.description || '').toLowerCase().includes(descriptionContains)) return false;
+    if (isAccrualOnly && !r.isAccrualAccount) return false;
+    if (wantsPL && !((r.fsStatement || '').toLowerCase().includes('profit') || (r.fsStatement || '').toLowerCase().includes('p&l') || (r.fsStatement || '').toLowerCase().includes('income'))) return false;
+    if (wantsBS && !((r.fsStatement || '').toLowerCase().includes('balance'))) return false;
+    const cy = Number(r.currentYear || 0);
+    if (balanceSign === 'dr' && !(cy > 0)) return false;
+    if (balanceSign === 'cr' && !(cy < 0)) return false;
+    if (minAbs > 0 && Math.abs(cy) < minAbs) return false;
+    return true;
+  });
+
+  const accountCodes = matched.map(r => r.accountCode).join(',');
+  const tbTotal = matched.reduce((acc, r) => acc + Number(r.currentYear || 0), 0);
+  const tbTotalPrior = matched.reduce((acc, r) => acc + Number(r.priorYear || 0), 0);
+  const dataTable = matched.map(r => ({
+    account_code: r.accountCode,
+    description: r.description,
+    current_year: Number(r.currentYear || 0),
+    prior_year: Number(r.priorYear || 0),
+    fs_line: r.canonicalFsLine?.name || null,
+    fs_statement: r.fsStatement,
+    fs_level: r.fsLevel,
+    is_accrual_account: r.isAccrualAccount,
+  }));
+
+  return {
+    action: 'continue',
+    outputs: {
+      account_codes: accountCodes,
+      data_table: dataTable,
+      tb_rows: dataTable,
+      match_count: matched.length,
+      tb_total: Math.round(tbTotal * 100) / 100,
+      tb_total_prior: Math.round(tbTotalPrior * 100) / 100,
     },
   };
 }
