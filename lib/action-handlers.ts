@@ -58,6 +58,7 @@ const HANDLERS: Record<string, ActionHandler> = {
   analyseCutOff: handleAnalyseCutOff,
   compareBankToTB: handleCompareBankToTB,
   selectTbAccountCodes: handleSelectTbAccountCodes,
+  reconcileToTb: handleReconcileToTb,
   verifyEvidence: handleVerifyEvidence,
   teamReview: handleTeamReview,
   verifyPropertyAssets: handleVerifyPropertyAssets,
@@ -445,6 +446,161 @@ async function handleSelectTbAccountCodes(ctx: ActionHandlerContext): Promise<Ac
       match_count: matched.length,
       tb_total: Math.round(tbTotal * 100) / 100,
       tb_total_prior: Math.round(tbTotalPrior * 100) / 100,
+    },
+  };
+}
+
+// Coerce a JSON value (string, number, or formatted string like "1,234.56")
+// into a number suitable for arithmetic. Falls back to 0 for null /
+// unparseable input — keeps the per-code SUMIF resilient to typos
+// and locale-formatted figures the client might paste.
+function toAmount(v: unknown): number {
+  if (v == null) return 0;
+  if (typeof v === 'number') return Number.isFinite(v) ? v : 0;
+  const s = String(v).replace(/[,£$€\s]/g, '').replace(/\((.+)\)/, '-$1');
+  const n = parseFloat(s);
+  return Number.isFinite(n) ? n : 0;
+}
+
+// Normalise an account-code string for comparison. TB codes are
+// usually digits but can include letters / hyphens; we trim, drop
+// surrounding quotes, and lowercase so "5000  ", "5000", and
+// '"5000"' all collide on the same key.
+function normCode(v: unknown): string {
+  if (v == null) return '';
+  return String(v).replace(/^"|"$/g, '').trim().toLowerCase();
+}
+
+async function handleReconcileToTb(ctx: ActionHandlerContext): Promise<ActionHandlerResult> {
+  const { inputs, engagementId } = ctx;
+  const mode = ((inputs.mode as string) || 'per_code').toLowerCase();
+  const amountColumn = (inputs.amount_column as string) || 'amount';
+  const codeColumn = (inputs.code_column as string) || 'account_code';
+  const tolerance = Number(inputs.tolerance_gbp || 1);
+  const rawCodes = (inputs.account_codes as string) || '';
+  const requestedCodes = rawCodes.split(',').map(s => s.trim()).filter(Boolean);
+  const listing: any[] = Array.isArray(inputs.data_table) ? inputs.data_table : [];
+
+  if (requestedCodes.length === 0) {
+    return { action: 'error', outputs: {}, errorMessage: 'No TB account codes supplied — bind `account_codes` from an upstream Select TB Account Codes step or set it manually.' };
+  }
+
+  // Pull the requested TB rows in one query, keyed by normalised code.
+  const tbRows = await prisma.auditTBRow.findMany({
+    where: { engagementId, accountCode: { in: requestedCodes } },
+    select: { accountCode: true, description: true, currentYear: true },
+  });
+  const tbByCode = new Map<string, { accountCode: string; description: string | null; balance: number }>();
+  for (const r of tbRows) {
+    tbByCode.set(normCode(r.accountCode), {
+      accountCode: r.accountCode,
+      description: r.description,
+      balance: Number(r.currentYear || 0),
+    });
+  }
+
+  // Sum the listing — both an overall total (for backward compat /
+  // total-mode) and a per-code SUMIF over `code_column`.
+  let listingTotalOverall = 0;
+  const listingByCode = new Map<string, number>();
+  for (const row of listing) {
+    const amt = toAmount(row?.[amountColumn]);
+    listingTotalOverall += amt;
+    if (mode === 'per_code') {
+      const key = normCode(row?.[codeColumn]);
+      if (key) listingByCode.set(key, (listingByCode.get(key) || 0) + amt);
+    }
+  }
+
+  const tbTotalOverall = requestedCodes.reduce((acc, c) => acc + (tbByCode.get(normCode(c))?.balance || 0), 0);
+
+  // Total-mode: single comparison. Same shape as before; per-code
+  // outputs stay empty so downstream consumers get a stable schema.
+  if (mode === 'total') {
+    const variance = Math.round((listingTotalOverall - tbTotalOverall) * 100) / 100;
+    const reconciled = Math.abs(variance) <= tolerance;
+    return {
+      action: 'continue',
+      outputs: {
+        reconciliation: [],
+        data_table: [],
+        listing_total: Math.round(listingTotalOverall * 100) / 100,
+        tb_total: Math.round(tbTotalOverall * 100) / 100,
+        variance,
+        missing_codes: [],
+        extra_codes: [],
+        unreconciled_items: reconciled ? [] : [{ scope: 'total', listing_total: listingTotalOverall, tb_total: tbTotalOverall, variance }],
+        pass_fail: reconciled ? 'pass' : 'fail',
+      },
+    };
+  }
+
+  // Per-code: loop over every requested code, SUMIF the listing on
+  // `code_column`, compare to TB. Build the reconciliation table +
+  // missing / extra / unreconciled subsets.
+  const reconciliation: any[] = [];
+  const missingCodes: any[] = [];
+  const unreconciled: any[] = [];
+  let allReconciled = true;
+  const seenInListing = new Set<string>();
+  for (const code of requestedCodes) {
+    const key = normCode(code);
+    seenInListing.add(key);
+    const listingTotal = Math.round((listingByCode.get(key) || 0) * 100) / 100;
+    const tb = tbByCode.get(key);
+    const tbBalance = tb?.balance ?? 0;
+    const variance = Math.round((listingTotal - tbBalance) * 100) / 100;
+    const inListing = listingByCode.has(key);
+    let status: string;
+    if (!inListing) status = 'missing_in_listing';
+    else if (Math.abs(variance) <= tolerance) status = 'matched';
+    else status = 'variance';
+    const row = {
+      account_code: tb?.accountCode || code,
+      description: tb?.description || null,
+      listing_total: listingTotal,
+      tb_balance: Math.round(tbBalance * 100) / 100,
+      variance,
+      status,
+    };
+    reconciliation.push(row);
+    if (status === 'missing_in_listing') {
+      missingCodes.push({ account_code: row.account_code, description: row.description, tb_balance: row.tb_balance });
+      allReconciled = false;
+    } else if (status === 'variance') {
+      unreconciled.push(row);
+      allReconciled = false;
+    }
+  }
+
+  // Codes appearing in the listing but not requested — flag for
+  // review, they may indicate a misallocated invoice or a
+  // misconfigured upstream filter.
+  const extraCodes: any[] = [];
+  for (const [key, listingTotal] of listingByCode) {
+    if (!seenInListing.has(key)) {
+      extraCodes.push({
+        account_code: key,
+        listing_total: Math.round(listingTotal * 100) / 100,
+      });
+    }
+  }
+  // An extra code is itself an unreconciled item — it shouldn't
+  // silently pass even though every requested code reconciled.
+  if (extraCodes.length > 0) allReconciled = false;
+
+  return {
+    action: 'continue',
+    outputs: {
+      reconciliation,
+      data_table: reconciliation,
+      listing_total: Math.round(listingTotalOverall * 100) / 100,
+      tb_total: Math.round(tbTotalOverall * 100) / 100,
+      variance: Math.round((listingTotalOverall - tbTotalOverall) * 100) / 100,
+      missing_codes: missingCodes,
+      extra_codes: extraCodes,
+      unreconciled_items: unreconciled,
+      pass_fail: allReconciled ? 'pass' : 'fail',
     },
   };
 }
