@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useCallback, Component, type ReactNode } from 'react';
+import { useState, useEffect, useCallback, Component, Fragment, type ReactNode } from 'react';
 import { useSearchParams, useRouter } from 'next/navigation';
 import type { AuditType } from '@/types/methodology';
 import type { EngagementData } from '@/hooks/useEngagement';
@@ -261,7 +261,17 @@ export function EngagementTabs({ engagement, auditType, clientName, periodEndDat
   );
   // Audit Plan deep-link target — set when the user clicks an AP
   // shortcut in the Completion sidebar. Cleared once consumed.
-  const [auditPlanTarget, setAuditPlanTarget] = useState<{ statement?: string; otherTab?: string } | null>(null);
+  const [auditPlanTarget, setAuditPlanTarget] = useState<{ statement?: string; level?: string; otherTab?: string } | null>(null);
+  // FS hierarchy fetched once, used by the Completion sidebar to
+  // render FS Level shortcuts indented under each Statement. Loaded
+  // lazily on first entry into Completion to avoid an extra
+  // round-trip on engagements that never open the section.
+  const [fsLevelsByStatement, setFsLevelsByStatement] = useState<Record<string, string[]>>({});
+  const [fsLevelsLoaded, setFsLevelsLoaded] = useState(false);
+  // Per-statement expand/collapse state for the FS Level shortcut
+  // tree. Defaults to all collapsed so the sidebar stays compact;
+  // clicking the chevron next to a statement reveals its levels.
+  const [expandedSidebarStatements, setExpandedSidebarStatements] = useState<Set<string>>(new Set());
   // Which audit stage the Completion sidebar is currently filtering by
   // (Planning vs Fieldwork). Defaults to Fieldwork because that's where
   // the Audit Plan and most fieldwork tabs live.
@@ -281,6 +291,48 @@ export function EngagementTabs({ engagement, auditType, clientName, periodEndDat
       );
     } catch {}
   }, [activeTab, showAuditPlan, showCompletion, lastCompletionTab, storageKey]);
+
+  // Lazy-load the firm's FS hierarchy the first time the user opens
+  // the Completion section. Used to render FS Level shortcuts
+  // indented under each Statement in the sidebar.
+  useEffect(() => {
+    if (!showCompletion || fsLevelsLoaded) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch(`/api/engagements/${engagement.id}/fs-hierarchy`);
+        if (!res.ok || cancelled) return;
+        const data = await res.json();
+        const grouped: Record<string, string[]> = {};
+        const seen = new Set<string>();
+        for (const lvl of (Array.isArray(data?.levels) ? data.levels : [])) {
+          const stmt = (lvl?.statement || '').trim();
+          const name = (lvl?.name || '').trim();
+          if (!stmt || !name) continue;
+          const key = `${stmt}::${name}`;
+          if (seen.has(key)) continue;
+          seen.add(key);
+          if (!grouped[stmt]) grouped[stmt] = [];
+          grouped[stmt].push(name);
+        }
+        if (!cancelled) {
+          setFsLevelsByStatement(grouped);
+          setFsLevelsLoaded(true);
+        }
+      } catch {
+        if (!cancelled) setFsLevelsLoaded(true); // give up silently
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [showCompletion, fsLevelsLoaded, engagement.id]);
+
+  function toggleSidebarStatement(stmt: string) {
+    setExpandedSidebarStatements(prev => {
+      const next = new Set(prev);
+      if (next.has(stmt)) next.delete(stmt); else next.add(stmt);
+      return next;
+    });
+  }
   const [planCreated, setPlanCreated] = useState(false);
 
   // Check if plan was previously created
@@ -1075,19 +1127,57 @@ export function EngagementTabs({ engagement, auditType, clientName, periodEndDat
                 <div className="px-2 py-1.5 text-[9px] font-bold uppercase tracking-wide text-slate-400 bg-slate-100 border-b border-slate-200">
                   Audit Plan
                 </div>
-                {(['Profit & Loss', 'Balance Sheet', 'Cash Flow Statement', 'Notes'] as const).map(stmt => (
-                  <button
-                    key={stmt}
-                    onClick={() => {
-                      setAuditPlanTarget({ statement: stmt });
-                      setShowAuditPlan(true);
-                      setShowCompletion(false);
-                    }}
-                    className="w-full text-left pl-4 pr-2 py-1.5 text-[10px] font-medium border-b border-slate-200 text-blue-600 hover:bg-blue-50"
-                  >
-                    {stmt}
-                  </button>
-                ))}
+                {/* Each Statement is its own expand/collapse group:
+                    clicking the row name jumps straight into the AP
+                    at that Statement; clicking the chevron reveals
+                    the FS Levels indented underneath, each of which
+                    deep-links into the AP with both the Statement
+                    and the FS Level pre-selected. */}
+                {(['Profit & Loss', 'Balance Sheet', 'Cash Flow Statement', 'Notes'] as const).map(stmt => {
+                  const levelsForStmt = fsLevelsByStatement[stmt] || [];
+                  const isExpanded = expandedSidebarStatements.has(stmt);
+                  return (
+                    <Fragment key={stmt}>
+                      <div className="flex border-b border-slate-200">
+                        <button
+                          onClick={() => {
+                            setAuditPlanTarget({ statement: stmt });
+                            setShowAuditPlan(true);
+                            setShowCompletion(false);
+                          }}
+                          className="flex-1 text-left pl-4 pr-1 py-1.5 text-[10px] font-medium text-blue-600 hover:bg-blue-50"
+                        >
+                          {stmt}
+                        </button>
+                        {levelsForStmt.length > 0 && (
+                          <button
+                            onClick={() => toggleSidebarStatement(stmt)}
+                            className="px-1.5 text-blue-400 hover:text-blue-600 hover:bg-blue-50"
+                            title={isExpanded ? 'Hide FS levels' : `Show ${levelsForStmt.length} FS level(s)`}
+                            aria-label={isExpanded ? 'Collapse' : 'Expand'}
+                          >
+                            <svg className={`h-3 w-3 transition-transform ${isExpanded ? 'rotate-90' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                              <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
+                            </svg>
+                          </button>
+                        )}
+                      </div>
+                      {isExpanded && levelsForStmt.map(level => (
+                        <button
+                          key={`${stmt}::${level}`}
+                          onClick={() => {
+                            setAuditPlanTarget({ statement: stmt, level });
+                            setShowAuditPlan(true);
+                            setShowCompletion(false);
+                          }}
+                          className="w-full text-left pl-7 pr-2 py-1 text-[10px] border-b border-slate-200 text-slate-600 hover:bg-blue-50/60 hover:text-blue-700"
+                        >
+                          {level}
+                        </button>
+                      ))}
+                    </Fragment>
+                  );
+                })}
                 {(['Going Concern', 'Management Override', 'SRMM Memos', 'Subsequent Events', 'Tax Technical', 'Permanent', 'Disclosure'] as const).map(other => (
                   <button
                     key={other}
@@ -1185,6 +1275,7 @@ export function EngagementTabs({ engagement, auditType, clientName, periodEndDat
                 periodEndDate={periodEndDate}
                 periodStartDate={periodStartDate}
                 initialStatement={auditPlanTarget?.statement}
+                initialLevel={auditPlanTarget?.level}
                 initialOtherTab={auditPlanTarget?.otherTab}
               />
             </TabErrorBoundary>

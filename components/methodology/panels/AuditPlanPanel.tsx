@@ -90,6 +90,12 @@ interface Props {
    * pre-selected instead of the default first statement.
    */
   initialStatement?: string;
+  /**
+   * Pre-select this FS Level under the initialStatement on open.
+   * Honoured only the first time the level list resolves for the
+   * matching statement — afterwards the user's level clicks take over.
+   */
+  initialLevel?: string;
   /** Same idea for the "Other" group (Going Concern, SRMM, etc.). */
   initialOtherTab?: string;
 }
@@ -310,7 +316,7 @@ const FS_LINE_ALIASES: Record<string, string[]> = {
   'equity': ['capital & reserves', 'shareholders funds'],
 };
 
-export function AuditPlanPanel({ engagementId, clientId, periodId, onClose, periodEndDate, periodStartDate, initialStatement, initialOtherTab }: Props) {
+export function AuditPlanPanel({ engagementId, clientId, periodId, onClose, periodEndDate, periodStartDate, initialStatement, initialLevel, initialOtherTab }: Props) {
   const [tbRows, setTbRows] = useState<TBRow[]>([]);
   const [rmmItems, setRmmItems] = useState<RMMItem[]>([]);
   const [allocations, setAllocations] = useState<AllocationEntry[]>([]);
@@ -1012,9 +1018,27 @@ export function AuditPlanPanel({ engagementId, clientId, periodId, onClose, peri
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [statements, activeStatement, initialStatement, initialOtherTab]);
 
+  // Tracks whether we've already consumed the initialLevel deep-link.
+  // Once the user clicks any level (or moves to a different statement)
+  // we stop honouring it so further statement changes default cleanly
+  // to the first level in the new statement.
+  const [initialLevelConsumed, setInitialLevelConsumed] = useState(false);
   useEffect(() => {
+    if (
+      !initialLevelConsumed &&
+      initialLevel &&
+      initialStatement &&
+      activeStatement === initialStatement &&
+      levels.includes(initialLevel)
+    ) {
+      setActiveLevel(initialLevel);
+      setInitialLevelConsumed(true);
+      setActiveNote('');
+      return;
+    }
     if (levels.length > 0) setActiveLevel(levels[0]); else setActiveLevel('');
     setActiveNote('');
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [levels]);
 
   useEffect(() => { setActiveNote(''); }, [activeLevel]);
