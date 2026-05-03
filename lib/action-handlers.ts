@@ -534,18 +534,45 @@ function normCode(v: unknown): string {
   return String(v).replace(/^"|"$/g, '').trim().toLowerCase();
 }
 
+/**
+ * Resolve the list of TB account codes a TB-tied verification action
+ * should operate on.
+ *
+ *   1. If the operator supplied an explicit comma-separated list, use
+ *      it verbatim. Bound `$prev.account_codes` from an upstream
+ *      `select_tb_account_codes` step also lands here.
+ *   2. Otherwise fall back to "every TB code mapped to the test's FS
+ *      line" — the common case where the test is scoped to a single
+ *      FS line and the operator is happy to verify against the whole
+ *      mapping rather than a hand-picked subset. Lets the operator
+ *      drop `select_tb_account_codes` from simple pipelines.
+ *   3. When the test has no FS line in context (rare — bare scripts,
+ *      ad-hoc execution), returns an empty list so the calling
+ *      handler can surface a clear error.
+ */
+async function resolveAccountCodes(ctx: ActionHandlerContext, raw: unknown): Promise<string[]> {
+  const explicit = String(raw ?? '').split(',').map(s => s.trim()).filter(Boolean);
+  if (explicit.length > 0) return explicit;
+  if (!ctx.config.fsLineId) return [];
+  const rows = await prisma.auditTBRow.findMany({
+    where: { engagementId: ctx.engagementId, fsLineId: ctx.config.fsLineId },
+    select: { accountCode: true },
+    orderBy: { accountCode: 'asc' },
+  });
+  return rows.map(r => r.accountCode);
+}
+
 async function handleReconcileToTb(ctx: ActionHandlerContext): Promise<ActionHandlerResult> {
   const { inputs, engagementId } = ctx;
   const mode = ((inputs.mode as string) || 'per_code').toLowerCase();
   const amountColumn = (inputs.amount_column as string) || 'amount';
   const codeColumn = (inputs.code_column as string) || 'account_code';
   const tolerance = Number(inputs.tolerance_gbp || 1);
-  const rawCodes = (inputs.account_codes as string) || '';
-  const requestedCodes = rawCodes.split(',').map(s => s.trim()).filter(Boolean);
+  const requestedCodes = await resolveAccountCodes(ctx, inputs.account_codes);
   const listing: any[] = Array.isArray(inputs.data_table) ? inputs.data_table : [];
 
   if (requestedCodes.length === 0) {
-    return { action: 'error', outputs: {}, errorMessage: 'No TB account codes supplied — bind `account_codes` from an upstream Select TB Account Codes step or set it manually.' };
+    return { action: 'error', outputs: {}, errorMessage: 'No TB account codes available. Either supply `account_codes` (or bind from an upstream Select TB Account Codes step) or run this action inside a test that has its FS line set so the codes can be derived from the engagement\'s TB.' };
   }
 
   // Pull the requested TB rows in one query, keyed by normalised code.
@@ -749,8 +776,11 @@ async function handleExtractAndVerifyListing(ctx: ActionHandlerContext): Promise
   const strategy = ((inputs.match_strategy as string) || 'code_then_description').toLowerCase();
   const threshold = Math.max(0, Math.min(1, Number(inputs.description_match_threshold) || 0.6));
   const tolerance = Number(inputs.tolerance_gbp || 1);
-  const expectedCodes = ((inputs.account_codes as string) || '')
-    .split(',').map(s => s.trim()).filter(Boolean);
+  // expectedCodes drives the missing_from_response check. Falls
+  // back to the test's FS line when blank — same as reconcile_to_tb
+  // — so a simple test scoped to one FS line doesn't need an
+  // upstream select_tb_account_codes step.
+  const expectedCodes = await resolveAccountCodes(ctx, inputs.account_codes);
 
   // Build the candidate rows. data_table wins; chat_response is the
   // free-text fallback. Document AI extraction would slot in here in

@@ -848,7 +848,7 @@ export const SYSTEM_ACTIONS: ActionDefinitionData[] = [
       ]},
       { code: 'amount_column', label: 'Amount Column', type: 'text', required: false, source: 'user', group: 'Data', defaultValue: 'amount', description: 'Column on the listing rows holding the GBP amount to sum.' },
       { code: 'code_column', label: 'Code Column', type: 'text', required: false, source: 'user', group: 'Data', defaultValue: 'account_code', description: 'Column on the listing rows holding each row\'s TB account code. Only used in per-code mode.' },
-      { code: 'account_codes', label: 'TB Account Codes', type: 'text', required: true, source: 'user', group: 'Reconciliation', description: 'Comma-separated TB codes whose balances at period end should match the listing. Bind to `$prev.account_codes` when paired with Select TB Account Codes upstream.' },
+      { code: 'account_codes', label: 'TB Account Codes (optional)', type: 'text', required: false, source: 'user', group: 'Reconciliation', description: 'Comma-separated TB codes whose balances at period end should match the listing. Bind to `$prev.account_codes` when paired with Select TB Account Codes upstream. Leave blank when the test is scoped to a single FS line — the action falls back to every TB code mapped to that FS line.' },
       { code: 'tolerance_gbp', label: 'Tolerance (GBP)', type: 'number', required: false, source: 'user', group: 'Reconciliation', defaultValue: 1, description: 'Per-code variance under this is treated as reconciled. Applied per code in per-code mode.' },
       { code: 'period_end', label: 'Period End', type: 'date', required: false, source: 'auto', autoMapFrom: '$ctx.engagement.periodEnd', group: 'Context' },
     ],
@@ -888,7 +888,7 @@ export const SYSTEM_ACTIONS: ActionDefinitionData[] = [
       ]},
       { code: 'description_match_threshold', label: 'Description Match Threshold (0–1)', type: 'number', required: false, source: 'user', defaultValue: 0.6, group: 'Matching', description: 'Minimum word-overlap score required for a description match. Lower = looser, higher = stricter.' },
       { code: 'tolerance_gbp', label: 'Tolerance (GBP)', type: 'number', required: false, source: 'user', defaultValue: 1, group: 'Thresholds' },
-      { code: 'account_codes', label: 'Expected TB Account Codes (optional)', type: 'text', required: false, source: 'user', group: 'Expected Codes', description: 'Comma-separated codes that should be in the response. Bind to `$prev.account_codes` when paired with Select TB Account Codes upstream — the action will then surface any of them missing from the response. Leave blank to skip the missing-code check.' },
+      { code: 'account_codes', label: 'Expected TB Account Codes (optional)', type: 'text', required: false, source: 'user', group: 'Expected Codes', description: 'Comma-separated codes that should be in the response. Bind to `$prev.account_codes` when paired with Select TB Account Codes upstream — the action will then surface any of them missing from the response. Leave blank when the test is scoped to a single FS line; the action falls back to every TB code mapped to that FS line.' },
       { code: 'period_end', label: 'Period End', type: 'date', required: false, source: 'auto', autoMapFrom: '$ctx.engagement.periodEnd', group: 'Context' },
     ],
     outputSchema: [
