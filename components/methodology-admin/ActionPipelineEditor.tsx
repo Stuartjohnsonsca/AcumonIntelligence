@@ -1,8 +1,8 @@
 'use client';
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
 import { Button } from '@/components/ui/button';
-import { Plus, X, Save, Loader2, GripVertical, ChevronDown, ChevronRight, Trash2, ArrowDown, EyeOff, Eye, GitBranch } from 'lucide-react';
+import { Plus, X, Save, Loader2, GripVertical, ChevronDown, ChevronRight, Trash2, ArrowDown, EyeOff, Eye, GitBranch, GitMerge } from 'lucide-react';
 import { ActionCatalog, getActionIcon, type ActionDefinitionItem } from './ActionCatalog';
 import { ActionInputPanel } from './ActionInputPanel';
 import { getCategoryStyle } from '@/lib/action-registry';
@@ -220,6 +220,51 @@ export function ActionPipelineEditor({ testId, testDescription, initialSteps, on
     setSteps(prev => prev.map(s => s.id === stepId ? { ...s, branchRules: rules } : s));
   }, []);
 
+  // Sets goto-merge rules on every step whose stepOrder is in
+  // `branchTargetIndices`. Used by the Branch & Merge helper inside
+  // BranchRulesPanel — turning a one-step fork into a true
+  // branch/merge structure means every branch's terminal step has
+  // to point at the same downstream merge point. Doing this in one
+  // click here is much friendlier than asking the operator to
+  // re-open each branch step's Flow panel manually.
+  const setBranchEndsMergeTarget = useCallback((branchTargetIndices: number[], mergeTarget: number) => {
+    setSteps(prev => prev.map((s, i) => {
+      if (!branchTargetIndices.includes(i)) return s;
+      // Only overwrite when the branch step is currently linear or
+      // already a goto — leave bespoke conditional rules alone so
+      // we don't silently destroy operator work.
+      const existing = s.branchRules;
+      if (existing && existing.mode === 'conditional') return s;
+      return { ...s, branchRules: { mode: 'goto', target: mergeTarget } };
+    }));
+  }, []);
+
+  // Inbound-reference map: which other steps point to step N via
+  // their branchRules. Used to render "merge point" pills and
+  // "incoming branch" badges so the operator can see the graph
+  // structure at a glance.
+  const inboundRefs = useMemo(() => {
+    const map = new Map<number, Array<{ from: number; kind: 'goto' | 'conditional'; when?: string }>>();
+    const push = (target: number, ref: { from: number; kind: 'goto' | 'conditional'; when?: string }) => {
+      if (target < 0 || target >= steps.length) return;
+      if (!map.has(target)) map.set(target, []);
+      map.get(target)!.push(ref);
+    };
+    for (let i = 0; i < steps.length; i++) {
+      const r = steps[i].branchRules;
+      if (!r) continue;
+      if (r.mode === 'goto' && typeof r.target === 'number') push(r.target, { from: i, kind: 'goto' });
+      if (r.mode === 'skip' && typeof r.target === 'number') push(i + 1 + Math.max(1, r.target), { from: i, kind: 'goto' });
+      if (r.mode === 'conditional') {
+        for (const rule of r.rules || []) {
+          if (typeof rule.target === 'number') push(rule.target, { from: i, kind: 'conditional', when: rule.when });
+        }
+        if (typeof r.default === 'number') push(r.default, { from: i, kind: 'conditional', when: 'default' });
+      }
+    }
+    return map;
+  }, [steps]);
+
   const handleToggleStageHidden = useCallback((stage: TestPipelineStage) => {
     setEditorConfig(prev => {
       const current = prev.hiddenStages || [];
@@ -260,6 +305,24 @@ export function ActionPipelineEditor({ testId, testDescription, initialSteps, on
     const userInputs = step.actionDefinition.inputSchema.filter(f => f.source === 'user');
     const autoInputs = step.actionDefinition.inputSchema.filter(f => f.source === 'auto');
     const prevOutputs = getPreviousOutputs(idx);
+    // Inbound references: which earlier steps point at this one
+    // via their branchRules. When more than one references this
+    // step, render a "merge point" pill so the operator can see
+    // the convergence at a glance.
+    const inbound = inboundRefs.get(idx) || [];
+    const isMergePoint = inbound.length > 1;
+    // Outbound branching: when this step's branchRules use
+    // conditional or goto, render a "branches into N paths" pill
+    // so the operator sees the divergence without expanding the
+    // Flow panel.
+    const branchOut = (() => {
+      const r = step.branchRules;
+      if (!r || r.mode === 'continue') return null;
+      if (r.mode === 'goto') return { kind: 'goto' as const, count: 1 };
+      if (r.mode === 'skip') return { kind: 'skip' as const, count: 1 };
+      const conditionalTargets = (r.rules || []).length + (r.default !== undefined ? 1 : 0);
+      return { kind: 'conditional' as const, count: conditionalTargets };
+    })();
     return (
       <div key={step.id} className="mb-2">
         <div className="border border-slate-200 rounded-lg overflow-hidden shadow-sm hover:shadow-md transition-shadow">
@@ -270,9 +333,42 @@ export function ActionPipelineEditor({ testId, testDescription, initialSteps, on
               {Icon && <Icon className="h-3.5 w-3.5 text-current" />}
             </div>
             <div className="flex-1 min-w-0">
-              <div className="flex items-center gap-2">
+              <div className="flex items-center gap-2 flex-wrap">
                 <span className="text-sm font-medium text-slate-800">{step.actionDefinition.name}</span>
                 <span className={`text-[9px] px-1.5 py-0.5 rounded-full font-medium ${getCategoryStyle(step.actionDefinition.category)}`}>{step.actionDefinition.category}</span>
+                {isMergePoint && (
+                  <span
+                    className="inline-flex items-center gap-1 text-[9px] px-1.5 py-0.5 rounded-full font-medium bg-violet-100 text-violet-700 border border-violet-200"
+                    title={`Merge point — ${inbound.length} branches converge here:\n${inbound.map(r => `  • from step ${r.from + 1}${r.when ? ` (${r.when === 'default' ? 'default' : 'when ' + r.when})` : ''}`).join('\n')}`}
+                  >
+                    <GitMerge className="h-2.5 w-2.5" /> merges {inbound.length}
+                  </span>
+                )}
+                {!isMergePoint && inbound.length === 1 && (
+                  <span
+                    className="inline-flex items-center gap-1 text-[9px] px-1.5 py-0.5 rounded-full font-medium bg-slate-100 text-slate-600 border border-slate-200"
+                    title={`Reached from step ${inbound[0].from + 1}${inbound[0].when ? ` (${inbound[0].when === 'default' ? 'default' : 'when ' + inbound[0].when})` : ''}`}
+                  >
+                    ← from step {inbound[0].from + 1}
+                  </span>
+                )}
+                {branchOut && (
+                  <span
+                    className="inline-flex items-center gap-1 text-[9px] px-1.5 py-0.5 rounded-full font-medium bg-amber-100 text-amber-700 border border-amber-200"
+                    title={
+                      branchOut.kind === 'conditional'
+                        ? `Branches into ${branchOut.count} path(s) — open the Flow panel to edit`
+                        : branchOut.kind === 'goto'
+                        ? 'Jumps to a specific step — open the Flow panel to edit'
+                        : 'Skips one or more steps — open the Flow panel to edit'
+                    }
+                  >
+                    <GitBranch className="h-2.5 w-2.5" />
+                    {branchOut.kind === 'conditional' ? `branches → ${branchOut.count}` :
+                     branchOut.kind === 'goto'        ? 'jumps' :
+                                                       'skips'}
+                  </span>
+                )}
               </div>
             </div>
             <div className="flex items-center gap-1">
@@ -348,6 +444,7 @@ export function ActionPipelineEditor({ testId, testDescription, initialSteps, on
                       previousOutputs={step.actionDefinition.outputSchema}
                       value={step.branchRules}
                       onChange={(val) => handleBranchRulesChange(step.id, val)}
+                      onSetMergeTargetOnBranchEnds={setBranchEndsMergeTarget}
                     />
                   </div>
                 )}
@@ -559,9 +656,18 @@ function BranchRulesPanel(props: {
   previousOutputs: OutputFieldDef[];
   value: BranchRules | null;
   onChange: (rules: BranchRules | null) => void;
+  /**
+   * Hands a list of branch-target step indices and a chosen merge
+   * target up to the editor so it can stamp `goto: mergeTarget` on
+   * each branch step in one go. Lets the operator close the loop on
+   * a fork without having to open every branch step's Flow panel
+   * individually.
+   */
+  onSetMergeTargetOnBranchEnds?: (branchTargetIndices: number[], mergeTarget: number) => void;
 }) {
-  const { stepIndex, totalSteps, stepLabels, previousOutputs, value, onChange } = props;
+  const { stepIndex, totalSteps, stepLabels, previousOutputs, value, onChange, onSetMergeTargetOnBranchEnds } = props;
   const mode: BranchMode = value?.mode || 'continue';
+  const [mergeTargetPick, setMergeTargetPick] = useState<number | ''>('');
 
   const setMode = (m: BranchMode) => {
     if (m === 'continue') return onChange(null);
@@ -700,6 +806,56 @@ function BranchRulesPanel(props: {
             <span className="text-[10px] text-slate-500">Otherwise (default):</span>
             {renderTargetPicker(value?.default, t => onChange({ ...value!, default: t }))}
           </div>
+          {/* One-click merge helper. Lets the operator close the
+              fork by stamping `goto: <mergeTarget>` on every branch
+              target step at once — without it, they'd have to open
+              every branch's Flow panel and configure the goto
+              manually. The helper walks each conditional rule's
+              target plus the default target. Branch steps that
+              already have their own conditional rules are skipped
+              by the editor-level handler so we don't trash bespoke
+              wiring. */}
+          {onSetMergeTargetOnBranchEnds && (() => {
+            const branchTargets = Array.from(new Set([
+              ...(value?.rules || []).map(r => r.target).filter((t): t is number => typeof t === 'number' && t >= 0),
+              ...(typeof value?.default === 'number' && value.default >= 0 ? [value.default] : []),
+            ]));
+            if (branchTargets.length < 2) return null;
+            return (
+              <div className="flex items-center gap-2 pt-1 border-t border-slate-200">
+                <GitMerge className="h-3 w-3 text-violet-500" />
+                <span className="text-[10px] text-slate-600">
+                  Merge {branchTargets.length} branches at:
+                </span>
+                <select
+                  value={mergeTargetPick === '' ? '' : String(mergeTargetPick)}
+                  onChange={e => setMergeTargetPick(e.target.value === '' ? '' : parseInt(e.target.value, 10))}
+                  className="text-[11px] border border-slate-200 rounded px-1.5 py-1 bg-white"
+                >
+                  <option value="">Select merge step…</option>
+                  {stepLabels.map((label, i) => {
+                    if (i === stepIndex) return null;
+                    if (branchTargets.includes(i)) return null;
+                    return <option key={i} value={i}>Step {i + 1} — {label}</option>;
+                  })}
+                  <option value={-1}>End of pipeline</option>
+                </select>
+                <button
+                  type="button"
+                  disabled={mergeTargetPick === ''}
+                  onClick={() => {
+                    if (mergeTargetPick === '') return;
+                    onSetMergeTargetOnBranchEnds(branchTargets, mergeTargetPick as number);
+                    setMergeTargetPick('');
+                  }}
+                  className="text-[10px] px-2 py-1 rounded bg-violet-600 text-white hover:bg-violet-700 disabled:opacity-40 disabled:cursor-not-allowed"
+                  title="Sets goto: <merge target> on each branch step. Branches that already have conditional rules are left alone."
+                >
+                  Apply merge
+                </button>
+              </div>
+            );
+          })()}
         </div>
       )}
     </div>
