@@ -58,8 +58,39 @@ export function getCategoryStyle(category: string): string {
 
 /**
  * Resolve binding references in a single value.
- * Supports: "$prev.<field>", "$step.<index>.<field>", "$ctx.<path>", "{{template}}"
+ *
+ * Supports dot-paths with array-index segments so a binding can drill
+ * into a specific row of a schedule:
+ *
+ *   $prev.total                       → 250000
+ *   $prev.data_table.0.amount         → 80000   (first row's amount)
+ *   $step.2.tb_rows.5.current_year    → 12345
+ *   $step.0.breakdown.1.contribution  → -50000
+ *   $ctx.engagement.periodEnd         → '2024-12-31'
+ *
+ * Numeric path segments are interpreted as array indices when the
+ * current value is an array; otherwise they're treated as object
+ * keys (so a key literally called "0" still works on an object).
+ *
+ * Returns `null` whenever any path segment misses, keeping handlers'
+ * downstream null-checks simple.
  */
+function readPath(root: any, path: string[]): any {
+  let current = root;
+  for (const key of path) {
+    if (current == null) return null;
+    if (Array.isArray(current) && /^-?\d+$/.test(key)) {
+      const idx = parseInt(key, 10);
+      current = idx < 0 ? current[current.length + idx] : current[idx];
+    } else if (typeof current === 'object') {
+      current = (current as Record<string, unknown>)[key];
+    } else {
+      return null;
+    }
+  }
+  return current ?? null;
+}
+
 export function resolveBindingValue(
   value: any,
   pipelineState: Record<number, Record<string, any>>,
@@ -68,30 +99,22 @@ export function resolveBindingValue(
 ): any {
   if (typeof value !== 'string') return value;
 
-  // $prev.<field>
+  // $prev.<field>[.<deeper>...]
   if (value.startsWith('$prev.')) {
-    const field = value.slice(6);
-    const prev = pipelineState[currentStepIndex - 1];
-    return prev?.[field] ?? null;
+    const path = value.slice(6).split('.');
+    return readPath(pipelineState[currentStepIndex - 1], path);
   }
 
-  // $step.<index>.<field>
+  // $step.<index>.<field>[.<deeper>...]
   if (value.startsWith('$step.')) {
     const parts = value.slice(6).split('.');
     const stepIdx = parseInt(parts[0], 10);
-    const field = parts.slice(1).join('.');
-    return pipelineState[stepIdx]?.[field] ?? null;
+    return readPath(pipelineState[stepIdx], parts.slice(1));
   }
 
   // $ctx.<path>
   if (value.startsWith('$ctx.')) {
-    const path = value.slice(5).split('.');
-    let current: any = ctx;
-    for (const key of path) {
-      if (current == null) return null;
-      current = current[key];
-    }
-    return current ?? null;
+    return readPath(ctx, value.slice(5).split('.'));
   }
 
   return value;

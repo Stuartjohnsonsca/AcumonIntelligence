@@ -62,6 +62,7 @@ const HANDLERS: Record<string, ActionHandler> = {
   extractAndVerifyListing: handleExtractAndVerifyListing,
   requestCalculation: handleRequestCalculation,
   aggregateBalances: handleAggregateBalances,
+  applyFactor: handleApplyFactor,
   verifyEvidence: handleVerifyEvidence,
   teamReview: handleTeamReview,
   verifyPropertyAssets: handleVerifyPropertyAssets,
@@ -1128,6 +1129,52 @@ async function handleAggregateBalances(ctx: ActionHandlerContext): Promise<Actio
       data_table: sources,
       aggregate_label: aggregateLabel,
       expected_total: expectedTotal,
+      variance,
+      account_codes: (inputs.account_codes as string) || '',
+      pass_fail: passFail,
+    },
+  };
+}
+
+async function handleApplyFactor(ctx: ActionHandlerContext): Promise<ActionHandlerResult> {
+  const { inputs } = ctx;
+  const baseLabel = (inputs.base_label as string) || 'Base balance';
+  const baseAmount = toAmount(inputs.base_amount);
+  const rawFactor = toAmount(inputs.factor);
+  // The toggle defaults true (the most common case — auditors enter
+  // tax / interest / commission rates as percentages, e.g. 25 not
+  // 0.25). When false, the factor is used as a raw multiplier.
+  const asPct = inputs.factor_as_percentage !== false;
+  const appliedFactor = asPct ? rawFactor / 100 : rawFactor;
+  const factorLabel = ((inputs.factor_label as string) || '').trim()
+    || (asPct ? `${rawFactor}%` : `× ${rawFactor}`);
+  const result = Math.round(baseAmount * appliedFactor * 100) / 100;
+
+  // Optional tolerance check — same shape as aggregate_balances so
+  // both actions can chain into the same downstream verifier.
+  const rawExpected = inputs.expected_total;
+  const expectedSupplied = rawExpected !== undefined && rawExpected !== null && String(rawExpected) !== '';
+  const expected = expectedSupplied ? Math.round(toAmount(rawExpected) * 100) / 100 : null;
+  const tolerance = Number(inputs.tolerance_gbp || 1);
+  const variance = expected === null ? null : Math.round((result - expected) * 100) / 100;
+  const passFail = expected === null ? 'pass' : (Math.abs(variance ?? 0) <= tolerance ? 'pass' : 'fail');
+
+  const breakdown = [
+    { line: 'Base', label: baseLabel, amount: Math.round(baseAmount * 100) / 100 },
+    { line: 'Factor', label: factorLabel, factor: rawFactor, applied_factor: appliedFactor },
+    { line: 'Result', label: 'Result', amount: result },
+  ];
+
+  return {
+    action: 'continue',
+    outputs: {
+      result,
+      total: result,
+      breakdown,
+      data_table: breakdown,
+      base_amount: Math.round(baseAmount * 100) / 100,
+      applied_factor: appliedFactor,
+      expected_total: expected,
       variance,
       account_codes: (inputs.account_codes as string) || '',
       pass_fail: passFail,
