@@ -60,6 +60,7 @@ const HANDLERS: Record<string, ActionHandler> = {
   selectTbAccountCodes: handleSelectTbAccountCodes,
   reconcileToTb: handleReconcileToTb,
   extractAndVerifyListing: handleExtractAndVerifyListing,
+  requestCalculation: handleRequestCalculation,
   verifyEvidence: handleVerifyEvidence,
   teamReview: handleTeamReview,
   verifyPropertyAssets: handleVerifyPropertyAssets,
@@ -875,6 +876,174 @@ async function handleExtractAndVerifyListing(ctx: ActionHandlerContext): Promise
       pass_fail: allOk ? 'pass' : 'fail',
     },
   };
+}
+
+// Friendly labels for the calculation_type select. Used to compose
+// the portal message so the client sees a natural-language ask
+// instead of the raw enum value.
+const CALCULATION_LABELS: Record<string, string> = {
+  ecl: 'expected credit loss / bad-debt provision',
+  depreciation: 'depreciation charge',
+  interest_accrual: 'interest accrual',
+  goodwill_impairment: 'goodwill / asset impairment',
+  deferred_tax: 'deferred tax computation',
+  corporation_tax: 'corporation tax computation',
+  lease_liability: 'lease liability schedule',
+  stock_valuation: 'stock / inventory valuation',
+  pension_cost: 'pension cost workings',
+  fair_value: 'fair value workings',
+  share_based_payment: 'share-based payment charge',
+  revenue_recognition: 'revenue recognition workings',
+  provisions: 'provision workings',
+  fx_translation: 'FX translation workings',
+  prepayment_amortise: 'prepayment amortisation',
+  other: 'calculation',
+};
+
+const COMPONENT_LABELS: Record<string, string> = {
+  inputs: 'inputs / assumptions used',
+  methodology: 'methodology / formula applied',
+  result: 'resulting balance',
+  period_split: 'period-by-period split',
+  prior_period: 'prior-period comparative',
+  reconciliation: 'reconciliation to TB account codes',
+  sensitivity: 'sensitivity / scenario analysis',
+};
+
+async function handleRequestCalculation(ctx: ActionHandlerContext): Promise<ActionHandlerResult> {
+  const { engagementId, inputs } = ctx;
+  const calcType = (inputs.calculation_type as string) || 'other';
+  const calcLabel = CALCULATION_LABELS[calcType] || 'calculation';
+  const components: string[] = Array.isArray(inputs.expected_components) ? inputs.expected_components : [];
+  const accountCodes = (inputs.account_codes as string) || '';
+  const preferredFormat = (inputs.preferred_format as string) || 'excel_csv';
+  const formatHint =
+    preferredFormat === 'excel_csv' ? 'Excel or CSV preferred.' :
+    preferredFormat === 'pdf'       ? 'PDF preferred.' :
+    preferredFormat === 'word'      ? 'Word document preferred.' : '';
+
+  const engagement = await prisma.auditEngagement.findUnique({
+    where: { id: engagementId },
+    select: { clientId: true },
+  });
+  if (!engagement) {
+    return { action: 'error', outputs: {}, errorMessage: 'Engagement not found' };
+  }
+  const requestingUser = await prisma.user.findUnique({
+    where: { id: ctx.config.userId },
+    select: { name: true, email: true },
+  });
+
+  // Pre-flight dedup: prior portal calculations / engagement
+  // documents tagged with this area or the calculation label.
+  const { findExistingClientResponses, readDedupOptions, dedupHitsToTable } = await import('@/lib/client-request-dedup');
+  const dedupOptions = readDedupOptions(inputs, {
+    engagementId,
+    documentType: null, // calculations have no fixed document_type
+    areaOfWork: inputs.area_of_work || ctx.config.fsLine || calcLabel,
+    match: [calcLabel],
+  });
+  const dedupResult = await findExistingClientResponses(dedupOptions, ctx);
+  const alreadyHave = dedupHitsToTable(dedupResult);
+  const originallyRequestedCount = 1;
+  const stillNeededCount = alreadyHave.length > 0 && dedupResult.enabled ? 0 : 1;
+
+  // Short-circuit when something on file already satisfies the ask.
+  if (dedupResult.enabled && stillNeededCount === 0 && alreadyHave.length > 0) {
+    return {
+      action: 'continue',
+      outputs: {
+        documents: alreadyHave,
+        chat_response: null,
+        data_table: [],
+        calculation_type: calcType,
+        account_codes: accountCodes,
+        portal_request_id: null,
+        outstanding_count: 0,
+        already_have: alreadyHave,
+        originally_requested_count: originallyRequestedCount,
+        dedup_summary: dedupResult.summary,
+      },
+    };
+  }
+
+  // Compose the portal message. Defaults to a sensible template;
+  // the operator's `message_to_client` overrides when supplied.
+  // Either way we append a structured "what to include" block built
+  // from `expected_components` so the client sees a precise checklist.
+  const userMessage = (inputs.message_to_client as string) || `Please provide your ${calcLabel} workings supporting this balance.`;
+  const componentLines = components
+    .filter(c => COMPONENT_LABELS[c])
+    .map(c => `  • ${COMPONENT_LABELS[c]}`)
+    .join('\n');
+  let composed = userMessage;
+  if (componentLines.length > 0) {
+    composed += `\n\nPlease ensure your response includes:\n${componentLines}`;
+  }
+  if (formatHint) composed += `\n\n${formatHint}`;
+  if (accountCodes.trim()) {
+    composed += `\n\nThe result should agree to TB account code(s): ${accountCodes}.`;
+  }
+  if (dedupResult.enabled && alreadyHave.length > 0) {
+    composed += `\n\nNote: ${alreadyHave.length} item(s) on this topic are already on file with us — please confirm whether the existing workings are still current or supply updated ones.`;
+  }
+
+  // Portal-Principal routing — same path as request_documents.
+  const { buildRoutingForNewRequest } = await import('@/lib/portal-request-routing');
+  const routing = await buildRoutingForNewRequest({
+    engagementId,
+    routingFsLineId: ctx.config.fsLineId || null,
+    routingTbAccountCode: null,
+  });
+
+  try {
+    const portalRequest = await prisma.portalRequest.create({
+      data: {
+        clientId: engagement.clientId,
+        engagementId,
+        section: 'calculations',
+        question: composed,
+        status: 'outstanding',
+        requestedById: ctx.config.userId,
+        requestedByName: requestingUser?.name || requestingUser?.email || 'Audit Team',
+        evidenceTag: inputs.area_of_work || ctx.config.fsLine || `calc:${calcType}`,
+        ...routing,
+      } as any,
+    });
+
+    await prisma.outstandingItem.create({
+      data: {
+        engagementId,
+        executionId: ctx.executionId,
+        type: 'portal_request',
+        title: `Calculation request: ${calcLabel}`,
+        description: composed,
+        source: 'flow',
+        assignedTo: 'client',
+        status: 'awaiting_client',
+        fsLine: ctx.config.fsLine,
+        testName: ctx.config.testDescription,
+        portalRequestId: portalRequest.id,
+      },
+    });
+
+    return {
+      action: 'pause',
+      outputs: {
+        portal_request_id: portalRequest.id,
+        calculation_type: calcType,
+        account_codes: accountCodes,
+        outstanding_count: stillNeededCount,
+        already_have: alreadyHave,
+        originally_requested_count: originallyRequestedCount,
+        dedup_summary: dedupResult.summary,
+      },
+      pauseReason: 'portal_response',
+      pauseRefId: portalRequest.id,
+    };
+  } catch (err: any) {
+    return { action: 'error', outputs: {}, errorMessage: `Failed to create portal request: ${err.message}` };
+  }
 }
 
 async function handleVerifyEvidence(ctx: ActionHandlerContext): Promise<ActionHandlerResult> {
