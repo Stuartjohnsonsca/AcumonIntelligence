@@ -59,6 +59,7 @@ const HANDLERS: Record<string, ActionHandler> = {
   compareBankToTB: handleCompareBankToTB,
   selectTbAccountCodes: handleSelectTbAccountCodes,
   reconcileToTb: handleReconcileToTb,
+  extractAndVerifyListing: handleExtractAndVerifyListing,
   verifyEvidence: handleVerifyEvidence,
   teamReview: handleTeamReview,
   verifyPropertyAssets: handleVerifyPropertyAssets,
@@ -661,6 +662,217 @@ async function handleReconcileToTb(ctx: ActionHandlerContext): Promise<ActionHan
       extra_codes: extraCodes,
       unreconciled_items: unreconciled,
       pass_fail: allReconciled ? 'pass' : 'fail',
+    },
+  };
+}
+
+// ─── Extract & Verify Listing helpers ──────────────────────────────────────
+
+// Pulls an account code, description and amount out of a single
+// listing row regardless of which column casing / spelling the
+// client used. The hint columns are tried first, then a small set
+// of common synonyms, then a fall-through to the first numeric /
+// text field on the row.
+function pickColumns(
+  row: Record<string, any>,
+  hints: { code: string; description: string; amount: string },
+): { code: string; description: string; amount: number } {
+  const keys = Object.keys(row);
+  const lowerKeys = keys.map(k => k.toLowerCase());
+  function find(hint: string, fallbacks: RegExp[]): string | null {
+    const exact = keys.find(k => k.toLowerCase() === hint.toLowerCase());
+    if (exact) return exact;
+    for (const re of fallbacks) {
+      const idx = lowerKeys.findIndex(k => re.test(k));
+      if (idx >= 0) return keys[idx];
+    }
+    return null;
+  }
+  const codeKey = find(hints.code, [/^code$/, /account[_ ]?code/, /nominal/, /^gl$/, /^a\/c$/]);
+  const descKey = find(hints.description, [/desc/, /name/, /narrative/, /account.*name/]);
+  const amtKey = find(hints.amount, [/amount/, /value/, /balance/, /total/, /£|gbp|usd|eur/i]);
+  return {
+    code: codeKey ? String(row[codeKey] ?? '').trim() : '',
+    description: descKey ? String(row[descKey] ?? '').trim() : '',
+    amount: amtKey ? toAmount(row[amtKey]) : 0,
+  };
+}
+
+// Parse plain-text the client typed in the portal — tab- or
+// comma-delimited rows, first non-blank line treated as header when
+// it contains non-numeric tokens.
+function parseChatResponseToRows(text: string): Record<string, any>[] {
+  const lines = text.split(/\r?\n/).map(l => l.trim()).filter(l => l.length > 0);
+  if (lines.length === 0) return [];
+  const split = (l: string) => l.includes('\t') ? l.split('\t') : l.split(/\s*,\s*/);
+  const firstCells = split(lines[0]);
+  const headerLooksNumeric = firstCells.every(c => /^-?\d+(\.\d+)?$/.test(c.replace(/[,£$€\s]/g, '')));
+  let header: string[];
+  let dataLines: string[];
+  if (firstCells.length > 1 && !headerLooksNumeric) {
+    header = firstCells.map(c => c.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '') || 'col');
+    dataLines = lines.slice(1);
+  } else {
+    header = firstCells.map((_, i) => `col_${i + 1}`);
+    dataLines = lines;
+  }
+  return dataLines.map(line => {
+    const cells = split(line);
+    const obj: Record<string, any> = {};
+    for (let i = 0; i < header.length; i++) obj[header[i]] = cells[i] ?? '';
+    return obj;
+  });
+}
+
+// Word-overlap score between two strings (case-insensitive,
+// stop-words skipped). Returns 0..1. Used for fuzzy description
+// matching when the client's code column doesn't line up with the TB.
+const STOP_WORDS = new Set(['and', 'or', 'the', 'of', 'to', 'in', 'a', 'an', '&', 'for', 'on', 'with']);
+function descriptionMatchScore(a: string, b: string): number {
+  if (!a || !b) return 0;
+  const tokens = (s: string) => new Set(s.toLowerCase().split(/[^a-z0-9]+/).filter(t => t && !STOP_WORDS.has(t)));
+  const ta = tokens(a);
+  const tb = tokens(b);
+  if (ta.size === 0 || tb.size === 0) return 0;
+  let intersect = 0;
+  for (const t of ta) if (tb.has(t)) intersect++;
+  return intersect / Math.max(ta.size, tb.size);
+}
+
+async function handleExtractAndVerifyListing(ctx: ActionHandlerContext): Promise<ActionHandlerResult> {
+  const { inputs, engagementId } = ctx;
+  const codeCol = (inputs.code_column as string) || 'account_code';
+  const descCol = (inputs.description_column as string) || 'description';
+  const amtCol = (inputs.amount_column as string) || 'amount';
+  const strategy = ((inputs.match_strategy as string) || 'code_then_description').toLowerCase();
+  const threshold = Math.max(0, Math.min(1, Number(inputs.description_match_threshold) || 0.6));
+  const tolerance = Number(inputs.tolerance_gbp || 1);
+  const expectedCodes = ((inputs.account_codes as string) || '')
+    .split(',').map(s => s.trim()).filter(Boolean);
+
+  // Build the candidate rows. data_table wins; chat_response is the
+  // free-text fallback. Document AI extraction would slot in here in
+  // the future — for now we surface a pass-through error so the
+  // operator sees the gap rather than silently no-op.
+  let rows: Record<string, any>[] = Array.isArray(inputs.data_table) ? inputs.data_table : [];
+  if (rows.length === 0 && typeof inputs.chat_response === 'string' && inputs.chat_response.trim()) {
+    rows = parseChatResponseToRows(inputs.chat_response);
+  }
+  if (rows.length === 0 && Array.isArray(inputs.source_documents) && inputs.source_documents.length > 0) {
+    return {
+      action: 'error',
+      outputs: {},
+      errorMessage: 'Document AI extraction is not yet wired into this action. Pre-parse the upload upstream (e.g. via Extract Bank Statements / Extract Accruals Evidence) and bind its data_table here, or have the client paste the listing into the portal chat.',
+    };
+  }
+  if (rows.length === 0) {
+    return { action: 'error', outputs: {}, errorMessage: 'No response data to verify — bind a data_table or chat_response from an upstream step.' };
+  }
+
+  // Pull the engagement's TB once. Small enough to in-memory match.
+  const tbRows = await prisma.auditTBRow.findMany({
+    where: { engagementId },
+    select: { accountCode: true, description: true, currentYear: true },
+    orderBy: { accountCode: 'asc' },
+  });
+  const tbByCode = new Map<string, { accountCode: string; description: string | null; balance: number }>();
+  for (const r of tbRows) {
+    tbByCode.set(normCode(r.accountCode), {
+      accountCode: r.accountCode,
+      description: r.description,
+      balance: Number(r.currentYear || 0),
+    });
+  }
+
+  const dataTable: any[] = [];
+  const verification: any[] = [];
+  const unmatched: any[] = [];
+  let matchedCount = 0;
+  let varianceCount = 0;
+  const matchedCodes = new Set<string>();
+
+  for (let i = 0; i < rows.length; i++) {
+    const row = rows[i];
+    const picked = pickColumns(row, { code: codeCol, description: descCol, amount: amtCol });
+    const codeKey = normCode(picked.code);
+
+    let matchedTb: { accountCode: string; description: string | null; balance: number } | null = null;
+    let matchVia: 'code' | 'description' | 'none' = 'none';
+    let matchScore = 0;
+
+    if (strategy !== 'description_only' && codeKey) {
+      const direct = tbByCode.get(codeKey);
+      if (direct) { matchedTb = direct; matchVia = 'code'; matchScore = 1; }
+    }
+    if (!matchedTb && strategy !== 'code_only' && picked.description) {
+      let bestRow: { accountCode: string; description: string | null; balance: number } | null = null;
+      let bestScore = 0;
+      for (const [, candidate] of tbByCode) {
+        const score = descriptionMatchScore(picked.description, candidate.description || candidate.accountCode);
+        if (score > bestScore) { bestScore = score; bestRow = candidate; }
+      }
+      if (bestRow && bestScore >= threshold) { matchedTb = bestRow; matchVia = 'description'; matchScore = Math.round(bestScore * 100) / 100; }
+    }
+
+    const dataRow = {
+      original_row: i + 1,
+      code_supplied: picked.code || null,
+      description_supplied: picked.description || null,
+      amount_supplied: Math.round(picked.amount * 100) / 100,
+      account_code: matchedTb?.accountCode ?? null,
+      description: matchedTb?.description ?? null,
+    };
+    dataTable.push(dataRow);
+
+    if (!matchedTb) {
+      const verifyRow = { ...dataRow, listing_total: dataRow.amount_supplied, tb_balance: null, variance: null, status: 'no_tb_match', match_via: 'none', match_score: 0 };
+      verification.push(verifyRow);
+      unmatched.push(verifyRow);
+      continue;
+    }
+
+    matchedCodes.add(normCode(matchedTb.accountCode));
+    const variance = Math.round((picked.amount - matchedTb.balance) * 100) / 100;
+    const status = Math.abs(variance) <= tolerance ? 'matched' : 'amount_variance';
+    if (status === 'matched') matchedCount++; else varianceCount++;
+    verification.push({
+      ...dataRow,
+      listing_total: dataRow.amount_supplied,
+      tb_balance: Math.round(matchedTb.balance * 100) / 100,
+      variance,
+      status,
+      match_via: matchVia,
+      match_score: matchScore,
+    });
+  }
+
+  // Codes the operator told us to expect but the response didn't
+  // include. Skipped when account_codes isn't supplied — most uses
+  // of this action are happy to verify whatever the client sends.
+  const missingFromResponse: any[] = [];
+  for (const code of expectedCodes) {
+    const key = normCode(code);
+    if (matchedCodes.has(key)) continue;
+    const tb = tbByCode.get(key);
+    missingFromResponse.push({
+      account_code: tb?.accountCode || code,
+      description: tb?.description || null,
+      tb_balance: tb ? Math.round(tb.balance * 100) / 100 : null,
+    });
+  }
+
+  const allOk = unmatched.length === 0 && varianceCount === 0 && missingFromResponse.length === 0;
+  return {
+    action: 'continue',
+    outputs: {
+      data_table: dataTable,
+      verification,
+      unmatched_lines: unmatched,
+      missing_from_response: missingFromResponse,
+      matched_count: matchedCount,
+      variance_count: varianceCount,
+      unmatched_count: unmatched.length,
+      pass_fail: allOk ? 'pass' : 'fail',
     },
   };
 }
