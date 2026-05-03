@@ -84,6 +84,14 @@ interface Props {
   onClose: () => void;
   periodEndDate?: string | null;
   periodStartDate?: string | null;
+  /**
+   * Optional deep-link target. When supplied (e.g. from the Completion
+   * sidebar's AP shortcuts) the panel opens with this Statement
+   * pre-selected instead of the default first statement.
+   */
+  initialStatement?: string;
+  /** Same idea for the "Other" group (Going Concern, SRMM, etc.). */
+  initialOtherTab?: string;
 }
 
 const STATEMENT_ORDER = ['Profit & Loss', 'Balance Sheet', 'Cash Flow Statement', 'Notes'];
@@ -302,7 +310,7 @@ const FS_LINE_ALIASES: Record<string, string[]> = {
   'equity': ['capital & reserves', 'shareholders funds'],
 };
 
-export function AuditPlanPanel({ engagementId, clientId, periodId, onClose, periodEndDate, periodStartDate }: Props) {
+export function AuditPlanPanel({ engagementId, clientId, periodId, onClose, periodEndDate, periodStartDate, initialStatement, initialOtherTab }: Props) {
   const [tbRows, setTbRows] = useState<TBRow[]>([]);
   const [rmmItems, setRmmItems] = useState<RMMItem[]>([]);
   const [allocations, setAllocations] = useState<AllocationEntry[]>([]);
@@ -985,8 +993,24 @@ export function AuditPlanPanel({ engagementId, clientId, periodId, onClose, peri
   }, [visibleTestExecutions, dbExecutions, dbConclusions]);
 
   useEffect(() => {
+    // Deep-link path: when the host supplied an initial Statement /
+    // Other-tab target, honour it on first render. Falls back to the
+    // first available statement if the named target isn't present.
+    if (initialOtherTab && (OTHER_TABS as readonly string[]).includes(initialOtherTab)) {
+      setActiveOtherTab(initialOtherTab as OtherTab);
+      setActiveStatement('');
+      setActiveLevel('');
+      setActiveNote('');
+      return;
+    }
+    if (initialStatement && statements.includes(initialStatement) && !activeStatement) {
+      setActiveStatement(initialStatement);
+      setActiveOtherTab('');
+      return;
+    }
     if (statements.length > 0 && !activeStatement) setActiveStatement(statements[0]);
-  }, [statements, activeStatement]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [statements, activeStatement, initialStatement, initialOtherTab]);
 
   useEffect(() => {
     if (levels.length > 0) setActiveLevel(levels[0]); else setActiveLevel('');

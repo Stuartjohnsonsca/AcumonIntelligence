@@ -65,6 +65,18 @@ interface Props {
   hasPriorPeriodEngagement?: boolean;
   onNavigateMainTab?: (tabKey: string, params?: Record<string, string>) => void;
   onClose?: () => void;
+  /**
+   * Initial Completion sub-tab when the panel mounts. EngagementTabs
+   * passes the last-viewed sub-tab so re-entering Completion lands the
+   * auditor where they were before navigating away to a Planning /
+   * Fieldwork tab via the sidebar.
+   */
+  initialActiveTab?: string;
+  /**
+   * Fires whenever the active sub-tab changes so EngagementTabs can
+   * remember it for the "Back to Completion: X" return affordance.
+   */
+  onActiveTabChange?: (key: string, label: string) => void;
 }
 
 const COMPLETION_TABS = [
@@ -87,8 +99,24 @@ export function CompletionPanel({
   completionScheduleOrder, scheduleTriggers, qaAnswers, aiFuzzyCache,
   clientIsListed, hasPriorPeriodEngagement,
   onNavigateMainTab, onClose,
+  initialActiveTab, onActiveTabChange,
 }: Props) {
-  const [activeTab, setActiveTab] = useState<CompletionTabKey>('summary-memo');
+  // Hydrate from initialActiveTab when supplied (e.g. on re-entry from
+  // a sidebar-driven divert), falling back to the first tab.
+  const [activeTab, setActiveTab] = useState<CompletionTabKey>(
+    (initialActiveTab && (COMPLETION_TABS as readonly { key: string }[]).some(t => t.key === initialActiveTab))
+      ? (initialActiveTab as CompletionTabKey)
+      : 'summary-memo'
+  );
+
+  // Notify the parent whenever the tab changes so EngagementTabs can
+  // remember the user's location for the "Back to Completion: X"
+  // button after they divert away.
+  useEffect(() => {
+    if (!onActiveTabChange) return;
+    const def = COMPLETION_TABS.find(t => t.key === activeTab);
+    if (def) onActiveTabChange(activeTab, def.label);
+  }, [activeTab, onActiveTabChange]);
 
   // Visibility helper for sub-tabs — uses the trigger-based evaluation from
   // lib/schedule-triggers so Completion sub-tabs respect the same rules as main tabs.

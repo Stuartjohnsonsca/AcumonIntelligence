@@ -250,11 +250,37 @@ export function EngagementTabs({ engagement, auditType, clientName, periodEndDat
   const [showAuditPlan, setShowAuditPlan] = useState(!!savedState.auditPlan);
   const [showCompletion, setShowCompletion] = useState(!!savedState.completion);
   const [tabSignOffs, setTabSignOffs] = useState<Record<string, TabSignOffStatus>>({});
+  // Last Completion sub-tab the user was on. Used by the "Back to
+  // Completion: <X>" return affordance after they divert into a
+  // Planning / Fieldwork / Audit Plan tab from the Completion sidebar.
+  // Null when the user has never opened Completion this session.
+  const [lastCompletionTab, setLastCompletionTab] = useState<{ key: string; label: string } | null>(
+    savedState.lastCompletionTab && typeof savedState.lastCompletionTab === 'object'
+      ? savedState.lastCompletionTab as { key: string; label: string }
+      : null
+  );
+  // Audit Plan deep-link target — set when the user clicks an AP
+  // shortcut in the Completion sidebar. Cleared once consumed.
+  const [auditPlanTarget, setAuditPlanTarget] = useState<{ statement?: string; otherTab?: string } | null>(null);
+  // Which audit stage the Completion sidebar is currently filtering by
+  // (Planning vs Fieldwork). Defaults to Fieldwork because that's where
+  // the Audit Plan and most fieldwork tabs live.
+  const [completionSidebarStage, setCompletionSidebarStage] = useState<'planning' | 'fieldwork'>('fieldwork');
 
   // Persist last page to localStorage
   useEffect(() => {
-    try { localStorage.setItem(storageKey, JSON.stringify({ tab: activeTab, auditPlan: showAuditPlan, completion: showCompletion })); } catch {}
-  }, [activeTab, showAuditPlan, showCompletion, storageKey]);
+    try {
+      localStorage.setItem(
+        storageKey,
+        JSON.stringify({
+          tab: activeTab,
+          auditPlan: showAuditPlan,
+          completion: showCompletion,
+          lastCompletionTab,
+        }),
+      );
+    } catch {}
+  }, [activeTab, showAuditPlan, showCompletion, lastCompletionTab, storageKey]);
   const [planCreated, setPlanCreated] = useState(false);
 
   // Check if plan was previously created
@@ -844,6 +870,19 @@ export function EngagementTabs({ engagement, auditType, clientName, periodEndDat
           )}
         </button>
         <div className="flex-1" />
+        {!isPreStart && lastCompletionTab && !showCompletion && (
+          <button
+            onClick={() => {
+              setShowCompletion(true);
+              setShowAuditPlan(false);
+            }}
+            data-howto-id="eng.action.back-to-completion"
+            className="inline-flex items-center gap-1.5 px-2.5 py-1 text-[10px] font-medium bg-emerald-50 text-emerald-700 border border-emerald-200 rounded hover:bg-emerald-100 transition-colors"
+            title={`Return to the Completion section you were on: ${lastCompletionTab.label}`}
+          >
+            ← Completion: {lastCompletionTab.label}
+          </button>
+        )}
         {!isPreStart && (
           <>
             <button
@@ -966,33 +1005,111 @@ export function EngagementTabs({ engagement, auditType, clientName, periodEndDat
       {/* When Completion is open: split layout with vertical sidebar (left) + completion tabs (right) */}
       {showCompletion ? (
         <div className="flex border border-t-0 border-slate-200 rounded-b-lg bg-white min-h-[500px] overflow-hidden">
-          {/* Left sidebar: audit plan tabs (collapsed) */}
-          <div className="w-28 flex-shrink-0 border-r border-slate-200 bg-slate-50 overflow-y-auto">
-            {visibleTabs.map(tab => {
-              const label = tab.key === 'continuance' ? continuanceLabel : tab.label;
-              const tso = tabSignOffs[tab.key];
-              return (
+          {/* Left sidebar: stage-toggled engagement tabs + Audit Plan
+              shortcuts. The Planning / Fieldwork toggle filters the
+              tabs to the relevant stage so the list isn't 15+ items
+              tall. The Fieldwork view also exposes the Audit Plan's
+              own sub-tabs (Statement row + Other row) as direct
+              shortcuts so the auditor can jump straight to (e.g.)
+              the Balance Sheet section without going through the
+              generic Audit Plan landing. */}
+          <div className="w-32 flex-shrink-0 border-r border-slate-200 bg-slate-50 overflow-y-auto">
+            {/* Planning / Fieldwork segmented toggle */}
+            <div className="flex border-b border-slate-200 sticky top-0 bg-slate-50 z-10">
+              {(['planning', 'fieldwork'] as const).map(stage => (
                 <button
-                  key={tab.key}
-                  onClick={() => { switchTab(tab.key); setShowCompletion(false); }}
-                  className="w-full text-left px-2 py-2 text-[10px] font-medium border-b border-slate-200 transition-colors flex items-center gap-1 text-slate-500 hover:bg-slate-100 hover:text-slate-700"
+                  key={stage}
+                  onClick={() => setCompletionSidebarStage(stage)}
+                  className={`flex-1 text-center px-1 py-1.5 text-[9px] font-semibold uppercase tracking-wide transition-colors ${
+                    completionSidebarStage === stage
+                      ? 'bg-blue-600 text-white'
+                      : 'text-slate-500 hover:bg-slate-100'
+                  }`}
                 >
-                  {label}
-                  {tab.key in SIGNOFF_TABS && (
-                    <span className="inline-flex items-center gap-0.5 ml-auto">
-                      <span className={`w-1.5 h-1.5 rounded-full ${tso?.reviewer === 'signed' ? 'bg-green-500' : tso?.reviewer === 'stale' ? 'border border-green-500' : 'border border-slate-300'}`} />
-                      <span className={`w-1.5 h-1.5 rounded-full ${tso?.partner === 'signed' ? 'bg-green-500' : tso?.partner === 'stale' ? 'border border-green-500' : 'border border-slate-300'}`} />
-                    </span>
-                  )}
+                  {stage === 'planning' ? 'Planning' : 'Fieldwork'}
                 </button>
-              );
-            })}
-            <button
-              onClick={() => { setShowAuditPlan(true); setShowCompletion(false); }}
-              className="w-full text-left px-2 py-2 text-[10px] font-medium border-b border-slate-200 text-blue-600 hover:bg-blue-50"
-            >
-              Audit Plan
-            </button>
+              ))}
+            </div>
+            {/* Engagement tabs filtered by the active stage. We map
+                each visible tab through TAB_TO_SCHEDULE → stage to
+                decide whether it belongs to the current view. Tabs
+                without a schedule mapping (e.g. ad-hoc utilities)
+                appear in both views as a fallback. */}
+            {visibleTabs
+              .filter(tab => {
+                const sk = TAB_TO_SCHEDULE[tab.key];
+                if (!sk) return true;
+                const planningKeys = stageKeyedMapping?.planning || [];
+                const fieldworkKeys = stageKeyedMapping?.fieldwork || [];
+                const norm = (k: string) => k.toLowerCase();
+                const plan = planningKeys.map(norm);
+                const fw = fieldworkKeys.map(norm);
+                if (completionSidebarStage === 'planning') return plan.includes(norm(sk));
+                return fw.includes(norm(sk));
+              })
+              .map(tab => {
+                const label = tab.key === 'continuance' ? continuanceLabel : tab.label;
+                const tso = tabSignOffs[tab.key];
+                return (
+                  <button
+                    key={tab.key}
+                    onClick={() => { switchTab(tab.key); setShowCompletion(false); }}
+                    className="w-full text-left px-2 py-2 text-[10px] font-medium border-b border-slate-200 transition-colors flex items-center gap-1 text-slate-500 hover:bg-slate-100 hover:text-slate-700"
+                  >
+                    {label}
+                    {tab.key in SIGNOFF_TABS && (
+                      <span className="inline-flex items-center gap-0.5 ml-auto">
+                        <span className={`w-1.5 h-1.5 rounded-full ${tso?.reviewer === 'signed' ? 'bg-green-500' : tso?.reviewer === 'stale' ? 'border border-green-500' : 'border border-slate-300'}`} />
+                        <span className={`w-1.5 h-1.5 rounded-full ${tso?.partner === 'signed' ? 'bg-green-500' : tso?.partner === 'stale' ? 'border border-green-500' : 'border border-slate-300'}`} />
+                      </span>
+                    )}
+                  </button>
+                );
+              })}
+            {/* Audit Plan section — collapsed entry on Planning, full
+                shortcut list on Fieldwork. Each shortcut deep-links
+                to the AP with the right Statement / Other tab
+                pre-selected via auditPlanTarget. */}
+            {completionSidebarStage === 'fieldwork' ? (
+              <>
+                <div className="px-2 py-1.5 text-[9px] font-bold uppercase tracking-wide text-slate-400 bg-slate-100 border-b border-slate-200">
+                  Audit Plan
+                </div>
+                {(['Profit & Loss', 'Balance Sheet', 'Cash Flow Statement', 'Notes'] as const).map(stmt => (
+                  <button
+                    key={stmt}
+                    onClick={() => {
+                      setAuditPlanTarget({ statement: stmt });
+                      setShowAuditPlan(true);
+                      setShowCompletion(false);
+                    }}
+                    className="w-full text-left pl-4 pr-2 py-1.5 text-[10px] font-medium border-b border-slate-200 text-blue-600 hover:bg-blue-50"
+                  >
+                    {stmt}
+                  </button>
+                ))}
+                {(['Going Concern', 'Management Override', 'SRMM Memos', 'Subsequent Events', 'Tax Technical', 'Permanent', 'Disclosure'] as const).map(other => (
+                  <button
+                    key={other}
+                    onClick={() => {
+                      setAuditPlanTarget({ otherTab: other });
+                      setShowAuditPlan(true);
+                      setShowCompletion(false);
+                    }}
+                    className="w-full text-left pl-4 pr-2 py-1.5 text-[10px] font-medium border-b border-slate-200 text-purple-600 hover:bg-purple-50"
+                  >
+                    {other}
+                  </button>
+                ))}
+              </>
+            ) : (
+              <button
+                onClick={() => { setShowAuditPlan(true); setShowCompletion(false); }}
+                className="w-full text-left px-2 py-2 text-[10px] font-medium border-b border-slate-200 text-blue-600 hover:bg-blue-50"
+              >
+                Audit Plan…
+              </button>
+            )}
           </div>
           {/* Main area: Completion Panel */}
           <div className="flex-1 flex flex-col min-h-0">
@@ -1009,6 +1126,8 @@ export function EngagementTabs({ engagement, auditType, clientName, periodEndDat
               aiFuzzyCache={aiFuzzyCache}
               clientIsListed={clientIsListed}
               hasPriorPeriodEngagement={hasPriorPeriodEngagement}
+              initialActiveTab={lastCompletionTab?.key}
+              onActiveTabChange={(key, label) => setLastCompletionTab({ key, label })}
               onNavigateMainTab={(key, params) => {
                 try {
                   const url = new URL(window.location.href);
@@ -1058,7 +1177,16 @@ export function EngagementTabs({ engagement, auditType, clientName, periodEndDat
           {/* Main area: Audit Plan */}
           <div className="flex-1 min-w-0 p-4 overflow-auto">
             <TabErrorBoundary tabName="Audit Plan" engagementId={engagement.id}>
-              <AuditPlanPanel engagementId={engagement.id} clientId={engagement.clientId} periodId={engagement.periodId} onClose={() => setShowAuditPlan(false)} periodEndDate={periodEndDate} periodStartDate={periodStartDate} />
+              <AuditPlanPanel
+                engagementId={engagement.id}
+                clientId={engagement.clientId}
+                periodId={engagement.periodId}
+                onClose={() => { setShowAuditPlan(false); setAuditPlanTarget(null); }}
+                periodEndDate={periodEndDate}
+                periodStartDate={periodStartDate}
+                initialStatement={auditPlanTarget?.statement}
+                initialOtherTab={auditPlanTarget?.otherTab}
+              />
             </TabErrorBoundary>
           </div>
         </div>
