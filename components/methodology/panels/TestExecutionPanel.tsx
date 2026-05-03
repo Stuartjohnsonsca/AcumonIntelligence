@@ -4,7 +4,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { X, Upload, FileText, CheckCircle2, XCircle, Clock, Loader2, ChevronRight, ChevronDown, ExternalLink, Play, RotateCcw, AlertTriangle, Ban, Calculator } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { ItemErrorDetailPanel } from './ItemErrorDetailPanel';
-import { InlineSamplingPanel } from './InlineSamplingPanel';
+import { EmbeddedSamplingCalculator } from './EmbeddedSamplingCalculator';
 import { AuditVerificationPanel } from './AuditVerificationPanel';
 import { ErrorInvestigationPanel } from './ErrorInvestigationPanel';
 import { PropertyVerificationSection } from './PropertyVerificationSection';
@@ -895,7 +895,7 @@ export function TestExecutionPanel({ testId, testDescription, testType, engageme
                     </button>
                     {samplingCalcOpen && (
                       <div className="p-3">
-                        <InlineSamplingPanel
+                        <EmbeddedSamplingCalculator
                           engagementId={engagementId}
                           clientId={clientId || ''}
                           periodId={periodId || ''}
@@ -907,11 +907,6 @@ export function TestExecutionPanel({ testId, testDescription, testType, engageme
                             flowSteps.find(s => s.output?.dataTable?.length > 0)?.output?.dataTable ||
                             flowSteps.find(s => s.output?.data?.populationData?.length > 0)?.output?.data?.populationData ||
                             []
-                          }
-                          initialSelectedIndices={
-                            samplingResults?.selectedIndices ||
-                            flowSteps.find(s => s.output?.selectedIndices?.length > 0)?.output?.selectedIndices ||
-                            flowSteps.find(s => s.output?.samplingDone && s.output?.selectedIndices)?.output?.selectedIndices
                           }
                           materialityData={{ performanceMateriality: tolerableMisstatement, clearlyTrivial, tolerableMisstatement }}
                           onComplete={(results) => {

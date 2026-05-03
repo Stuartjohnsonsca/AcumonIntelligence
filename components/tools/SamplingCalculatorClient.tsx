@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useCallback, useRef } from 'react';
+import { useState, useCallback, useRef, useEffect } from 'react';
 import { expandZipFile } from '@/lib/client-unzip';
 import {
   Upload, FileSpreadsheet, Loader2, ChevronDown, AlertCircle,
@@ -77,6 +77,22 @@ interface Props {
     confidenceFactorTable: Record<string, unknown>[] | null;
     riskMatrix: number[][] | null;
   } | null;
+
+  // ─── Embedded mode ────────────────────────────────────────────────────────
+  // When `embedded` is true, the calculator is mounted inside another
+  // workflow (e.g. an audit-test execution). The client + period are
+  // pre-supplied by the host, the access check is skipped, the
+  // multi-step wizard chrome (Sample Calculator landing page, back
+  // arrow, history) is hidden, and the calculator opens directly on
+  // the 'method' step with the population already loaded. After a
+  // successful run, `onComplete` fires so the host can store the
+  // selected indices and advance its own pipeline.
+  embedded?: boolean;
+  embeddedClient?: Client;
+  embeddedPeriod?: Period;
+  embeddedAuditData?: Partial<AuditData>;
+  embeddedPopulation?: Record<string, unknown>[];
+  onComplete?: (results: { runId: string; selectedIndices: number[]; sampleSize: number; coverage: number }) => void;
 }
 
 // ─── Constants ───────────────────────────────────────────────────────────────
@@ -125,35 +141,52 @@ function defaultTestType(dataType: string): string {
 
 export function SamplingCalculatorClient({
   userName, assignedClients, firmConfig,
+  embedded, embeddedClient, embeddedPeriod, embeddedAuditData, embeddedPopulation, onComplete,
 }: Props) {
   const { addTask, updateTask } = useBackgroundTasks();
 
   // ─── Step/state management ─────────────────────────────────────────────────
-  const [step, setStep] = useState<'client' | 'no-access' | 'configure' | 'upload' | 'map' | 'method'>('client');
+  // When embedded, the host pre-supplies client / period / population
+  // and we open straight on the 'method' step. The 'client' and
+  // 'no-access' early-return branches further down are also skipped
+  // when `embedded` so the wizard chrome never renders.
+  const [step, setStep] = useState<'client' | 'no-access' | 'configure' | 'upload' | 'map' | 'method'>(
+    embedded ? 'method' : 'client'
+  );
 
   // ─── Client/period selection ───────────────────────────────────────────────
-  const [selectedClient, setSelectedClient] = useState<Client | null>(null);
+  const [selectedClient, setSelectedClient] = useState<Client | null>(embeddedClient || null);
   const [clientSearch, setClientSearch] = useState('');
   const [periods, setPeriods] = useState<Period[]>([]);
   const [periodsLoading, setPeriodsLoading] = useState(false);
-  const [selectedPeriod, setSelectedPeriod] = useState<Period | null>(null);
-  const [hasAccess, setHasAccess] = useState<boolean | null>(null);
+  const [selectedPeriod, setSelectedPeriod] = useState<Period | null>(embeddedPeriod || null);
+  const [hasAccess, setHasAccess] = useState<boolean | null>(embedded ? true : null);
 
   // ─── Audit data ────────────────────────────────────────────────────────────
   const [auditData, setAuditData] = useState<AuditData>({
-    performanceMateriality: 0,
-    clearlyTrivial: 0,
-    tolerableMisstatement: 0,
-    functionalCurrency: 'GBP',
-    dataType: 'Revenue',
+    performanceMateriality: embeddedAuditData?.performanceMateriality ?? 0,
+    clearlyTrivial: embeddedAuditData?.clearlyTrivial ?? 0,
+    tolerableMisstatement: embeddedAuditData?.tolerableMisstatement ?? 0,
+    functionalCurrency: embeddedAuditData?.functionalCurrency ?? 'GBP',
+    dataType: embeddedAuditData?.dataType ?? 'Revenue',
     testType: 'one_tail',
   });
 
   // ─── Upload / mapping ─────────────────────────────────────────────────────
+  // Pre-populate when running embedded: the host hands over a parsed
+  // population (Record<string, unknown>[]) directly, so we skip the
+  // 'upload' step. Columns are derived from the first row's keys; the
+  // first 5 rows form the preview shown on the mapping panel.
   const [uploading, setUploading] = useState(false);
-  const [uploadedColumns, setUploadedColumns] = useState<string[]>([]);
-  const [uploadedPreview, setUploadedPreview] = useState<Record<string, unknown>[]>([]);
-  const [uploadedFileName, setUploadedFileName] = useState('');
+  const [uploadedColumns, setUploadedColumns] = useState<string[]>(
+    embedded && embeddedPopulation && embeddedPopulation.length > 0
+      ? Object.keys(embeddedPopulation[0])
+      : []
+  );
+  const [uploadedPreview, setUploadedPreview] = useState<Record<string, unknown>[]>(
+    embedded && embeddedPopulation ? embeddedPopulation.slice(0, 5) : []
+  );
+  const [uploadedFileName, setUploadedFileName] = useState(embedded ? 'Pipeline population' : '');
   const [columnMapping, setColumnMapping] = useState<Partial<ColumnMapping>>({});
   const [mappingErrors, setMappingErrors] = useState<string[]>([]);
 
@@ -234,7 +267,7 @@ export function SamplingCalculatorClient({
 
   // ─── Population totals ─────────────────────────────────────────────────
   const [populationTotal, setPopulationTotal] = useState(0);
-  const [populationCount, setPopulationCount] = useState(0);
+  const [populationCount, setPopulationCount] = useState(embedded && embeddedPopulation ? embeddedPopulation.length : 0);
 
   // ─── Sampling results ───────────────────────────────────────────────────
   const [selectedIndices, setSelectedIndices] = useState<Set<number>>(new Set());
@@ -245,7 +278,9 @@ export function SamplingCalculatorClient({
   const [selectionSeed, setSelectionSeed] = useState<number | null>(null);
   const [planningRationale, setPlanningRationale] = useState('');
   const [showSampleActions, setShowSampleActions] = useState(false);
-  const [fullPopulationData, setFullPopulationData] = useState<Record<string, unknown>[]>([]);
+  const [fullPopulationData, setFullPopulationData] = useState<Record<string, unknown>[]>(
+    embedded && embeddedPopulation ? embeddedPopulation : []
+  );
   const [showRationalePopup, setShowRationalePopup] = useState(false);
   const [detailedAuditTrail, setDetailedAuditTrail] = useState<Record<string, unknown> | null>(null);
   const rationaleRef = useRef<HTMLDivElement>(null);
@@ -264,6 +299,18 @@ export function SamplingCalculatorClient({
   const [reviewSubmitting, setReviewSubmitting] = useState(false);
   const [runLocked, setRunLocked] = useState(false);
   const [lockedDataType, setLockedDataType] = useState<string | null>(null);
+
+  // ─── Embedded auto-mapping ─────────────────────────────────────────────────
+  // When mounted embedded, derive a column mapping from the population
+  // immediately so the user lands on the 'method' step with a working
+  // configuration. Auto-detect uses the same heuristics the standalone
+  // tool uses after a file upload — see autoMapColumns below.
+  useEffect(() => {
+    if (!embedded || !embeddedPopulation || embeddedPopulation.length === 0) return;
+    const cols = Object.keys(embeddedPopulation[0]);
+    setColumnMapping(autoMapColumns(cols));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [embedded]);
 
   // ─── Load periods ──────────────────────────────────────────────────────────
 
@@ -832,6 +879,17 @@ export function SamplingCalculatorClient({
       if (sampleSizeStrategy !== 'fixed') {
         setFixedSampleSize(result.sampleSize);
       }
+
+      // Embedded mode: hand the result back to the host (audit-test
+      // execution panel) so the pipeline can advance.
+      if (embedded && onComplete) {
+        onComplete({
+          runId: result.runId,
+          selectedIndices: result.selectedIndices as number[],
+          sampleSize: result.sampleSize,
+          coverage: result.coverage,
+        });
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Auto Select failed');
     }
@@ -849,8 +907,11 @@ export function SamplingCalculatorClient({
   // ═════════════════════════════════════════════════════════════════════════════
   // STEP: Client & Period Selection
   // ═════════════════════════════════════════════════════════════════════════════
+  // Embedded callers pre-supply the client/period and start at 'method',
+  // so this branch is unreachable in that mode — guard anyway in case
+  // the host code drives the calc back to it.
 
-  if (step === 'client') {
+  if (step === 'client' && !embedded) {
     return (
       <div className="container mx-auto px-4 py-8 max-w-3xl">
         <h1 className="text-2xl font-bold text-slate-800 mb-1">Sample Calculator</h1>
@@ -933,8 +994,10 @@ export function SamplingCalculatorClient({
   // ═════════════════════════════════════════════════════════════════════════════
   // STEP: No Access
   // ═════════════════════════════════════════════════════════════════════════════
+  // Embedded callers bypass the access check (the audit-engagement
+  // permission already grants the auditor the right to sample).
 
-  if (step === 'no-access') {
+  if (step === 'no-access' && !embedded) {
     return (
       <div className="container mx-auto px-4 py-8 max-w-lg text-center">
         <Lock className="h-12 w-12 text-slate-300 mx-auto mb-4" />
@@ -991,31 +1054,35 @@ export function SamplingCalculatorClient({
   // ═════════════════════════════════════════════════════════════════════════════
 
   return (
-    <div className="container mx-auto px-4 py-6 max-w-7xl">
-      {/* Header */}
-      <div className="flex items-center gap-3 mb-4">
-        <button
-          onClick={() => { setStep('client'); setSelectedPeriod(null); setHasAccess(null); setEngagementId(null); }}
-          className="p-1 text-slate-400 hover:text-slate-600 transition-colors"
-        >
-          <ArrowLeft className="h-5 w-5" />
-        </button>
-        <div className="flex-1">
-          <h1 className="text-xl font-bold text-slate-800">
-            Sample Calculator — {selectedClient?.clientName}
-          </h1>
-          <p className="text-xs text-slate-500">
-            {selectedPeriod ? formatPeriod(selectedPeriod.startDate, selectedPeriod.endDate) : ''}
-            {confidenceLevel ? ` | Confidence: ${confidenceLevel}%` : ''}
-          </p>
+    <div className={embedded ? '' : 'container mx-auto px-4 py-6 max-w-7xl'}>
+      {/* Header — hidden in embedded mode (the host component owns the
+          chrome and the back-arrow / Reset doesn't apply when running
+          inside an audit-test execution). */}
+      {!embedded && (
+        <div className="flex items-center gap-3 mb-4">
+          <button
+            onClick={() => { setStep('client'); setSelectedPeriod(null); setHasAccess(null); setEngagementId(null); }}
+            className="p-1 text-slate-400 hover:text-slate-600 transition-colors"
+          >
+            <ArrowLeft className="h-5 w-5" />
+          </button>
+          <div className="flex-1">
+            <h1 className="text-xl font-bold text-slate-800">
+              Sample Calculator — {selectedClient?.clientName}
+            </h1>
+            <p className="text-xs text-slate-500">
+              {selectedPeriod ? formatPeriod(selectedPeriod.startDate, selectedPeriod.endDate) : ''}
+              {confidenceLevel ? ` | Confidence: ${confidenceLevel}%` : ''}
+            </p>
+          </div>
+          <button
+            onClick={() => setShowResetConfirm(true)}
+            className="px-3 py-1.5 text-xs text-slate-500 border border-slate-200 rounded-lg hover:bg-slate-50 hover:text-slate-700 transition-colors"
+          >
+            Reset
+          </button>
         </div>
-        <button
-          onClick={() => setShowResetConfirm(true)}
-          className="px-3 py-1.5 text-xs text-slate-500 border border-slate-200 rounded-lg hover:bg-slate-50 hover:text-slate-700 transition-colors"
-        >
-          Reset
-        </button>
-      </div>
+      )}
 
       {/* Reset confirmation */}
       {showResetConfirm && (
@@ -1052,8 +1119,9 @@ export function SamplingCalculatorClient({
         </div>
       )}
 
-      {/* Previous Sessions */}
-      {selectedClient && selectedPeriod && (
+      {/* Previous Sessions — only meaningful for the standalone tool;
+          embedded mode is scoped to the current audit-test execution. */}
+      {!embedded && selectedClient && selectedPeriod && (
         <div className="mb-4">
           <button
             onClick={async () => {
