@@ -147,6 +147,20 @@ export function TestBankClient({ firmId, initialTestTypes, initialTests, initial
     sig: '',        // '' | 'Significant Risk' | 'Area of Focus' | 'Analytical Review' | 'Mandatory' | 'Normal' | 'Other'
   });
   const anyColFilter = Object.values(colFilters).some(v => v && v !== '');
+
+  // Per-column header filters for the Test Actions table on the
+  // Test Actions tab. Same pattern as colFilters above — text
+  // inputs for free-text columns, narrow selects for the
+  // constrained-value columns. Stored separately so the two
+  // tables don't accidentally share a filter when the admin
+  // switches tabs.
+  const [actionColFilters, setActionColFilters] = useState({
+    action: '',
+    type: '',         // '' | 'client_action' | 'ai_action' | 'team_action'
+    codeSection: '',
+    execution: '',    // '' | 'configured' | 'not_configured'
+  });
+  const anyActionColFilter = Object.values(actionColFilters).some(v => v && v !== '');
   const fsLineFilterRef = useRef<HTMLDivElement>(null);
   React.useEffect(() => {
     if (!fsLineFilterOpen) return;
@@ -1051,15 +1065,99 @@ export function TestBankClient({ firmId, initialTestTypes, initialTests, initial
           </div>
           <div className="border rounded-lg overflow-hidden">
             <table className="w-full text-sm">
-              <thead><tr className="bg-slate-100 border-b">
-                <th className="text-left px-3 py-2 text-slate-600 font-semibold">Action</th>
-                <th className="text-left px-3 py-2 text-slate-600 font-semibold w-44">Type</th>
-                <th className="text-left px-3 py-2 text-slate-600 font-semibold w-48">Code Section</th>
-                <th className="text-center px-3 py-2 text-slate-600 font-semibold w-24">Execution</th>
-                <th className="w-20 px-3 py-2"></th>
-              </tr></thead>
+              <thead>
+                <tr className="bg-slate-100 border-b">
+                  <th className="text-left px-3 py-2 text-slate-600 font-semibold">Action</th>
+                  <th className="text-left px-3 py-2 text-slate-600 font-semibold w-44">Type</th>
+                  <th className="text-left px-3 py-2 text-slate-600 font-semibold w-48">Code Section</th>
+                  <th className="text-center px-3 py-2 text-slate-600 font-semibold w-24">Execution</th>
+                  <th className="w-20 px-3 py-2 text-right">
+                    {anyActionColFilter && (
+                      <button
+                        onClick={() => setActionColFilters({ action: '', type: '', codeSection: '', execution: '' })}
+                        className="text-[10px] text-blue-600 hover:text-blue-800"
+                        title="Clear all column filters"
+                      >
+                        Clear
+                      </button>
+                    )}
+                  </th>
+                </tr>
+                {/* Column-header filters for Test Actions. Mirrors the
+                    Test Bank pattern — text inputs for free-text
+                    columns, narrow selects for the constrained-value
+                    columns. ANDs with the global search above. */}
+                <tr className="bg-slate-50 border-b border-slate-200">
+                  <th className="px-2 py-1">
+                    <input
+                      type="text"
+                      value={actionColFilters.action}
+                      onChange={e => setActionColFilters(p => ({ ...p, action: e.target.value }))}
+                      placeholder="Filter…"
+                      className="w-full px-2 py-1 text-[10px] border border-slate-200 rounded bg-white"
+                    />
+                  </th>
+                  <th className="px-1 py-1">
+                    <select
+                      value={actionColFilters.type}
+                      onChange={e => setActionColFilters(p => ({ ...p, type: e.target.value }))}
+                      className="w-full px-1 py-1 text-[10px] border border-slate-200 rounded bg-white"
+                    >
+                      <option value="">All</option>
+                      <option value="client_action">Client Action</option>
+                      <option value="ai_action">AI Action</option>
+                      <option value="team_action">Team Action</option>
+                    </select>
+                  </th>
+                  <th className="px-1 py-1">
+                    <input
+                      type="text"
+                      value={actionColFilters.codeSection}
+                      onChange={e => setActionColFilters(p => ({ ...p, codeSection: e.target.value }))}
+                      placeholder="Filter…"
+                      className="w-full px-2 py-1 text-[10px] border border-slate-200 rounded bg-white"
+                    />
+                  </th>
+                  <th className="px-1 py-1">
+                    <select
+                      value={actionColFilters.execution}
+                      onChange={e => setActionColFilters(p => ({ ...p, execution: e.target.value }))}
+                      className="w-full px-1 py-1 text-[10px] border border-slate-200 rounded bg-white"
+                    >
+                      <option value="">Any</option>
+                      <option value="configured">Configured</option>
+                      <option value="not_configured">Not configured</option>
+                    </select>
+                  </th>
+                  <th className="px-1 py-1" />
+                </tr>
+              </thead>
               <tbody>
-                {testTypes.filter(tt => !testActionsSearch || tt.name.toLowerCase().includes(testActionsSearch.toLowerCase()) || (tt.codeSection || '').toLowerCase().includes(testActionsSearch.toLowerCase())).map(tt => (
+                {testTypes.filter(tt => {
+                  // Global search (above the table) — name OR code section
+                  if (testActionsSearch) {
+                    const q = testActionsSearch.toLowerCase();
+                    if (!tt.name.toLowerCase().includes(q) && !(tt.codeSection || '').toLowerCase().includes(q)) return false;
+                  }
+                  // Column-header filters — AND with each other
+                  if (actionColFilters.action) {
+                    const q = actionColFilters.action.toLowerCase();
+                    if (!tt.name.toLowerCase().includes(q)) return false;
+                  }
+                  if (actionColFilters.type) {
+                    if (tt.actionType !== actionColFilters.type) return false;
+                  }
+                  if (actionColFilters.codeSection) {
+                    const q = actionColFilters.codeSection.toLowerCase();
+                    if (!(tt.codeSection || '').toLowerCase().includes(q)) return false;
+                  }
+                  if (actionColFilters.execution) {
+                    const has = !!tt.executionDef;
+                    if (actionColFilters.execution === 'configured' && !has) return false;
+                    if (actionColFilters.execution === 'not_configured' && has) return false;
+                  }
+                  return true;
+                }).map(tt => (
                   <React.Fragment key={tt.id}>
                     <tr className="border-b border-slate-50 hover:bg-slate-50/50 group">
                       {editingTestType === tt.id ? (<>
