@@ -332,22 +332,14 @@ export function TestBankClient({ firmId, initialTestTypes, initialTests, initial
   async function handleDuplicateTest(test: MethodologyTestItem) {
     setSaving(true);
     try {
+      // Server-side deep copy — clones the action-pipeline steps
+      // (inputBindings + branchRules), the per-test editorConfig
+      // (hidden stages), the pipelineConfigSchema, and the legacy
+      // flow JSON. Falls back to "(Copy 2)", "(Copy 3)" if the
+      // default name collides with an existing test for the firm.
       const res = await fetch('/api/methodology-admin/tests', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          name: `${test.name} (Copy)`,
-          description: test.description,
-          testTypeCode: test.testTypeCode,
-          assertions: test.assertions,
-          framework: test.framework,
-          significantRisk: test.significantRisk,
-          outputFormat: test.outputFormat,
-          isIngest: test.isIngest,
-          // Duplicates start as drafts so they don't accidentally publish
-          // copies of an in-use test before they've been edited.
-          isDraft: true,
-          flow: test.flow,
-        }),
+        body: JSON.stringify({ duplicateFromId: test.id }),
       });
       if (res.ok) {
         const { test: newTest } = await res.json();

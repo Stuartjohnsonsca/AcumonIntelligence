@@ -42,14 +42,95 @@ export async function GET(req: NextRequest) {
   return NextResponse.json({ tests });
 }
 
-// POST: Create a new test
+// POST: Create a new test (or duplicate an existing one with its full
+// pipeline). When `duplicateFromId` is supplied, the new test is
+// created as a deep copy of the source: every metadata field, the
+// action-pipeline steps (with their inputBindings + branchRules),
+// the per-test editorConfig, the pipelineConfigSchema, and the
+// legacy `flow` JSON for tests still on the FlowChart execution
+// mode. The new row defaults to draft + a "(Copy)" suffix unless
+// the caller overrides them.
 export async function POST(req: NextRequest) {
   const session = await auth();
   if (!session?.user?.twoFactorVerified || (!session.user.isSuperAdmin && !session.user.isMethodologyAdmin)) {
     return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
   }
 
-  const { name, description, testTypeCode, assertions, framework, significantRisk, category, outputFormat, isIngest, isDraft, flow } = await req.json();
+  const body = await req.json();
+  const { duplicateFromId } = body;
+
+  if (duplicateFromId) {
+    const source = await prisma.methodologyTest.findFirst({
+      where: { id: duplicateFromId, firmId: session.user.firmId },
+      include: { actionSteps: { orderBy: { stepOrder: 'asc' } } },
+    });
+    if (!source) return NextResponse.json({ error: 'Source test not found' }, { status: 404 });
+
+    // Find a name that doesn't collide with an existing test for the
+    // firm — Methodology Admins can copy a test repeatedly while
+    // they iterate on a variant. Suffixes are " (Copy)", " (Copy 2)",
+    // " (Copy 3)" and so on.
+    const desiredBase = (body.name || `${source.name} (Copy)`).trim();
+    let finalName = desiredBase;
+    for (let i = 2; i < 50; i++) {
+      const exists = await prisma.methodologyTest.findFirst({
+        where: { firmId: session.user.firmId, name: finalName },
+        select: { id: true },
+      });
+      if (!exists) break;
+      finalName = `${desiredBase.replace(/\s*\(Copy(?:\s+\d+)?\)\s*$/, '')} (Copy ${i})`;
+    }
+
+    const created = await prisma.$transaction(async tx => {
+      const newTest = await tx.methodologyTest.create({
+        data: {
+          firmId: session.user.firmId,
+          name: finalName,
+          description: source.description,
+          testTypeCode: source.testTypeCode,
+          assertions: (source.assertions as any) ?? [],
+          framework: source.framework,
+          significantRisk: source.significantRisk,
+          category: source.category,
+          outputFormat: source.outputFormat,
+          isIngest: source.isIngest,
+          // Duplicates always start as drafts so they don't accidentally
+          // ship copies of an in-use test before the Methodology Admin
+          // has reviewed them.
+          isDraft: true,
+          executionMode: source.executionMode,
+          flow: (source.flow as any) ?? null,
+          pipelineConfigSchema: (source.pipelineConfigSchema as any) ?? null,
+          editorConfig: (source.editorConfig as any) ?? null,
+          sortOrder: source.sortOrder,
+        },
+      });
+      if (source.actionSteps.length > 0) {
+        await tx.testActionStep.createMany({
+          data: source.actionSteps.map(s => ({
+            testId: newTest.id,
+            actionDefinitionId: s.actionDefinitionId,
+            stepOrder: s.stepOrder,
+            inputBindings: (s.inputBindings as any) ?? {},
+            configOverrides: (s.configOverrides as any) ?? null,
+            branchRules: (s.branchRules as any) ?? null,
+            isActive: s.isActive,
+          })),
+        });
+      }
+      return tx.methodologyTest.findUnique({
+        where: { id: newTest.id },
+        include: {
+          allocations: { include: { fsLine: true, industry: true } },
+          actionSteps: { include: { actionDefinition: true }, orderBy: { stepOrder: 'asc' } },
+        },
+      });
+    });
+
+    return NextResponse.json({ test: created });
+  }
+
+  const { name, description, testTypeCode, assertions, framework, significantRisk, category, outputFormat, isIngest, isDraft, flow } = body;
   if (!name?.trim()) return NextResponse.json({ error: 'Name is required' }, { status: 400 });
 
   // Resolve category: prefer explicit category, fall back to significantRisk boolean for backward compat
