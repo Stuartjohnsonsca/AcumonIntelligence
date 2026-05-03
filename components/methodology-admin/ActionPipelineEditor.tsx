@@ -297,6 +297,33 @@ export function ActionPipelineEditor({ testId, testDescription, initialSteps, on
     return steps[stepIndex - 1]?.actionDefinition?.outputSchema || [];
   };
 
+  // Every output produced by every step earlier than `stepIndex`,
+  // formatted as ready-to-bind options. Lets ActionInputPanel show
+  // an "↑ Step 1 → total" picker on every input — including
+  // user-source fields like aggregate_balances.source_a_amount,
+  // which previously only accepted a literal number.
+  //
+  // The immediately-preceding step uses `$prev.<field>` (matches the
+  // existing auto-bind shorthand); earlier steps use the explicit
+  // `$step.<index>.<field>` form so the binding remains stable even
+  // if steps are reordered.
+  const getAvailableBindings = (stepIndex: number): Array<{ binding: string; label: string }> => {
+    const out: Array<{ binding: string; label: string }> = [];
+    for (let i = 0; i < stepIndex; i++) {
+      const s = steps[i];
+      if (!s) continue;
+      const isPrev = i === stepIndex - 1;
+      const stepName = s.actionDefinition?.name || `Step ${i + 1}`;
+      for (const fld of s.actionDefinition?.outputSchema || []) {
+        out.push({
+          binding: isPrev ? `$prev.${fld.code}` : `$step.${i}.${fld.code}`,
+          label: `Step ${i + 1} ${stepName} → ${fld.label}`,
+        });
+      }
+    }
+    return out;
+  };
+
   // Per-step card render — pulled into a helper so the per-stage
   // grouping below can call it without re-deriving any of the
   // step-local data each time the loop fires.
@@ -305,6 +332,7 @@ export function ActionPipelineEditor({ testId, testDescription, initialSteps, on
     const userInputs = step.actionDefinition.inputSchema.filter(f => f.source === 'user');
     const autoInputs = step.actionDefinition.inputSchema.filter(f => f.source === 'auto');
     const prevOutputs = getPreviousOutputs(idx);
+    const availableBindings = getAvailableBindings(idx);
     // Inbound references: which earlier steps point at this one
     // via their branchRules. When more than one references this
     // step, render a "merge point" pill so the operator can see
@@ -393,7 +421,7 @@ export function ActionPipelineEditor({ testId, testDescription, initialSteps, on
                   <h5 className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider mb-2">Configuration</h5>
                   <div className="space-y-3">
                     {userInputs.map(field => (
-                      <ActionInputPanel key={field.code} field={field} value={step.inputBindings[field.code]} onChange={(code, val) => handleInputChange(step.id, code, val)} previousOutputs={prevOutputs} stepIndex={idx} />
+                      <ActionInputPanel key={field.code} field={field} value={step.inputBindings[field.code]} onChange={(code, val) => handleInputChange(step.id, code, val)} previousOutputs={prevOutputs} availableBindings={availableBindings} stepIndex={idx} />
                     ))}
                   </div>
                 </div>
@@ -403,7 +431,7 @@ export function ActionPipelineEditor({ testId, testDescription, initialSteps, on
                   <h5 className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider mb-2">Auto-Mapped Inputs</h5>
                   <div className="space-y-2">
                     {autoInputs.map(field => (
-                      <ActionInputPanel key={field.code} field={field} value={step.inputBindings[field.code] ?? field.autoMapFrom} onChange={(code, val) => handleInputChange(step.id, code, val)} previousOutputs={prevOutputs} stepIndex={idx} />
+                      <ActionInputPanel key={field.code} field={field} value={step.inputBindings[field.code] ?? field.autoMapFrom} onChange={(code, val) => handleInputChange(step.id, code, val)} previousOutputs={prevOutputs} availableBindings={availableBindings} stepIndex={idx} />
                     ))}
                   </div>
                 </div>

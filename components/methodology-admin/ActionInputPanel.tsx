@@ -10,6 +10,14 @@ interface Props {
   onChange: (code: string, value: any) => void;
   previousOutputs?: OutputFieldDef[];
   stepIndex: number;
+  /**
+   * Every output produced by every step earlier than this one,
+   * pre-formatted as ready-to-bind options. Lets any input field
+   * (not just `auto`-source ones) reference an upstream output
+   * via the picker — e.g. binding `aggregate_balances.source_a_amount`
+   * to `$step.0.total`.
+   */
+  availableBindings?: Array<{ binding: string; label: string }>;
 }
 
 // Available placeholders grouped by category
@@ -103,7 +111,7 @@ function PlaceholderPicker({ onInsert }: { onInsert: (placeholder: string) => vo
   );
 }
 
-export function ActionInputPanel({ field, value, onChange, previousOutputs, stepIndex }: Props) {
+export function ActionInputPanel({ field, value, onChange, previousOutputs, stepIndex, availableBindings }: Props) {
   const isAutoMapped = typeof value === 'string' && (value.startsWith('$prev.') || value.startsWith('$step.') || value.startsWith('$ctx.'));
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -243,8 +251,24 @@ export function ActionInputPanel({ field, value, onChange, previousOutputs, step
         </div>
       )}
 
-      {/* Binding override - allow user to switch between auto and manual */}
-      {field.source === 'auto' && previousOutputs && previousOutputs.length > 0 && (
+      {/* Binding picker — available on every field, not just
+          auto-mapped ones. Lets the operator bind any input
+          (number, text, date, etc.) to an upstream step's output.
+          Falls back to the legacy auto-only picker when the editor
+          hasn't supplied availableBindings. */}
+      {availableBindings && availableBindings.length > 0 ? (
+        <select
+          value={isAutoMapped ? value : '_manual'}
+          onChange={e => onChange(field.code, e.target.value === '_manual' ? '' : e.target.value)}
+          className="w-full border border-slate-100 rounded px-2 py-1 text-[10px] text-slate-500 bg-slate-50"
+          title="Bind this field to an upstream step's output, or pick Manual input to type a literal value."
+        >
+          <option value="_manual">↧ Manual input</option>
+          {availableBindings.map(b => (
+            <option key={b.binding} value={b.binding}>↑ {b.label}</option>
+          ))}
+        </select>
+      ) : field.source === 'auto' && previousOutputs && previousOutputs.length > 0 ? (
         <select
           value={isAutoMapped ? value : '_manual'}
           onChange={e => onChange(field.code, e.target.value === '_manual' ? '' : e.target.value)}
@@ -256,7 +280,7 @@ export function ActionInputPanel({ field, value, onChange, previousOutputs, step
           ))}
           {stepIndex > 1 && <option value="_custom">Custom binding...</option>}
         </select>
-      )}
+      ) : null}
     </div>
   );
 }
