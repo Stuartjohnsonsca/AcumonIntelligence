@@ -993,6 +993,39 @@ export const SYSTEM_ACTIONS: ActionDefinitionData[] = [
   },
 
   {
+    code: 'prompt_user_for_value',
+    name: 'Prompt User for a Value',
+    description: 'Pauses the pipeline and asks the auditor running the test to enter a value at runtime — useful for inputs that depend on professional judgement or vary per engagement (corporation tax rate, materiality threshold, expected return, count of items, etc.). The collected value is emitted on the output so a downstream Apply Factor / Aggregate Balances / Reconcile to TB step can bind to `$prev.value`. An optional justification field captures the auditor\'s reasoning for the audit trail.',
+    category: 'general',
+    handlerName: 'promptUserForValue',
+    icon: 'MessageSquare',
+    color: '#6366f1',
+    isSystem: true,
+    inputSchema: [
+      { code: 'prompt_label', label: 'Prompt Label', type: 'text', required: true, source: 'user', defaultValue: 'Enter value', group: 'Prompt', description: 'The question / label shown to the auditor at runtime.' },
+      { code: 'prompt_description', label: 'Prompt Description (optional)', type: 'textarea', required: false, source: 'user', group: 'Prompt', description: 'Help text shown beneath the label — e.g. "Enter the corporation tax rate as a percentage (e.g. 25)".' },
+      { code: 'value_type', label: 'Value Type', type: 'select', required: true, source: 'user', defaultValue: 'number', group: 'Prompt', options: [
+        { value: 'number',     label: 'Number' },
+        { value: 'percentage', label: 'Percentage (%)' },
+        { value: 'currency',   label: 'Currency (GBP)' },
+        { value: 'text',       label: 'Free text' },
+        { value: 'date',       label: 'Date' },
+      ]},
+      { code: 'default_value', label: 'Default Value (optional)', type: 'text', required: false, source: 'user', group: 'Prompt', description: 'Pre-fills the prompt with this value. Auditor can accept or override.' },
+      { code: 'min_value', label: 'Minimum (numeric only)', type: 'number', required: false, source: 'user', group: 'Validation' },
+      { code: 'max_value', label: 'Maximum (numeric only)', type: 'number', required: false, source: 'user', group: 'Validation' },
+      { code: 'justification_required', label: 'Require Justification', type: 'boolean', required: false, source: 'user', defaultValue: false, group: 'Audit Trail', description: 'When on, the auditor must also enter a free-text justification explaining the chosen value. Captured on the output for the audit trail.' },
+    ],
+    outputSchema: [
+      { code: 'value', label: 'Entered Value', type: 'number', description: 'Numeric value when value_type is number / percentage / currency. Bind to `$prev.value` on the next step. For percentages, the raw figure is stored — pair with Apply Factor (Treat as percentage = on) to apply it.' },
+      { code: 'value_text', label: 'Entered Value (text)', type: 'text', description: 'String form of the entered value — populated for every value_type, including text and date.' },
+      { code: 'justification', label: 'Justification', type: 'text' },
+      { code: 'entered_by', label: 'Entered By', type: 'text' },
+      { code: 'entered_at', label: 'Entered At', type: 'text' },
+    ],
+  },
+
+  {
     code: 'request_confirmations',
     name: 'Request Third-Party Confirmations',
     description: 'Sends confirmation letters to third parties (bank, debtor, creditor, loan counterparty, legal, pension administrator). Tracks responses via portal/email, chases non-responses on a schedule, extracts confirmed balances, reconciles to the entity\'s books, and emits an exceptions table with guidance on alternative procedures for non-responses.',

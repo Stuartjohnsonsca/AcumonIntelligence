@@ -63,6 +63,7 @@ const HANDLERS: Record<string, ActionHandler> = {
   requestCalculation: handleRequestCalculation,
   aggregateBalances: handleAggregateBalances,
   applyFactor: handleApplyFactor,
+  promptUserForValue: handlePromptUserForValue,
   verifyEvidence: handleVerifyEvidence,
   teamReview: handleTeamReview,
   verifyPropertyAssets: handleVerifyPropertyAssets,
@@ -1179,6 +1180,35 @@ async function handleApplyFactor(ctx: ActionHandlerContext): Promise<ActionHandl
       account_codes: (inputs.account_codes as string) || '',
       pass_fail: passFail,
     },
+  };
+}
+
+async function handlePromptUserForValue(ctx: ActionHandlerContext): Promise<ActionHandlerResult> {
+  const { inputs } = ctx;
+  // Pause with the prompt config on the step's outputs so the
+  // runtime UI (TestExecutionPanel) can render the right input
+  // type. The auditor's entered value is merged into these outputs
+  // by resumePipelineExecution when they submit, replacing the
+  // null `value` placeholders below.
+  return {
+    action: 'pause',
+    outputs: {
+      prompt_label: (inputs.prompt_label as string) || 'Enter value',
+      prompt_description: (inputs.prompt_description as string) || '',
+      value_type: (inputs.value_type as string) || 'number',
+      default_value: inputs.default_value ?? null,
+      min_value: inputs.min_value ?? null,
+      max_value: inputs.max_value ?? null,
+      justification_required: !!inputs.justification_required,
+      // Placeholders — the runtime fills these in via the resume payload.
+      value: null,
+      value_text: null,
+      justification: null,
+      entered_by: null,
+      entered_at: null,
+    },
+    pauseReason: 'user_input',
+    pauseRefId: `user_input_${ctx.stepIndex}`,
   };
 }
 

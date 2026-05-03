@@ -879,6 +879,35 @@ export function TestExecutionPanel({ testId, testDescription, testType, engageme
                   </div>
                 )}
 
+                {/* User-input prompt — surfaces when a step paused
+                    via the prompt_user_for_value action. The paused
+                    step's outputs carry the prompt config (label /
+                    description / value_type / default / min / max /
+                    justification_required); the auditor's entered
+                    value resumes the pipeline through the standard
+                    /test-execution/[id] resume endpoint. */}
+                {pauseReason === 'user_input' && pausedStep && (
+                  <UserInputPromptPanel
+                    step={pausedStep}
+                    onSubmit={async ({ value, valueText, justification }) => {
+                      if (!executionId) return;
+                      const responseData = {
+                        value,
+                        value_text: valueText,
+                        justification: justification || null,
+                        entered_by: testDescription, // the username should come from session — the panel itself records it server-side via the audit trail.
+                        entered_at: new Date().toISOString(),
+                      };
+                      await fetch(
+                        `/api/engagements/${engagementId}/test-execution/${executionId}`,
+                        { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'resume', responseData }) },
+                      );
+                      setExecutionStatus('running');
+                      if (executionId) startPolling(executionId);
+                    }}
+                  />
+                )}
+
                 {/* Sampling calculator — shown when population data exists, but NOT for review_flagged tests */}
                 {!isReviewFlaggedTest && (isSamplingPause || samplingCompleted || flowSteps.some(s => s.output?.populationData?.length > 0 || s.output?.dataTable?.length > 0 || s.output?.triggerType === 'sampling')) && (
                   <div className="border border-teal-200 rounded-lg overflow-hidden">
@@ -1406,6 +1435,110 @@ export function TestExecutionPanel({ testId, testDescription, testType, engageme
         onClose={() => setPlanCustomiserOpen(false)}
       />
     )}
+    </div>
+  );
+}
+
+// ─── User-input prompt panel ────────────────────────────────────────────────
+// Renders the runtime UI for the prompt_user_for_value action: a single
+// labelled input matching the configured value_type, an optional
+// justification field, and a Submit button that resumes the pipeline.
+// Lives in this file because it's small and tightly coupled to
+// TestExecutionPanel's resume flow — no benefit to splitting it out.
+function UserInputPromptPanel(props: {
+  step: { output?: any };
+  onSubmit: (payload: { value: number | string | null; valueText: string; justification: string }) => Promise<void>;
+}) {
+  const cfg = props.step.output || {};
+  const valueType = (cfg.value_type as string) || 'number';
+  const promptLabel = (cfg.prompt_label as string) || 'Enter value';
+  const promptDescription = (cfg.prompt_description as string) || '';
+  const defaultValue = cfg.default_value;
+  const minValue = cfg.min_value;
+  const maxValue = cfg.max_value;
+  const justificationRequired = !!cfg.justification_required;
+
+  const [value, setValue] = useState<string>(defaultValue != null ? String(defaultValue) : '');
+  const [justification, setJustification] = useState<string>('');
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const isNumeric = valueType === 'number' || valueType === 'percentage' || valueType === 'currency';
+  const inputType = valueType === 'date' ? 'date' : isNumeric ? 'number' : 'text';
+
+  function validate(): { ok: true; value: number | string } | { ok: false; reason: string } {
+    if (value.trim() === '') return { ok: false, reason: 'Please enter a value.' };
+    if (isNumeric) {
+      const n = parseFloat(value);
+      if (!Number.isFinite(n)) return { ok: false, reason: 'Please enter a valid number.' };
+      if (typeof minValue === 'number' && n < minValue) return { ok: false, reason: `Value must be at least ${minValue}.` };
+      if (typeof maxValue === 'number' && n > maxValue) return { ok: false, reason: `Value must be at most ${maxValue}.` };
+      return { ok: true, value: n };
+    }
+    return { ok: true, value: value.trim() };
+  }
+
+  async function handleSubmit() {
+    const v = validate();
+    if (!v.ok) { setError(v.reason); return; }
+    if (justificationRequired && !justification.trim()) { setError('Justification is required.'); return; }
+    setError(null);
+    setSubmitting(true);
+    try {
+      await props.onSubmit({
+        value: typeof v.value === 'number' ? v.value : null,
+        valueText: String(v.value),
+        justification: justification.trim(),
+      });
+    } finally { setSubmitting(false); }
+  }
+
+  return (
+    <div className="border border-indigo-200 rounded-lg overflow-hidden bg-indigo-50/30">
+      <div className="px-3 py-2 bg-indigo-50 border-b border-indigo-200 flex items-center gap-2">
+        <span className="text-[10px] font-bold text-indigo-700 uppercase">Auditor Input Required</span>
+      </div>
+      <div className="p-3 space-y-2">
+        <div>
+          <label className="text-xs font-medium text-slate-700 block mb-1">{promptLabel}</label>
+          {promptDescription && <p className="text-[11px] text-slate-500 mb-1.5">{promptDescription}</p>}
+          <div className="flex items-center gap-1.5">
+            {valueType === 'currency' && <span className="text-xs text-slate-500">£</span>}
+            <input
+              type={inputType}
+              value={value}
+              onChange={e => setValue(e.target.value)}
+              placeholder={defaultValue != null ? String(defaultValue) : ''}
+              className="flex-1 px-2 py-1.5 text-sm border border-slate-200 rounded bg-white focus:outline-none focus:border-indigo-400"
+              step={isNumeric ? 'any' : undefined}
+            />
+            {valueType === 'percentage' && <span className="text-xs text-slate-500">%</span>}
+          </div>
+        </div>
+        {justificationRequired && (
+          <div>
+            <label className="text-xs font-medium text-slate-700 block mb-1">Justification <span className="text-red-500">*</span></label>
+            <textarea
+              value={justification}
+              onChange={e => setJustification(e.target.value)}
+              rows={2}
+              placeholder="Why this value? (recorded on the audit trail)"
+              className="w-full px-2 py-1.5 text-sm border border-slate-200 rounded bg-white focus:outline-none focus:border-indigo-400"
+            />
+          </div>
+        )}
+        {error && <div className="text-[11px] text-red-600">{error}</div>}
+        <div className="flex justify-end pt-1">
+          <button
+            onClick={handleSubmit}
+            disabled={submitting}
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-md bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-40"
+          >
+            {submitting ? <Loader2 className="h-3 w-3 animate-spin" /> : null}
+            Submit value
+          </button>
+        </div>
+      </div>
     </div>
   );
 }
