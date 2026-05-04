@@ -1038,6 +1038,33 @@ export const SYSTEM_ACTIONS: ActionDefinitionData[] = [
   },
 
   {
+    code: 'cut_off_date_range',
+    name: 'Cut-Off Date Range',
+    description: 'Computes a date window around the engagement period end. Takes Period.End as the base date and two day-counts — Days Before (subtracted) and Days After (added) — and emits the resulting Start.Date and End.Date for downstream actions (Request Cut-Off Listing, Extract Post-YE Bank Payments, Analyse Cut-Off Transactions, etc.). The base date and both day-counts can be set in the editor as fixed values, OR bound to upstream outputs (e.g. `$prev.value` from a Prompt User for a Value step) so the auditor enters the windows at runtime.',
+    category: 'general',
+    handlerName: 'cutOffDateRange',
+    icon: 'CalendarRange',
+    color: '#0ea5e9',
+    isSystem: true,
+    inputSchema: [
+      { code: 'period_end', label: 'Base Date (Period End)', type: 'date', required: true, source: 'auto', autoMapFrom: '$ctx.engagement.periodEnd', group: 'Base', description: 'Defaults to the engagement period end. Manual-input to override (e.g. another date in the period or an upstream date output).' },
+      { code: 'days_before', label: 'Days Before', type: 'number', required: true, source: 'user', defaultValue: 0, group: 'Window', description: 'Days subtracted from Base Date to give Start.Date. Bind to `$prev.value` (or `$step.N.value`) when an upstream Prompt User for a Value step asks the auditor for the window at runtime.' },
+      { code: 'days_after', label: 'Days After', type: 'number', required: true, source: 'user', defaultValue: 60, group: 'Window', description: 'Days added to Base Date to give End.Date. Bind to an upstream prompt step’s `value` for runtime entry.' },
+    ],
+    outputSchema: [
+      // Dates emitted as ISO strings (YYYY-MM-DD). OutputFieldType
+      // doesn't have a 'date' variant, so we use 'text' — matches how
+      // prompt_user_for_value emits date values via value_text.
+      { code: 'start_date', label: 'Test Start Date', type: 'text', description: 'Base Date − Days Before. ISO date string (YYYY-MM-DD).' },
+      { code: 'end_date', label: 'Test End Date', type: 'text', description: 'Base Date + Days After. ISO date string (YYYY-MM-DD).' },
+      { code: 'period_end', label: 'Base Date (passthrough)', type: 'text', description: 'The Base Date used for the calculation — emitted again so downstream actions can bind to a stable `$prev.period_end` regardless of how this step received it.' },
+      { code: 'days_before', label: 'Days Before (passthrough)', type: 'number' },
+      { code: 'days_after', label: 'Days After (passthrough)', type: 'number' },
+      { code: 'total_days', label: 'Total Window (days)', type: 'number', description: 'days_before + days_after. Convenient for downstream "x days post-YE" actions that take a single window length.' },
+    ],
+  },
+
+  {
     code: 'request_confirmations',
     name: 'Request Third-Party Confirmations',
     description: 'Sends confirmation letters to third parties (bank, debtor, creditor, loan counterparty, legal, pension administrator). Tracks responses via portal/email, chases non-responses on a schedule, extracts confirmed balances, reconciles to the entity\'s books, and emits an exceptions table with guidance on alternative procedures for non-responses.',

@@ -64,6 +64,7 @@ const HANDLERS: Record<string, ActionHandler> = {
   aggregateBalances: handleAggregateBalances,
   applyFactor: handleApplyFactor,
   promptUserForValue: handlePromptUserForValue,
+  cutOffDateRange: handleCutOffDateRange,
   requestListing: handleRequestListing,
   verifyEvidence: handleVerifyEvidence,
   teamReview: handleTeamReview,
@@ -1259,6 +1260,47 @@ async function handlePromptUserForValue(ctx: ActionHandlerContext): Promise<Acti
     },
     pauseReason: 'user_input',
     pauseRefId: `user_input_${ctx.stepIndex}`,
+  };
+}
+
+/**
+ * Cut-Off Date Range — pure compute. Takes Period.End + a Days
+ * Before / Days After window and emits start_date / end_date as
+ * ISO strings for downstream cut-off / post-YE actions.
+ *
+ * Date arithmetic is done in UTC so a window of "+0 days" yields
+ * the same date as the input (no implicit timezone shift).
+ */
+async function handleCutOffDateRange(ctx: ActionHandlerContext): Promise<ActionHandlerResult> {
+  const { inputs } = ctx;
+  const baseRaw = inputs.period_end as string | Date | null | undefined;
+  const daysBefore = Math.max(0, Math.round(Number(inputs.days_before ?? 0)));
+  const daysAfter = Math.max(0, Math.round(Number(inputs.days_after ?? 0)));
+
+  if (!baseRaw) {
+    return { action: 'error', outputs: {}, errorMessage: 'period_end is required (bind to $ctx.engagement.periodEnd or supply a literal date)' };
+  }
+
+  const base = new Date(baseRaw);
+  if (Number.isNaN(base.getTime())) {
+    return { action: 'error', outputs: {}, errorMessage: `period_end is not a valid date: ${String(baseRaw)}` };
+  }
+
+  // Add/subtract days in UTC to avoid DST / local-zone drift.
+  const startMs = Date.UTC(base.getUTCFullYear(), base.getUTCMonth(), base.getUTCDate() - daysBefore);
+  const endMs   = Date.UTC(base.getUTCFullYear(), base.getUTCMonth(), base.getUTCDate() + daysAfter);
+  const fmt = (d: Date) => d.toISOString().slice(0, 10);
+
+  return {
+    action: 'continue',
+    outputs: {
+      start_date: fmt(new Date(startMs)),
+      end_date:   fmt(new Date(endMs)),
+      period_end: fmt(base),
+      days_before: daysBefore,
+      days_after: daysAfter,
+      total_days: daysBefore + daysAfter,
+    },
   };
 }
 
