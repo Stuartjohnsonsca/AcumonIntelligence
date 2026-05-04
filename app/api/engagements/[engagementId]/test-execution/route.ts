@@ -154,6 +154,12 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ enga
     // Return summary fields + per-execution aggregate node-run counts so the
     // Audit Log table can still render "completed / failed / total" without
     // pulling every node_run row.
+    //
+    // pipelineState IS selected here (despite being potentially chunky) so we
+    // can derive the per-execution `tbCheck` summary (listing_total / tb_total
+    // / percentage) consumed by the Test Summary panel's TB dot. We strip
+    // pipelineState from the response after computing tbCheck so the wire
+    // payload stays small.
     const execs = await prisma.testExecution.findMany({
       where,
       select: {
@@ -171,6 +177,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ enga
         currentNodeId: true,
         errorMessage: true,
         executionMode: true,
+        pipelineState: true,
       },
       orderBy: { startedAt: 'desc' },
     });
@@ -195,14 +202,18 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ enga
 
     const executions = execs.map(e => {
       const c = countsByExec.get(e.id) || { total: 0, completed: 0, failed: 0 };
+      const { pipelineState, ...rest } = e as typeof e & { pipelineState: any };
       return {
-        ...e,
+        ...rest,
         nodeRunsTotal: c.total,
         nodeRunsCompleted: c.completed,
         nodeRunsFailed: c.failed,
         // Preserve the legacy shape so UI code reading `nodeRuns` doesn't crash.
         // It's an empty array in lite mode — callers use the aggregate counts above.
         nodeRuns: [],
+        // TB-check summary derived from pipelineState. null when no step in
+        // this execution produced a tb_total + listing_total pair.
+        tbCheck: deriveTbCheckSummary(pipelineState),
       };
     });
 
@@ -218,4 +229,50 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ enga
   });
 
   return NextResponse.json({ executions });
+}
+
+/**
+ * Reads pipelineState (the per-step output map written by the action-pipeline
+ * runtime) and pulls out the TB-check summary the Test Summary panel renders
+ * as the "TB Dot" column.
+ *
+ * Detection rule: any step output that carries a numeric tb_total > 0 is a
+ * TB-check step. The matching listing_total / variance are taken from the
+ * same step. When multiple steps qualify, the one with the highest stepIndex
+ * wins (closest to the test's final position in the chain).
+ *
+ * Returns null when no step produced a TB-check signal — the panel renders
+ * a blank cell in that case.
+ */
+function deriveTbCheckSummary(pipelineState: any):
+  | { tbTotal: number; listingTotal: number | null; percentage: number | null; reconciled: boolean }
+  | null {
+  if (!pipelineState || typeof pipelineState !== 'object') return null;
+  let bestKey: number = -1;
+  let bestEntry: any = null;
+  for (const [key, value] of Object.entries(pipelineState)) {
+    const stepIndex = Number.parseInt(key, 10);
+    if (!Number.isFinite(stepIndex)) continue;
+    if (!value || typeof value !== 'object') continue;
+    const tbTotalRaw = (value as any).tb_total;
+    const tbTotalNum = typeof tbTotalRaw === 'number' ? tbTotalRaw : Number(tbTotalRaw);
+    if (!Number.isFinite(tbTotalNum) || tbTotalNum <= 0) continue;
+    if (stepIndex > bestKey) {
+      bestKey = stepIndex;
+      bestEntry = value;
+    }
+  }
+  if (!bestEntry) return null;
+  const tbTotal = Number(bestEntry.tb_total) || 0;
+  const listingRaw = bestEntry.listing_total;
+  const listingTotal = (listingRaw === null || listingRaw === undefined) ? null : Number(listingRaw);
+  const percentage = (listingTotal !== null && Number.isFinite(listingTotal) && tbTotal > 0)
+    ? Math.round((listingTotal / tbTotal) * 100)
+    : null;
+  // tb_reconciled is "pass" when the listing matched within tolerance,
+  // anything else (fail / null) is a non-match. We surface the boolean
+  // separately so the panel can pick the dot colour without re-deriving
+  // tolerance logic on the client.
+  const reconciled = bestEntry.tb_reconciled === 'pass';
+  return { tbTotal, listingTotal, percentage, reconciled };
 }

@@ -1,44 +1,47 @@
 'use client';
 
-import { useState, useEffect, useCallback, useMemo } from 'react';
-import { AlertTriangle } from 'lucide-react';
+import { Fragment, useState, useEffect, useCallback, useMemo } from 'react';
+import { AlertTriangle, ArrowUpDown, ArrowUp, ArrowDown, Filter as FilterIcon } from 'lucide-react';
 
 /**
  * Audit Test Summary Results — Completion view.
  *
- * Per spec ("In Completion under Test Summary Results should list out
- * all tests in the Audit Plan, although with any tests done in
- * planning…"):
+ * Per the latest spec the columns (left → right) are:
+ *   FS Line · FS Line Value · TB Dot · Test · Progress · Result ·
+ *   Error Amount · Duration · Reviewer · RI
  *
- *   - Flat row-per-test list across the engagement.
- *   - Two dot columns:
- *       PROGRESS — completed (green) | partially / in-progress (orange) |
- *                  failed-to-complete (red).
- *       RESULT   — no error or < Clearly Trivial (green) |
- *                  between CT and Performance Materiality (orange) |
- *                  > Performance Materiality (red).
- *   - Duration column showing time from request to completion as
- *     Hh Mm (or H:MM when shorter than an hour).
+ * Two header dots (Reviewer + RI) sit at the top of the panel and read
+ * from the same `auditPermanentFile` signOffs source the tab label
+ * reads from, so they stay sync'd with the tab dots automatically.
  *
- * Tests not yet executed don't have an execution record, so they
- * don't appear here yet — clicking "Run All" in the Audit Plan tab
- * surfaces them, then they show up with a Progress dot the moment
- * they start.
+ * Cascade rule: an RI sign-off implies the Reviewer slot is signed too.
+ * Reviewer can sign their own dot but not the RI dot.
  *
- * Planning-stage tests (e.g. agreeing prior year TB to accounts):
- * those don't currently flow through the test-execution / test-
- * conclusion pipeline, so they're not in this list yet. Surfacing
- * them needs a separate data source — flagged with the user.
+ * Rows are grouped into three sections — Execution / Pending / Planning
+ * — each with a count and a R/O/G dot summary in the header so the
+ * outstanding work is visible at a glance.
+ *
+ * Columns are sortable (click the header) and filterable (open the
+ * filter popover next to the header).
  */
+
+interface TbCheck {
+  tbTotal: number;
+  listingTotal: number | null;
+  percentage: number | null;
+  reconciled: boolean;
+}
 
 interface TestExecution {
   id: string;
   testDescription: string;
   fsLine: string;
-  status: string;            // running | paused | completed | failed | cancelled
+  fsLineId: string | null;
+  status: string;
   startedAt: string | null;
   completedAt: string | null;
   errorMessage: string | null;
+  tbCheck: TbCheck | null;
 }
 
 interface TestConclusion {
@@ -46,12 +49,14 @@ interface TestConclusion {
   fsLine: string;
   testDescription: string;
   accountCode: string | null;
-  conclusion: string | null; // green | orange | red | failed
-  status: string;            // pending | concluded | reviewed | signed_off
+  conclusion: string | null;
+  status: string;
   totalErrors: number;
   extrapolatedError: number;
+  reviewedById: string | null;
   reviewedByName: string | null;
   reviewedAt: string | null;
+  riSignedById: string | null;
   riSignedByName: string | null;
   riSignedAt: string | null;
   executionId?: string | null;
@@ -64,25 +69,26 @@ interface Props {
 }
 
 type Dot = 'green' | 'orange' | 'red' | 'pending';
+type Category = 'execution' | 'pending_audit_plan' | 'planning';
 
 interface SummaryRow {
   key: string;
   testDescription: string;
   fsLine: string;
+  fsLineValue: number | null;
   accountCode: string | null;
+  tbCheck: TbCheck | null;
   progress: Dot;
   result: Dot;
   durationMs: number | null;
   totalErrors: number;
+  extrapolatedError: number;
   status: string;
   conclusionId: string | null;
   executionId: string | null;
+  reviewerSignedByName: string | null;
   riSignedByName: string | null;
-  // Marks rows that don't yet have an execution (Audit Plan tests
-  // expected from /audit-plan/expected-tests) and rows that come from
-  // the Prior Period checklist (planning items). Used to render a
-  // neutral-grey "Pending" or "Planning" pill in the status column.
-  category: 'execution' | 'pending_audit_plan' | 'planning';
+  category: Category;
 }
 
 interface ExpectedTest {
@@ -96,12 +102,16 @@ interface ExpectedTest {
 }
 
 interface PlanningItem {
-  /** Stable key, e.g. 'pp_engagement_letter'. */
   key: string;
-  /** Human-readable label that lands in the testDescription column. */
   label: string;
-  /** 'green' when complete, 'orange' when partial, 'pending' otherwise. */
   progress: Dot;
+}
+
+interface TbRow {
+  fsLineId: string | null;
+  fsLine?: string | null;
+  currentYear: number | null;
+  canonicalFsLine?: { name: string } | null;
 }
 
 const DOT_BG: Record<Dot, string> = {
@@ -112,10 +122,10 @@ const DOT_BG: Record<Dot, string> = {
 };
 
 const PROGRESS_TITLE: Record<Dot, string> = {
-  green: 'Completed',
-  orange: 'In progress / partially complete',
-  red: 'Failed to complete',
-  pending: 'Not yet started',
+  green: 'Ran successfully',
+  orange: 'In progress',
+  red: 'Failed to run',
+  pending: 'Not started',
 };
 
 const RESULT_TITLE: Record<Dot, string> = {
@@ -125,17 +135,34 @@ const RESULT_TITLE: Record<Dot, string> = {
   pending: 'Result pending',
 };
 
+const CATEGORY_LABEL: Record<Category, string> = {
+  execution: 'Tests',
+  pending_audit_plan: 'Pending',
+  planning: 'Planning',
+};
+
+const CATEGORY_PILL: Record<Category, string> = {
+  execution: 'bg-slate-100 text-slate-700 border-slate-200',
+  pending_audit_plan: 'bg-amber-50 text-amber-700 border-amber-200',
+  planning: 'bg-indigo-50 text-indigo-700 border-indigo-200',
+};
+
 function formatDuration(ms: number | null): string {
   if (ms == null || ms < 0) return '—';
   const totalMinutes = Math.round(ms / 60_000);
   const hours = Math.floor(totalMinutes / 60);
   const minutes = totalMinutes % 60;
-  // < 1 minute → show seconds so a fast test doesn't render as "0:00"
   if (totalMinutes === 0) {
     const seconds = Math.max(1, Math.round(ms / 1000));
     return `0:00:${String(seconds).padStart(2, '0')}`;
   }
   return `${hours}:${String(minutes).padStart(2, '0')}`;
+}
+
+function formatGbp(n: number | null): string {
+  if (n === null || !Number.isFinite(n)) return '—';
+  const sign = n < 0 ? '-' : '';
+  return `${sign}£${Math.abs(Math.round(n)).toLocaleString()}`;
 }
 
 function progressFromStatus(status: string): Dot {
@@ -145,16 +172,6 @@ function progressFromStatus(status: string): Dot {
   return 'pending';
 }
 
-/**
- * Result colour. Falls back through three layers:
- *   1. The conclusion record's pre-computed conclusion field (already
- *      green/orange/red/failed when set by the test handler).
- *   2. extrapolatedError compared against materiality thresholds —
- *      reproduces the same banding the conclusion would get if it
- *      were re-derived now.
- *   3. Default to green when an execution completed cleanly with no
- *      conclusion record (matches the existing AuditPlanPanel default).
- */
 function resultFromConclusion(
   conclusion: TestConclusion | null,
   execStatus: string,
@@ -165,37 +182,96 @@ function resultFromConclusion(
   if (conclusion?.conclusion === 'red') return 'red';
   if (conclusion?.conclusion === 'orange') return 'orange';
   if (conclusion?.conclusion === 'green') return 'green';
-  // Inferred from extrapolatedError when no precomputed conclusion.
   const err = Math.abs(Number(conclusion?.extrapolatedError) || 0);
   if (err > 0 && performanceMateriality > 0) {
     if (err > performanceMateriality) return 'red';
     if (err > clearlyTrivial) return 'orange';
     return 'green';
   }
-  // No conclusion record at all and the execution finished cleanly →
-  // default to green (matches the AuditPlanPanel default).
   if (execStatus === 'completed') return 'green';
   return 'pending';
 }
 
-export function AuditTestSummaryPanel({ engagementId, userRole, userId }: Props) {
+// ─── Sorting / filtering ───────────────────────────────────────────
+type SortKey = 'fsLine' | 'fsLineValue' | 'tbCheck' | 'testDescription' | 'progress' | 'result' | 'extrapolatedError' | 'durationMs' | 'reviewer' | 'ri';
+type SortDir = 'asc' | 'desc';
+
+interface ColumnFilters {
+  fsLine: string;
+  testDescription: string;
+  // Dot-style columns: subset of dots to include (empty = all)
+  progress: Set<Dot>;
+  result: Set<Dot>;
+  // TB Dot column: 'any' | 'has_check' | 'no_check' | 'red' | 'green'
+  tbCheck: 'any' | 'has_check' | 'no_check' | 'red' | 'green';
+  category: Set<Category>;
+}
+
+const EMPTY_FILTERS: ColumnFilters = {
+  fsLine: '',
+  testDescription: '',
+  progress: new Set(),
+  result: new Set(),
+  tbCheck: 'any',
+  category: new Set(),
+};
+
+function dotRank(d: Dot): number {
+  if (d === 'red') return 0;
+  if (d === 'orange') return 1;
+  if (d === 'green') return 2;
+  return 3;
+}
+
+function compareRow(a: SummaryRow, b: SummaryRow, key: SortKey, dir: SortDir): number {
+  const sign = dir === 'asc' ? 1 : -1;
+  switch (key) {
+    case 'fsLine':           return sign * (a.fsLine || '').localeCompare(b.fsLine || '');
+    case 'fsLineValue':      return sign * ((a.fsLineValue ?? -Infinity) - (b.fsLineValue ?? -Infinity));
+    case 'tbCheck': {
+      const aP = a.tbCheck?.percentage ?? -1;
+      const bP = b.tbCheck?.percentage ?? -1;
+      return sign * (aP - bP);
+    }
+    case 'testDescription':  return sign * (a.testDescription || '').localeCompare(b.testDescription || '');
+    case 'progress':         return sign * (dotRank(a.progress) - dotRank(b.progress));
+    case 'result':           return sign * (dotRank(a.result) - dotRank(b.result));
+    case 'extrapolatedError':return sign * ((a.extrapolatedError || 0) - (b.extrapolatedError || 0));
+    case 'durationMs':       return sign * ((a.durationMs ?? -1) - (b.durationMs ?? -1));
+    case 'reviewer':         return sign * ((a.reviewerSignedByName || a.riSignedByName ? 1 : 0) - (b.reviewerSignedByName || b.riSignedByName ? 1 : 0));
+    case 'ri':               return sign * ((a.riSignedByName ? 1 : 0) - (b.riSignedByName ? 1 : 0));
+  }
+}
+
+// ─── Component ──────────────────────────────────────────────────────
+
+export function AuditTestSummaryPanel({ engagementId, userRole }: Props) {
   const [executions, setExecutions] = useState<TestExecution[]>([]);
   const [conclusions, setConclusions] = useState<TestConclusion[]>([]);
   const [expectedTests, setExpectedTests] = useState<ExpectedTest[]>([]);
   const [planningItems, setPlanningItems] = useState<PlanningItem[]>([]);
+  const [tbRows, setTbRows] = useState<TbRow[]>([]);
+  const [tabSignOffs, setTabSignOffs] = useState<{ reviewer: { name: string; at: string } | null; ri: { name: string; at: string } | null }>({ reviewer: null, ri: null });
   const [performanceMateriality, setPerformanceMateriality] = useState(0);
   const [clearlyTrivial, setClearlyTrivial] = useState(0);
   const [loading, setLoading] = useState(true);
 
+  const [sortKey, setSortKey] = useState<SortKey>('fsLine');
+  const [sortDir, setSortDir] = useState<SortDir>('asc');
+  const [filters, setFilters] = useState<ColumnFilters>(EMPTY_FILTERS);
+  const [openFilter, setOpenFilter] = useState<keyof ColumnFilters | null>(null);
+
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const [execRes, concRes, matRes, expectedRes, ppRes] = await Promise.all([
+      const [execRes, concRes, matRes, expectedRes, ppRes, tbRes, signoffRes] = await Promise.all([
         fetch(`/api/engagements/${engagementId}/test-execution?lite=true`),
         fetch(`/api/engagements/${engagementId}/test-conclusions`),
         fetch(`/api/engagements/${engagementId}/materiality`),
         fetch(`/api/engagements/${engagementId}/audit-plan/expected-tests`),
         fetch(`/api/engagements/${engagementId}/prior-period`),
+        fetch(`/api/engagements/${engagementId}/trial-balance`),
+        fetch(`/api/engagements/${engagementId}/permanent-file?section=test_summary_results_signoffs`),
       ]);
       if (execRes.ok) {
         const data = await execRes.json();
@@ -207,8 +283,6 @@ export function AuditTestSummaryPanel({ engagementId, userRole, userId }: Props)
       }
       if (matRes.ok) {
         const data = await matRes.json();
-        // Materiality is stored as a free-form JSON blob; admins
-        // historically wrote both flat and nested shapes. Read both.
         const m = data?.data || {};
         setPerformanceMateriality(Number(m?.materiality?.performanceMateriality ?? m?.performanceMateriality ?? 0) || 0);
         setClearlyTrivial(Number(m?.materiality?.clearlyTrivial ?? m?.clearlyTrivial ?? 0) || 0);
@@ -217,12 +291,20 @@ export function AuditTestSummaryPanel({ engagementId, userRole, userId }: Props)
         const data = await expectedRes.json();
         setExpectedTests(Array.isArray(data?.tests) ? data.tests : []);
       }
-      // Planning items — derived from the Prior Period checklist. Each
-      // required doc is treated as a one-off "planning test": linked
-      // documentId → in-progress (orange); linked + reviewed for the
-      // reviewable docs → completed (green); nothing linked → pending.
-      // Reviewable docs that have AI review points are graded by
-      // whether all 3 sign-off roles have signed every point.
+      if (tbRes.ok) {
+        const data = await tbRes.json();
+        setTbRows(Array.isArray(data?.rows) ? data.rows : []);
+      }
+      if (signoffRes.ok) {
+        const data = await signoffRes.json();
+        const so = (data?.data || {}) as any;
+        const reviewer = so.reviewer?.timestamp || so.reviewer?.at;
+        const ri = so.ri?.timestamp || so.ri?.at || so.partner?.timestamp || so.partner?.at;
+        setTabSignOffs({
+          reviewer: reviewer ? { name: so.reviewer?.name || so.reviewer?.userName || '', at: reviewer } : null,
+          ri: ri ? { name: so.ri?.name || so.partner?.name || '', at: ri } : null,
+        });
+      }
       if (ppRes.ok) {
         const data = await ppRes.json();
         const docStatus: Array<{ key: string; label: string; documentId?: string }> = Array.isArray(data?.docStatus) ? data.docStatus : [];
@@ -236,11 +318,6 @@ export function AuditTestSummaryPanel({ engagementId, userRole, userId }: Props)
           const allSigned = pts.every(p => p.signOffs?.operator && p.signOffs?.reviewer && p.signOffs?.partner);
           return { key: d.key, label: d.label, progress: allSigned ? ('green' as Dot) : ('orange' as Dot) };
         });
-        // Opening-balance check ("agreeing prior year TB to accounts")
-        // — counted as a planning test that's complete when opening-
-        // balance rows are loaded. Without explicit sign-off data here
-        // we'd otherwise have no row for this item at all, which the
-        // user explicitly called out as the example.
         const obRows = Array.isArray(data?.openingBalances) ? data.openingBalances : [];
         items.push({
           key: 'pp_opening_balances',
@@ -254,10 +331,27 @@ export function AuditTestSummaryPanel({ engagementId, userRole, userId }: Props)
 
   useEffect(() => { void load(); }, [load]);
 
-  // Build the per-test row list. Each TestExecution becomes one row,
-  // joined to its TestConclusion when present (executionId, falling
-  // back to testDescription + fsLine match for older conclusions
-  // written before executionId was tracked).
+  // FS-line value lookup keyed by FS line name (case-insensitive). Each
+  // value sums the |currentYear| of every TB row that maps to that FS
+  // line. Falls back to fsLineId when name lookups can't resolve.
+  const fsLineValueByName = useMemo<Map<string, number>>(() => {
+    const m = new Map<string, number>();
+    for (const r of tbRows) {
+      const name = (r.canonicalFsLine?.name || r.fsLine || '').trim().toLowerCase();
+      if (!name) continue;
+      const cur = Number(r.currentYear || 0);
+      m.set(name, (m.get(name) || 0) + cur);
+    }
+    return m;
+  }, [tbRows]);
+
+  function lookupFsLineValue(fsLine: string): number | null {
+    const v = fsLineValueByName.get((fsLine || '').trim().toLowerCase());
+    return v === undefined ? null : v;
+  }
+
+  // Build the per-test row list. Same join logic as before but with
+  // the additional FS-line value + TB check + Reviewer name fields.
   const rows = useMemo<SummaryRow[]>(() => {
     const out: SummaryRow[] = [];
     for (const e of executions) {
@@ -271,22 +365,22 @@ export function AuditTestSummaryPanel({ engagementId, userRole, userId }: Props)
         key: e.id,
         testDescription: e.testDescription,
         fsLine: e.fsLine,
+        fsLineValue: lookupFsLineValue(e.fsLine),
         accountCode: conc?.accountCode || null,
+        tbCheck: e.tbCheck || null,
         progress: progressFromStatus(e.status),
         result: resultFromConclusion(conc, e.status, performanceMateriality, clearlyTrivial),
         durationMs,
         totalErrors: conc?.totalErrors || 0,
+        extrapolatedError: Number(conc?.extrapolatedError) || 0,
         status: conc?.status || e.status,
         conclusionId: conc?.id || null,
         executionId: e.id,
+        reviewerSignedByName: conc?.reviewedByName || null,
         riSignedByName: conc?.riSignedByName || null,
         category: 'execution',
       });
     }
-    // Conclusions that don't have a matching execution (rare — happens
-    // when a conclusion was hand-written or imported without going
-    // through the execution flow). Surface them so they don't go
-    // missing from the summary.
     for (const c of conclusions) {
       const alreadyShown = out.some(r => r.conclusionId === c.id || (r.testDescription === c.testDescription && r.fsLine === c.fsLine));
       if (alreadyShown) continue;
@@ -294,23 +388,22 @@ export function AuditTestSummaryPanel({ engagementId, userRole, userId }: Props)
         key: c.id,
         testDescription: c.testDescription,
         fsLine: c.fsLine,
+        fsLineValue: lookupFsLineValue(c.fsLine),
         accountCode: c.accountCode,
+        tbCheck: null,
         progress: c.status === 'pending' ? 'pending' : 'green',
         result: resultFromConclusion(c, 'completed', performanceMateriality, clearlyTrivial),
         durationMs: null,
         totalErrors: c.totalErrors || 0,
+        extrapolatedError: Number(c.extrapolatedError) || 0,
         status: c.status,
         conclusionId: c.id,
         executionId: null,
+        reviewerSignedByName: c.reviewedByName,
         riSignedByName: c.riSignedByName,
         category: 'execution',
       });
     }
-    // Audit Plan tests with no execution yet — surface as pending rows
-    // so the user sees coverage gaps, not just executed tests.
-    // Ingest tests are excluded (they're data-prep, not auditable).
-    // Dedupe by (testDescription + fsLine) against rows already in
-    // `out`, since an executed test wins and shouldn't double up.
     for (const et of expectedTests) {
       if (et.isIngest) continue;
       const alreadyShown = out.some(r => r.testDescription.toLowerCase() === et.testName.toLowerCase() && (r.fsLine || '').toLowerCase() === et.fsLine.toLowerCase());
@@ -319,169 +412,460 @@ export function AuditTestSummaryPanel({ engagementId, userRole, userId }: Props)
         key: `expected:${et.fsLineId}:${et.testName}`,
         testDescription: et.testName,
         fsLine: et.fsLine,
+        fsLineValue: lookupFsLineValue(et.fsLine),
         accountCode: et.accountCode,
+        tbCheck: null,
         progress: 'pending',
         result: 'pending',
         durationMs: null,
         totalErrors: 0,
+        extrapolatedError: 0,
         status: 'pending',
         conclusionId: null,
         executionId: null,
+        reviewerSignedByName: null,
         riSignedByName: null,
         category: 'pending_audit_plan',
       });
     }
-    // Planning items — Prior Period checklist + opening balances. Slot
-    // alongside audit-plan tests so the user sees the whole engagement
-    // coverage picture in one table.
     for (const p of planningItems) {
       out.push({
         key: `planning:${p.key}`,
         testDescription: p.label,
         fsLine: 'Planning',
+        fsLineValue: null,
         accountCode: null,
+        tbCheck: null,
         progress: p.progress,
-        // Planning items don't carry numeric results / extrapolated
-        // errors — Result mirrors Progress (green when complete).
         result: p.progress === 'green' ? 'green' : 'pending',
         durationMs: null,
         totalErrors: 0,
+        extrapolatedError: 0,
         status: p.progress === 'green' ? 'complete' : 'pending',
         conclusionId: null,
         executionId: null,
+        reviewerSignedByName: null,
         riSignedByName: null,
         category: 'planning',
       });
     }
-    // Sort: failures first (red progress / red result), then
-    // in-progress, then completed, then pending. Within each band
-    // sort alphabetically by FS Line + test description so the table
-    // reads consistently across loads.
-    const bandRank = (r: SummaryRow) => {
-      if (r.progress === 'red' || r.result === 'red') return 0;
-      if (r.progress === 'orange' || r.result === 'orange') return 1;
-      if (r.progress === 'green') return 2;
-      return 3;
-    };
-    out.sort((a, b) => {
-      const r = bandRank(a) - bandRank(b);
+    return out;
+  }, [executions, conclusions, expectedTests, planningItems, performanceMateriality, clearlyTrivial, fsLineValueByName]);
+
+  // Filter + sort applied over the whole row list. Grouping by category
+  // happens in the render below.
+  const filteredSorted = useMemo<SummaryRow[]>(() => {
+    const fsFilter = filters.fsLine.trim().toLowerCase();
+    const tdFilter = filters.testDescription.trim().toLowerCase();
+    const filtered = rows.filter(r => {
+      if (filters.category.size > 0 && !filters.category.has(r.category)) return false;
+      if (fsFilter && !(r.fsLine || '').toLowerCase().includes(fsFilter)) return false;
+      if (tdFilter && !(r.testDescription || '').toLowerCase().includes(tdFilter)) return false;
+      if (filters.progress.size > 0 && !filters.progress.has(r.progress)) return false;
+      if (filters.result.size > 0 && !filters.result.has(r.result)) return false;
+      if (filters.tbCheck === 'has_check' && !r.tbCheck) return false;
+      if (filters.tbCheck === 'no_check' && r.tbCheck) return false;
+      if (filters.tbCheck === 'red' && !(r.tbCheck && !r.tbCheck.reconciled)) return false;
+      if (filters.tbCheck === 'green' && !(r.tbCheck && r.tbCheck.reconciled)) return false;
+      return true;
+    });
+    return [...filtered].sort((a, b) => {
+      const r = compareRow(a, b, sortKey, sortDir);
       if (r !== 0) return r;
-      const fl = (a.fsLine || '').localeCompare(b.fsLine || '');
-      if (fl !== 0) return fl;
+      // Stable secondary sort by FS Line then test description.
+      const f = (a.fsLine || '').localeCompare(b.fsLine || '');
+      if (f !== 0) return f;
       return (a.testDescription || '').localeCompare(b.testDescription || '');
     });
-    return out;
-  }, [executions, conclusions, expectedTests, planningItems, performanceMateriality, clearlyTrivial]);
+  }, [rows, filters, sortKey, sortDir]);
 
-  async function handleRISignOff(conclusionId: string, isUnsign: boolean) {
+  // Per-category dot summary used in the section headers.
+  const categorySummary = useMemo(() => {
+    const init = (): { count: number; red: number; orange: number; green: number; pending: number } => ({ count: 0, red: 0, orange: 0, green: 0, pending: 0 });
+    const summary: Record<Category, ReturnType<typeof init>> = {
+      execution: init(), pending_audit_plan: init(), planning: init(),
+    };
+    for (const r of filteredSorted) {
+      const s = summary[r.category];
+      s.count++;
+      // Section dot summary uses the WORSE of progress / result so the
+      // operator can see how much trouble each section has at a glance.
+      const worst: Dot =
+        r.progress === 'red' || r.result === 'red' ? 'red' :
+        r.progress === 'orange' || r.result === 'orange' ? 'orange' :
+        r.progress === 'green' ? 'green' : 'pending';
+      s[worst]++;
+    }
+    return summary;
+  }, [filteredSorted]);
+
+  function toggleSort(key: SortKey) {
+    if (key === sortKey) {
+      setSortDir(d => (d === 'asc' ? 'desc' : 'asc'));
+    } else {
+      setSortKey(key);
+      setSortDir('asc');
+    }
+  }
+
+  function toggleDotFilter(field: 'progress' | 'result', value: Dot) {
+    setFilters(f => {
+      const next = new Set(f[field]);
+      if (next.has(value)) next.delete(value); else next.add(value);
+      return { ...f, [field]: next };
+    });
+  }
+
+  async function handleSignOff(row: SummaryRow, role: 'reviewer' | 'ri', isUnsign: boolean) {
+    if (!row.conclusionId) return;
+    // The conclusions PATCH endpoint uses the legacy verb pair
+    // `review`/`unreview` for the Reviewer slot and
+    // `ri_signoff`/`ri_unsignoff` for the RI slot.
+    const action = role === 'ri'
+      ? (isUnsign ? 'ri_unsignoff' : 'ri_signoff')
+      : (isUnsign ? 'unreview' : 'review');
     try {
       const res = await fetch(`/api/engagements/${engagementId}/test-conclusions`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ id: conclusionId, action: isUnsign ? 'ri_unsignoff' : 'ri_signoff' }),
+        body: JSON.stringify({ id: row.conclusionId, action }),
       });
       if (res.ok) await load();
+    } catch {}
+  }
+
+  async function handleHeaderSignOff(role: 'reviewer' | 'ri') {
+    const isUnsign = role === 'ri' ? !!tabSignOffs.ri : !!tabSignOffs.reviewer;
+    // Stamp into a dedicated PF section so the EngagementTabs reader
+    // (which scans section data for `reviewer.at` / `ri.at`) can pick
+    // it up without a bespoke loader. Shape matches Walkthroughs and
+    // the other PF-section sign-off tabs.
+    const stamp = { at: new Date().toISOString(), name: '' };
+    const data = role === 'ri'
+      ? { ri: isUnsign ? null : stamp }
+      : { reviewer: isUnsign ? null : stamp };
+    try {
+      await fetch(`/api/engagements/${engagementId}/permanent-file`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ sectionKey: 'test_summary_results_signoffs', data }),
+      });
+      // Notify EngagementTabs so it refreshes the tab-bar dot without
+      // waiting for the next remount.
+      try { window.dispatchEvent(new Event('engagement:signoffs-changed')); } catch {}
+      await load();
     } catch {}
   }
 
   if (loading) return <div className="p-6 text-center text-xs text-slate-400 animate-pulse">Loading test summary…</div>;
   if (rows.length === 0) return <div className="p-6 text-center text-xs text-slate-400">No tests recorded yet.</div>;
 
-  // Materiality banner — useful context because the Result column
-  // bands are derived from these thresholds.
   const haveThresholds = performanceMateriality > 0;
 
+  // Cascade: if RI signed, the Reviewer slot is implicitly signed too.
+  const reviewerEffective = !!(tabSignOffs.reviewer || tabSignOffs.ri);
+  const riEffective = !!tabSignOffs.ri;
+
+  // Group filtered rows by category for rendering.
+  const byCategory: Record<Category, SummaryRow[]> = {
+    execution: filteredSorted.filter(r => r.category === 'execution'),
+    pending_audit_plan: filteredSorted.filter(r => r.category === 'pending_audit_plan'),
+    planning: filteredSorted.filter(r => r.category === 'planning'),
+  };
+
+  function renderTbDot(tb: TbCheck | null) {
+    if (!tb) return <span className="text-slate-300 text-[9px]">—</span>;
+    const pct = tb.percentage;
+    const colour: Dot = tb.reconciled || pct === 100 ? 'green' : 'red';
+    const hover = pct !== null ? `${pct}% — listing ${formatGbp(tb.listingTotal)} / TB ${formatGbp(tb.tbTotal)}` : 'No client response yet';
+    return <div className={`w-3 h-3 rounded-full mx-auto ${DOT_BG[colour]}`} title={hover} />;
+  }
+
+  function renderSignOffButton(row: SummaryRow, role: 'reviewer' | 'ri') {
+    if (!row.conclusionId) return <span className="text-[9px] text-slate-300">—</span>;
+    const signedName = role === 'ri' ? row.riSignedByName : (row.reviewerSignedByName || row.riSignedByName);
+    const viaCascade = role === 'reviewer' && !row.reviewerSignedByName && !!row.riSignedByName;
+    // Authorisation: RI can sign either column. Reviewer can sign only
+    // the Reviewer column (not the RI column).
+    const canSign = role === 'ri' ? userRole === 'RI' : (userRole === 'RI' || userRole === 'Reviewer');
+    if (!canSign) {
+      return signedName
+        ? <span className="text-[9px] text-blue-600" title={`Signed by ${signedName}${viaCascade ? ' (via RI)' : ''}`}>✓</span>
+        : <span className="text-[9px] text-slate-300">—</span>;
+    }
+    return (
+      <button
+        onClick={() => handleSignOff(row, role, !!signedName && !viaCascade)}
+        disabled={viaCascade}
+        className={`text-[9px] px-1.5 py-0.5 rounded font-medium ${
+          signedName ? 'bg-blue-100 text-blue-700 hover:bg-blue-200' : 'bg-slate-100 text-slate-400 hover:bg-slate-200'
+        } ${viaCascade ? 'opacity-60 cursor-not-allowed' : ''}`}
+        title={signedName ? `Signed by ${signedName}${viaCascade ? ' (via RI — clear by unsigning the RI dot)' : ' — click to unsign'}` : `Sign as ${role === 'ri' ? 'RI' : 'Reviewer'}`}
+      >
+        {signedName ? '✓' : 'Sign'}
+      </button>
+    );
+  }
+
   return (
-    <div className="space-y-2">
-      <div className="flex items-center justify-between px-1 pb-1">
-        <h3 className="text-sm font-bold text-slate-700">Audit Test Summary Results</h3>
+    <div className="space-y-3">
+      {/* ─── Header: title + 2 sign-off dots + materiality context ── */}
+      <div className="flex items-center justify-between px-1">
+        <div className="flex items-center gap-3">
+          <h3 className="text-sm font-bold text-slate-700">Audit Test Summary Results</h3>
+          {/* Reviewer + RI dots — sync'd with the tab label dots
+              because both read from the same auditPermanentFile
+              section. RI sign cascades to Reviewer. */}
+          <div className="flex items-center gap-2 text-[10px]">
+            <button
+              onClick={() => userRole === 'RI' || userRole === 'Reviewer' ? handleHeaderSignOff('reviewer') : undefined}
+              disabled={!(userRole === 'RI' || userRole === 'Reviewer') || riEffective}
+              className="inline-flex items-center gap-1 disabled:cursor-not-allowed"
+              title={reviewerEffective ? `Reviewer signed${tabSignOffs.ri ? ' (via RI)' : ''} — click to unsign` : 'Sign tab as Reviewer'}
+            >
+              <span className={`w-2.5 h-2.5 rounded-full ${reviewerEffective ? 'bg-green-500' : 'bg-slate-300'}`} />
+              <span className="text-slate-500">Reviewer</span>
+            </button>
+            <button
+              onClick={() => userRole === 'RI' ? handleHeaderSignOff('ri') : undefined}
+              disabled={userRole !== 'RI'}
+              className="inline-flex items-center gap-1 disabled:cursor-not-allowed"
+              title={riEffective ? 'RI signed — click to unsign' : 'Sign tab as RI'}
+            >
+              <span className={`w-2.5 h-2.5 rounded-full ${riEffective ? 'bg-green-500' : 'bg-slate-300'}`} />
+              <span className="text-slate-500">RI</span>
+            </button>
+          </div>
+        </div>
         <div className="text-[10px] text-slate-400">
-          {rows.length} test{rows.length !== 1 ? 's' : ''}
+          {filteredSorted.length} of {rows.length} test{rows.length !== 1 ? 's' : ''}
           {haveThresholds && (
             <> · CT {clearlyTrivial.toLocaleString()} · PM {performanceMateriality.toLocaleString()}</>
           )}
         </div>
       </div>
 
+      {/* ─── Table with sortable / filterable headers ────────────── */}
       <div className="border rounded-lg overflow-hidden bg-white">
         <table className="w-full text-[11px]">
           <thead className="bg-slate-50 text-[10px] uppercase tracking-wide text-slate-500">
             <tr>
-              <th className="px-3 py-1.5 text-left font-semibold">Test</th>
-              <th className="px-2 py-1.5 text-left font-semibold w-32">FS Line</th>
-              <th className="px-2 py-1.5 text-center font-semibold w-20" title="Tests completed (green) / partially complete (orange) / failed to complete (red)">Progress</th>
-              <th className="px-2 py-1.5 text-center font-semibold w-20" title="No / trivial error (green) / between CT and PM (orange) / above PM (red)">Result</th>
-              <th className="px-2 py-1.5 text-right font-semibold w-20" title="Hours:Minutes from start to completion">Duration</th>
-              <th className="px-2 py-1.5 text-center font-semibold w-16">RI</th>
+              <SortableHeader label="FS Line" col="fsLine" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} onFilterToggle={() => setOpenFilter(o => o === 'fsLine' ? null : 'fsLine')} hasFilter={!!filters.fsLine} className="w-32 text-left" />
+              <SortableHeader label="FS Value" col="fsLineValue" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} className="w-24 text-right" />
+              <SortableHeader label="TB" col="tbCheck" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} onFilterToggle={() => setOpenFilter(o => o === 'tbCheck' ? null : 'tbCheck')} hasFilter={filters.tbCheck !== 'any'} className="w-12 text-center" />
+              <SortableHeader label="Test" col="testDescription" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} onFilterToggle={() => setOpenFilter(o => o === 'testDescription' ? null : 'testDescription')} hasFilter={!!filters.testDescription} className="text-left" />
+              <SortableHeader label="Progress" col="progress" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} onFilterToggle={() => setOpenFilter(o => o === 'progress' ? null : 'progress')} hasFilter={filters.progress.size > 0} className="w-20 text-center" />
+              <SortableHeader label="Result" col="result" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} onFilterToggle={() => setOpenFilter(o => o === 'result' ? null : 'result')} hasFilter={filters.result.size > 0} className="w-20 text-center" />
+              <SortableHeader label="Error £" col="extrapolatedError" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} className="w-24 text-right" />
+              <SortableHeader label="Duration" col="durationMs" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} className="w-20 text-right" />
+              <SortableHeader label="Reviewer" col="reviewer" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} className="w-16 text-center" />
+              <SortableHeader label="RI" col="ri" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} className="w-12 text-center" />
             </tr>
-          </thead>
-          <tbody className="divide-y divide-slate-100">
-            {rows.map(row => (
-              <tr key={row.key} className={row.progress === 'red' || row.result === 'red' ? 'bg-red-50/40' : ''}>
-                <td className="px-3 py-1.5 text-slate-700">
-                  <div className="flex items-start gap-1.5">
-                    {/* Category pill — visually distinguishes the
-                        new row sources (pre-execution audit-plan
-                        tests vs Prior Period planning items) from
-                        regular executions. Hidden for executions
-                        since those are the default. */}
-                    {row.category === 'pending_audit_plan' && (
-                      <span className="text-[9px] px-1 py-0.5 rounded bg-amber-50 text-amber-700 border border-amber-200 font-semibold uppercase tracking-wide flex-shrink-0 mt-0.5">Pending</span>
-                    )}
-                    {row.category === 'planning' && (
-                      <span className="text-[9px] px-1 py-0.5 rounded bg-indigo-50 text-indigo-700 border border-indigo-200 font-semibold uppercase tracking-wide flex-shrink-0 mt-0.5">Planning</span>
-                    )}
-                    <div className="truncate max-w-[420px]">{row.testDescription}</div>
-                  </div>
-                  {row.totalErrors > 0 && (
-                    <div className="text-[9px] text-red-600 mt-0.5 inline-flex items-center gap-0.5">
-                      <AlertTriangle className="h-2.5 w-2.5" />{row.totalErrors} error{row.totalErrors !== 1 ? 's' : ''}
-                    </div>
-                  )}
-                </td>
-                <td className="px-2 py-1.5 text-slate-500 truncate">
-                  {row.fsLine}
-                  {row.accountCode && row.accountCode !== row.fsLine && (
-                    <span className="block text-[9px] text-slate-400 font-mono">{row.accountCode}</span>
-                  )}
-                </td>
-                <td className="px-2 py-1.5 text-center">
-                  <div
-                    className={`w-3 h-3 rounded-full mx-auto ${DOT_BG[row.progress]}`}
-                    title={PROGRESS_TITLE[row.progress]}
-                  />
-                </td>
-                <td className="px-2 py-1.5 text-center">
-                  <div
-                    className={`w-3 h-3 rounded-full mx-auto ${DOT_BG[row.result]}`}
-                    title={RESULT_TITLE[row.result]}
-                  />
-                </td>
-                <td className="px-2 py-1.5 text-right text-slate-500 tabular-nums">
-                  {formatDuration(row.durationMs)}
-                </td>
-                <td className="px-2 py-1.5 text-center">
-                  {row.conclusionId && userRole === 'RI' ? (
-                    <button
-                      onClick={() => handleRISignOff(row.conclusionId!, !!row.riSignedByName)}
-                      className={`text-[9px] px-1.5 py-0.5 rounded font-medium ${
-                        row.riSignedByName ? 'bg-blue-100 text-blue-700 hover:bg-blue-200' : 'bg-slate-100 text-slate-400 hover:bg-slate-200'
-                      }`}
-                      title={row.riSignedByName ? `Signed by ${row.riSignedByName} — click to unsign` : 'Sign as RI'}
-                    >
-                      {row.riSignedByName ? '✓' : 'Sign'}
-                    </button>
-                  ) : row.riSignedByName ? (
-                    <span className="text-[9px] text-blue-600" title={`Signed by ${row.riSignedByName}`}>✓</span>
-                  ) : (
-                    <span className="text-[9px] text-slate-300">—</span>
-                  )}
+            {openFilter && (
+              <tr>
+                <td colSpan={10} className="px-3 py-2 bg-slate-50 border-t border-slate-200">
+                  <FilterRow filter={openFilter} filters={filters} setFilters={setFilters} toggleDotFilter={toggleDotFilter} onClose={() => setOpenFilter(null)} />
                 </td>
               </tr>
-            ))}
+            )}
+          </thead>
+          <tbody className="divide-y divide-slate-100">
+            {(['execution', 'pending_audit_plan', 'planning'] as Category[]).map(cat => {
+              const list = byCategory[cat];
+              if (list.length === 0) return null;
+              const s = categorySummary[cat];
+              return (
+                <Fragment key={`section:${cat}`}>
+                  {/* Section header — count + dot summary so the
+                      operator can see at a glance how much work is
+                      still outstanding in each section. */}
+                  <tr className="bg-slate-100/70">
+                    <td colSpan={10} className="px-3 py-1.5">
+                      <div className="flex items-center gap-3">
+                        <span className={`text-[10px] px-1.5 py-0.5 rounded font-semibold uppercase tracking-wide border ${CATEGORY_PILL[cat]}`}>
+                          {CATEGORY_LABEL[cat]}
+                        </span>
+                        <span className="text-[10px] font-medium text-slate-700">{s.count} item{s.count !== 1 ? 's' : ''}</span>
+                        <div className="flex items-center gap-2 text-[10px] text-slate-600">
+                          {s.red > 0 && <span className="inline-flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-red-500" />{s.red}</span>}
+                          {s.orange > 0 && <span className="inline-flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-orange-500" />{s.orange}</span>}
+                          {s.green > 0 && <span className="inline-flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-green-500" />{s.green}</span>}
+                          {s.pending > 0 && <span className="inline-flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-slate-300" />{s.pending}</span>}
+                        </div>
+                      </div>
+                    </td>
+                  </tr>
+                  {list.map(row => (
+                    <tr key={row.key} className={row.progress === 'red' || row.result === 'red' ? 'bg-red-50/40' : ''}>
+                      <td className="px-2 py-1.5 text-slate-500 truncate">
+                        {row.fsLine}
+                        {row.accountCode && row.accountCode !== row.fsLine && (
+                          <span className="block text-[9px] text-slate-400 font-mono">{row.accountCode}</span>
+                        )}
+                      </td>
+                      <td className="px-2 py-1.5 text-right text-slate-600 tabular-nums">
+                        {formatGbp(row.fsLineValue)}
+                      </td>
+                      <td className="px-2 py-1.5 text-center">{renderTbDot(row.tbCheck)}</td>
+                      <td className="px-3 py-1.5 text-slate-700">
+                        <div className="truncate max-w-[420px]">{row.testDescription}</div>
+                        {row.totalErrors > 0 && (
+                          <div className="text-[9px] text-red-600 mt-0.5 inline-flex items-center gap-0.5">
+                            <AlertTriangle className="h-2.5 w-2.5" />{row.totalErrors} error{row.totalErrors !== 1 ? 's' : ''}
+                          </div>
+                        )}
+                      </td>
+                      <td className="px-2 py-1.5 text-center">
+                        <div className={`w-3 h-3 rounded-full mx-auto ${DOT_BG[row.progress]}`} title={PROGRESS_TITLE[row.progress]} />
+                      </td>
+                      <td className="px-2 py-1.5 text-center">
+                        <div className={`w-3 h-3 rounded-full mx-auto ${DOT_BG[row.result]}`} title={RESULT_TITLE[row.result]} />
+                      </td>
+                      <td className="px-2 py-1.5 text-right text-slate-600 tabular-nums">
+                        {row.extrapolatedError ? formatGbp(row.extrapolatedError) : <span className="text-slate-300">—</span>}
+                      </td>
+                      <td className="px-2 py-1.5 text-right text-slate-500 tabular-nums">{formatDuration(row.durationMs)}</td>
+                      <td className="px-2 py-1.5 text-center">{renderSignOffButton(row, 'reviewer')}</td>
+                      <td className="px-2 py-1.5 text-center">{renderSignOffButton(row, 'ri')}</td>
+                    </tr>
+                  ))}
+                </Fragment>
+              );
+            })}
           </tbody>
         </table>
       </div>
+    </div>
+  );
+}
+
+// ─── Helpers ────────────────────────────────────────────────────────
+
+interface SortableHeaderProps {
+  label: string;
+  col: SortKey;
+  sortKey: SortKey;
+  sortDir: SortDir;
+  onSort: (key: SortKey) => void;
+  onFilterToggle?: () => void;
+  hasFilter?: boolean;
+  className?: string;
+}
+
+function SortableHeader({ label, col, sortKey, sortDir, onSort, onFilterToggle, hasFilter, className }: SortableHeaderProps) {
+  const active = col === sortKey;
+  return (
+    <th className={`px-2 py-1.5 font-semibold ${className || ''}`}>
+      <div className="inline-flex items-center gap-1">
+        <button
+          onClick={() => onSort(col)}
+          className={`inline-flex items-center gap-1 hover:text-slate-700 ${active ? 'text-slate-700' : ''}`}
+          title="Click to sort"
+        >
+          <span>{label}</span>
+          {active
+            ? (sortDir === 'asc' ? <ArrowUp className="h-2.5 w-2.5" /> : <ArrowDown className="h-2.5 w-2.5" />)
+            : <ArrowUpDown className="h-2.5 w-2.5 text-slate-300" />}
+        </button>
+        {onFilterToggle && (
+          <button
+            onClick={onFilterToggle}
+            className={`p-0.5 rounded hover:bg-slate-200 ${hasFilter ? 'text-blue-600' : 'text-slate-400'}`}
+            title="Filter"
+          >
+            <FilterIcon className="h-2.5 w-2.5" />
+          </button>
+        )}
+      </div>
+    </th>
+  );
+}
+
+interface FilterRowProps {
+  filter: keyof ColumnFilters;
+  filters: ColumnFilters;
+  setFilters: (fn: (f: ColumnFilters) => ColumnFilters) => void;
+  toggleDotFilter: (field: 'progress' | 'result', value: Dot) => void;
+  onClose: () => void;
+}
+
+function FilterRow({ filter, filters, setFilters, toggleDotFilter, onClose }: FilterRowProps) {
+  if (filter === 'fsLine') {
+    return (
+      <FilterShell label="Filter FS Line" onClose={onClose} onClear={() => setFilters(f => ({ ...f, fsLine: '' }))} hasValue={!!filters.fsLine}>
+        <input
+          type="text"
+          value={filters.fsLine}
+          onChange={e => setFilters(f => ({ ...f, fsLine: e.target.value }))}
+          placeholder="Type to filter…"
+          className="text-[11px] px-2 py-1 border border-slate-300 rounded w-48 focus:outline-none focus:border-blue-400"
+          autoFocus
+        />
+      </FilterShell>
+    );
+  }
+  if (filter === 'testDescription') {
+    return (
+      <FilterShell label="Filter Test" onClose={onClose} onClear={() => setFilters(f => ({ ...f, testDescription: '' }))} hasValue={!!filters.testDescription}>
+        <input
+          type="text"
+          value={filters.testDescription}
+          onChange={e => setFilters(f => ({ ...f, testDescription: e.target.value }))}
+          placeholder="Type to filter…"
+          className="text-[11px] px-2 py-1 border border-slate-300 rounded w-64 focus:outline-none focus:border-blue-400"
+          autoFocus
+        />
+      </FilterShell>
+    );
+  }
+  if (filter === 'progress' || filter === 'result') {
+    const set = filters[filter];
+    const dots: Dot[] = ['red', 'orange', 'green', 'pending'];
+    return (
+      <FilterShell label={`Filter ${filter === 'progress' ? 'Progress' : 'Result'}`} onClose={onClose} onClear={() => setFilters(f => ({ ...f, [filter]: new Set() }))} hasValue={set.size > 0}>
+        <div className="flex items-center gap-2 text-[11px]">
+          {dots.map(d => (
+            <label key={d} className="inline-flex items-center gap-1 cursor-pointer">
+              <input type="checkbox" checked={set.has(d)} onChange={() => toggleDotFilter(filter, d)} className="w-3 h-3" />
+              <span className={`w-2.5 h-2.5 rounded-full ${DOT_BG[d]}`} />
+              <span className="capitalize">{d}</span>
+            </label>
+          ))}
+        </div>
+      </FilterShell>
+    );
+  }
+  if (filter === 'tbCheck') {
+    return (
+      <FilterShell label="Filter TB Check" onClose={onClose} onClear={() => setFilters(f => ({ ...f, tbCheck: 'any' }))} hasValue={filters.tbCheck !== 'any'}>
+        <select
+          value={filters.tbCheck}
+          onChange={e => setFilters(f => ({ ...f, tbCheck: e.target.value as ColumnFilters['tbCheck'] }))}
+          className="text-[11px] px-2 py-1 border border-slate-300 rounded focus:outline-none focus:border-blue-400"
+          autoFocus
+        >
+          <option value="any">Any</option>
+          <option value="has_check">Has TB check</option>
+          <option value="no_check">No TB check</option>
+          <option value="green">Reconciled (green)</option>
+          <option value="red">Variance (red)</option>
+        </select>
+      </FilterShell>
+    );
+  }
+  return null;
+}
+
+function FilterShell({ label, onClose, onClear, hasValue, children }: { label: string; onClose: () => void; onClear: () => void; hasValue: boolean; children: React.ReactNode }) {
+  return (
+    <div className="flex items-center gap-3">
+      <span className="text-[10px] uppercase tracking-wide text-slate-500 font-semibold">{label}</span>
+      {children}
+      <div className="flex-1" />
+      {hasValue && (
+        <button onClick={onClear} className="text-[10px] text-slate-500 hover:text-slate-700 underline">Clear</button>
+      )}
+      <button onClick={onClose} className="text-[10px] text-slate-500 hover:text-slate-700">Close</button>
     </div>
   );
 }
