@@ -64,6 +64,7 @@ const HANDLERS: Record<string, ActionHandler> = {
   aggregateBalances: handleAggregateBalances,
   applyFactor: handleApplyFactor,
   promptUserForValue: handlePromptUserForValue,
+  requestListing: handleRequestListing,
   verifyEvidence: handleVerifyEvidence,
   teamReview: handleTeamReview,
   verifyPropertyAssets: handleVerifyPropertyAssets,
@@ -1209,6 +1210,279 @@ async function handlePromptUserForValue(ctx: ActionHandlerContext): Promise<Acti
     },
     pauseReason: 'user_input',
     pauseRefId: `user_input_${ctx.stepIndex}`,
+  };
+}
+
+async function handleRequestListing(ctx: ActionHandlerContext): Promise<ActionHandlerResult> {
+  const { engagementId, executionId, stepIndex, pipelineState, inputs, config } = ctx;
+  const stepState = pipelineState[stepIndex] || {};
+  const phase: string = stepState.phase || 'new';
+  const verifyAgainstTb = inputs.verify_against_tb !== false; // default true
+  const codeColumn = (inputs.code_column as string) || 'account_code';
+  const amountColumn = (inputs.amount_column as string) || 'amount';
+  const listingType = (inputs.listing_type as string) || 'other';
+
+  // ─── Phase: new ──────────────────────────────────────────────────────────
+  // First entry — run dedup, then either short-circuit (already on
+  // file) or create the portal request and pause.
+  if (phase === 'new') {
+    const engagement = await prisma.auditEngagement.findUnique({
+      where: { id: engagementId },
+      select: { clientId: true },
+    });
+    if (!engagement) return { action: 'error', outputs: {}, errorMessage: 'Engagement not found' };
+    const requestingUser = await prisma.user.findUnique({
+      where: { id: config.userId },
+      select: { name: true, email: true },
+    });
+
+    const { findExistingClientResponses, readDedupOptions, dedupHitsToTable } = await import('@/lib/client-request-dedup');
+    const dedupOptions = readDedupOptions(inputs, {
+      engagementId,
+      documentType: null,
+      areaOfWork: config.fsLine || listingType,
+      match: [listingType.replace(/_/g, ' ')],
+    });
+    const dedupResult = await findExistingClientResponses(dedupOptions, ctx);
+    const alreadyHave = dedupHitsToTable(dedupResult);
+
+    if (dedupResult.enabled && alreadyHave.length > 0) {
+      // We already have a recent matching listing — surface it but
+      // continue to ask in case it's stale; the message tells the
+      // client we have a prior version. Most engagements will want a
+      // fresh confirmation each period, so we don't short-circuit.
+    }
+
+    let composed = (inputs.message_to_client as string) || `Please provide the ${listingType.replace(/_/g, ' ')} as at period end.`;
+    if (alreadyHave.length > 0) {
+      composed += `\n\nNote: ${alreadyHave.length} item(s) on this topic are already on file with us — please confirm whether the existing version is still current or supply an updated one.`;
+    }
+
+    const portalRequest = await prisma.portalRequest.create({
+      data: {
+        clientId: engagement.clientId,
+        engagementId,
+        section: 'evidence',
+        question: composed,
+        status: 'outstanding',
+        requestedById: config.userId,
+        requestedByName: requestingUser?.name || requestingUser?.email || 'Audit Team',
+        evidenceTag: `listing:${listingType}`,
+      } as any,
+    });
+    await prisma.outstandingItem.create({
+      data: {
+        engagementId,
+        executionId,
+        type: 'portal_request',
+        title: `Listing request: ${listingType.replace(/_/g, ' ')}`,
+        description: composed,
+        source: 'flow',
+        assignedTo: 'client',
+        status: 'awaiting_client',
+        fsLine: config.fsLine,
+        testName: config.testDescription,
+        portalRequestId: portalRequest.id,
+      },
+    });
+    return {
+      action: 'pause',
+      outputs: {
+        phase: 'listing_received',
+        portal_request_id: portalRequest.id,
+        already_have: alreadyHave,
+        originally_requested_count: 1,
+        dedup_summary: dedupResult.summary,
+        repeatOnResume: true,
+      },
+      pauseReason: 'portal_response',
+      pauseRefId: portalRequest.id,
+    };
+  }
+
+  // ─── Phase: listing_received ─────────────────────────────────────────────
+  // Resumed after the client responded. Parse the upload, optionally
+  // SUMIF against TB. When verify_against_tb is off, we skip the
+  // reconciliation and just hand the parsed rows downstream.
+  const portalRequestId = stepState.portal_request_id as string | undefined;
+  if (!portalRequestId) {
+    return { action: 'error', outputs: {}, errorMessage: 'No portal request id on step state' };
+  }
+  const rows = await parseListingFromPortalUploads(portalRequestId);
+  if (rows.length === 0) {
+    return {
+      action: 'pause',
+      outputs: {
+        phase: 'listing_received',
+        portal_request_id: portalRequestId,
+        parse_error: 'Could not parse any rows from the uploaded listing. Please upload an Excel (.xlsx) or CSV file with one row per item.',
+        repeatOnResume: true,
+      },
+      pauseReason: 'portal_response',
+      pauseRefId: portalRequestId,
+    };
+  }
+
+  // Operator turned the check off — pass the parsed rows through
+  // without touching the TB.
+  if (!verifyAgainstTb) {
+    return {
+      action: 'continue',
+      outputs: {
+        data_table: rows,
+        listing_total: null,
+        tb_total: null,
+        variance: null,
+        tb_reconciled: 'pass',
+        reconciliation: [],
+        missing_codes: [],
+        extra_codes: [],
+        portal_request_id: portalRequestId,
+      },
+    };
+  }
+
+  const requestedCodes = await resolveAccountCodes(ctx, inputs.account_codes);
+  if (requestedCodes.length === 0) {
+    // No codes to reconcile against — surface a clear pause asking
+    // the operator to either bind account_codes or set the test's
+    // FS line. Doesn't bin the listing — just defers the check.
+    return {
+      action: 'continue',
+      outputs: {
+        data_table: rows,
+        listing_total: rows.reduce((acc, r) => acc + toAmount(r[amountColumn]), 0),
+        tb_total: null,
+        variance: null,
+        tb_reconciled: 'fail',
+        reconciliation: [],
+        missing_codes: [],
+        extra_codes: [],
+        portal_request_id: portalRequestId,
+        verify_skipped_reason: 'No TB account codes available to reconcile against. Set account_codes on the action or scope the test to an FS line.',
+      },
+    };
+  }
+
+  // Pull TB rows for the requested codes, key by normalised code.
+  const tbRows = await prisma.auditTBRow.findMany({
+    where: { engagementId, accountCode: { in: requestedCodes } },
+    select: { accountCode: true, description: true, currentYear: true },
+  });
+  const tbByCode = new Map<string, { accountCode: string; description: string | null; balance: number }>();
+  for (const r of tbRows) {
+    tbByCode.set(normCode(r.accountCode), {
+      accountCode: r.accountCode,
+      description: r.description,
+      balance: Number(r.currentYear || 0),
+    });
+  }
+
+  // SUMIF the listing by code_column. Rows missing the code field
+  // contribute to a synthetic "(no code)" bucket so we don't lose
+  // their value silently.
+  let listingTotalOverall = 0;
+  const listingByCode = new Map<string, number>();
+  for (const row of rows) {
+    const amt = toAmount(row?.[amountColumn]);
+    listingTotalOverall += amt;
+    const key = normCode(row?.[codeColumn]);
+    if (key) listingByCode.set(key, (listingByCode.get(key) || 0) + amt);
+  }
+  const tbTotalOverall = requestedCodes.reduce((acc, c) => acc + (tbByCode.get(normCode(c))?.balance || 0), 0);
+  const tolerance = Number(inputs.tolerance_gbp || 1);
+
+  const reconciliation: any[] = [];
+  const missingCodes: any[] = [];
+  const extraCodes: any[] = [];
+  let allReconciled = true;
+  const seen = new Set<string>();
+  for (const code of requestedCodes) {
+    const key = normCode(code);
+    seen.add(key);
+    const listingTotal = Math.round((listingByCode.get(key) || 0) * 100) / 100;
+    const tb = tbByCode.get(key);
+    const tbBalance = tb?.balance ?? 0;
+    const variance = Math.round((listingTotal - tbBalance) * 100) / 100;
+    const inListing = listingByCode.has(key);
+    const status = !inListing ? 'missing_in_listing' : (Math.abs(variance) <= tolerance ? 'matched' : 'variance');
+    const row = {
+      account_code: tb?.accountCode || code,
+      description: tb?.description || null,
+      listing_total: listingTotal,
+      tb_balance: Math.round(tbBalance * 100) / 100,
+      variance,
+      status,
+    };
+    reconciliation.push(row);
+    if (status === 'missing_in_listing') {
+      missingCodes.push({ account_code: row.account_code, description: row.description, tb_balance: row.tb_balance });
+      allReconciled = false;
+    } else if (status === 'variance') {
+      allReconciled = false;
+    }
+  }
+  for (const [key, listingTotal] of listingByCode) {
+    if (!seen.has(key)) {
+      extraCodes.push({ account_code: key, listing_total: Math.round(listingTotal * 100) / 100 });
+      allReconciled = false;
+    }
+  }
+
+  const variance = Math.round((listingTotalOverall - tbTotalOverall) * 100) / 100;
+  if (!allReconciled) {
+    // Raise a follow-up outstanding so the client is asked to
+    // correct or explain. Pipeline stays paused at this step;
+    // resuming with phase='listing_received' re-runs the SUMIF
+    // after the client has uploaded a corrected file.
+    await prisma.outstandingItem.create({
+      data: {
+        engagementId,
+        executionId,
+        type: 'portal_request',
+        title: `${listingType.replace(/_/g, ' ')} listing does not agree to TB (variance ${variance})`,
+        description: `Listing total: ${Math.round(listingTotalOverall * 100) / 100}. TB total for the requested codes: ${Math.round(tbTotalOverall * 100) / 100}. Variance: ${variance}. ${missingCodes.length > 0 ? `Missing from response: ${missingCodes.map(m => m.account_code).join(', ')}. ` : ''}${extraCodes.length > 0 ? `Extra in response: ${extraCodes.map(m => m.account_code).join(', ')}. ` : ''}Please confirm the listing is complete or explain the difference.`,
+        source: 'flow',
+        assignedTo: 'client',
+        status: 'awaiting_client',
+        fsLine: config.fsLine,
+        testName: config.testDescription,
+        portalRequestId,
+      },
+    });
+    return {
+      action: 'pause',
+      outputs: {
+        phase: 'listing_received',
+        portal_request_id: portalRequestId,
+        data_table: rows,
+        listing_total: Math.round(listingTotalOverall * 100) / 100,
+        tb_total: Math.round(tbTotalOverall * 100) / 100,
+        variance,
+        tb_reconciled: 'fail',
+        reconciliation,
+        missing_codes: missingCodes,
+        extra_codes: extraCodes,
+        repeatOnResume: true,
+      },
+      pauseReason: 'portal_response',
+      pauseRefId: portalRequestId,
+    };
+  }
+
+  return {
+    action: 'continue',
+    outputs: {
+      data_table: rows,
+      listing_total: Math.round(listingTotalOverall * 100) / 100,
+      tb_total: Math.round(tbTotalOverall * 100) / 100,
+      variance,
+      tb_reconciled: 'pass',
+      reconciliation,
+      missing_codes: [],
+      extra_codes: [],
+      portal_request_id: portalRequestId,
+    },
   };
 }
 
