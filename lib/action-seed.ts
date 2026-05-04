@@ -1040,7 +1040,7 @@ export const SYSTEM_ACTIONS: ActionDefinitionData[] = [
   {
     code: 'cut_off_date_range',
     name: 'Cut-Off Date Range',
-    description: 'Asks the auditor for a Days Before and Days After window in a single popup, then computes Start.Date and End.Date around the engagement period end for downstream cut-off / post-YE actions. The Default Days Before / Default Days After fields below pre-fill the runtime prompt; the auditor can accept or override.',
+    description: 'Computes Start.Date and End.Date around the engagement period end for downstream cut-off / post-YE actions. Each day-count field can either be SET in the editor (becomes a fixed value used at runtime, no prompt) or LEFT BLANK (the auditor is prompted for it at runtime). When both are blank the runtime popup shows two fields; when one is set the popup shows only the other; when both are set the action runs straight through with no prompt. Negative values are allowed — e.g. set Days Before to -1 to make the window start the day AFTER period end (post-YE testing).',
     category: 'general',
     handlerName: 'cutOffDateRange',
     icon: 'CalendarRange',
@@ -1048,10 +1048,10 @@ export const SYSTEM_ACTIONS: ActionDefinitionData[] = [
     isSystem: true,
     inputSchema: [
       { code: 'period_end', label: 'Base Date (Period End)', type: 'date', required: true, source: 'auto', autoMapFrom: '$ctx.engagement.periodEnd', group: 'Base', description: 'Defaults to the engagement period end. Manual-input to override (e.g. another date in the period or an upstream date output).' },
-      { code: 'prompt_title', label: 'Prompt Title', type: 'text', required: false, source: 'user', defaultValue: 'Cut-Off Window', group: 'Prompt', description: 'Heading shown on the runtime popup.' },
-      { code: 'prompt_description', label: 'Prompt Description', type: 'textarea', required: false, source: 'user', group: 'Prompt', description: 'Help text shown beneath the heading on the runtime popup.' },
-      { code: 'default_days_before', label: 'Default Days Before', type: 'number', required: false, source: 'user', defaultValue: 0, group: 'Window', description: 'Pre-fills the Days Before field on the runtime popup. Auditor can accept or override.' },
-      { code: 'default_days_after', label: 'Default Days After', type: 'number', required: false, source: 'user', defaultValue: 60, group: 'Window', description: 'Pre-fills the Days After field on the runtime popup. Auditor can accept or override.' },
+      { code: 'days_before', label: 'Days Before Period End', type: 'number', required: false, source: 'user', group: 'Window', description: 'Subtracted from Base Date to give Start.Date. SET to fix the value (no runtime prompt for this field); LEAVE BLANK to prompt the auditor at runtime. Negative values are allowed (e.g. -1 starts the window 1 day after period end).' },
+      { code: 'days_after', label: 'Days After Period End', type: 'number', required: false, source: 'user', group: 'Window', description: 'Added to Base Date to give End.Date. SET to fix the value; LEAVE BLANK to prompt the auditor at runtime.' },
+      { code: 'prompt_title', label: 'Prompt Title (when asking)', type: 'text', required: false, source: 'user', defaultValue: 'Cut-Off Window', group: 'Prompt', description: 'Heading shown on the runtime popup. Only used when at least one day-count is left blank above.' },
+      { code: 'prompt_description', label: 'Prompt Description (when asking)', type: 'textarea', required: false, source: 'user', group: 'Prompt', description: 'Help text shown beneath the heading on the runtime popup.' },
     ],
     outputSchema: [
       // Dates emitted as ISO strings (YYYY-MM-DD). OutputFieldType

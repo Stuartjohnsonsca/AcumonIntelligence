@@ -1264,44 +1264,53 @@ async function handlePromptUserForValue(ctx: ActionHandlerContext): Promise<Acti
 }
 
 /**
- * Cut-Off Date Range — two-phase action.
+ * Cut-Off Date Range — design-time defaults bypass the prompt.
  *
- *   Phase 1 (new): pause with a multi-field prompt config so the
- *   runtime UI can render a single popup with two number inputs
- *   (Days Before, Days After). Sets repeatOnResume so the same step
- *   re-runs after the user submits.
+ * Each day-count input can be SET in the editor (fixed value, no
+ * prompt) or LEFT BLANK (asked at runtime). Cases:
+ *   - Both set    → no popup, compute and continue immediately
+ *   - One set     → popup asks for the other only
+ *   - Both blank  → popup asks for both
  *
- *   Phase 2 (resumed): the resume payload merges
- *   `values: { days_before, days_after }` into pipelineState[step].
- *   This handler reads them, computes start_date / end_date / etc.,
- *   and continues to the next step. The compute outputs replace the
- *   prompt config in the step's outputs so downstream `$prev.start_date`
- *   reads cleanly.
+ * Negative values are allowed so post-YE windows can be expressed
+ * by setting Days Before = -1 (window starts the day AFTER period
+ * end). Clamping is intentionally not applied.
  *
- * Date arithmetic is done in UTC so a window of "+0 days" yields the
- * same date as the input (no implicit timezone shift).
+ * Two-phase: pauses with a `prompts` array consumed by
+ * MultiFieldPromptPanel; the resume payload merges
+ * `values: { days_before?, days_after? }` into pipelineState[step].
+ * Date arithmetic runs in UTC so 0-day windows yield the input date
+ * with no implicit zone shift.
  */
 async function handleCutOffDateRange(ctx: ActionHandlerContext): Promise<ActionHandlerResult> {
   const { inputs, pipelineState, stepIndex } = ctx;
   const stepState = pipelineState[stepIndex] || {};
   const submitted = stepState.values as { days_before?: unknown; days_after?: unknown } | undefined;
-  const haveSubmittedValues = !!submitted && submitted.days_before != null && submitted.days_after != null;
 
-  // ── Phase 1: prompt the auditor ─────────────────────────────────
-  if (!haveSubmittedValues) {
-    const defaultBefore = Number(inputs.default_days_before ?? 0);
-    const defaultAfter = Number(inputs.default_days_after ?? 60);
+  function isSet(v: unknown): boolean {
+    return v !== null && v !== undefined && v !== '' && !(typeof v === 'number' && Number.isNaN(v));
+  }
+
+  // Resolve final values: prefer runtime-submitted, fall back to
+  // editor-fixed. Either side may be unresolved — see prompt logic.
+  const designBefore = inputs.days_before;
+  const designAfter  = inputs.days_after;
+  const finalBefore  = isSet(submitted?.days_before) ? submitted!.days_before : designBefore;
+  const finalAfter   = isSet(submitted?.days_after)  ? submitted!.days_after  : designAfter;
+
+  // Build the prompt list from whatever's still unresolved.
+  const prompts: Array<{ code: string; label: string; value_type: string; description?: string }> = [];
+  if (!isSet(finalBefore)) prompts.push({ code: 'days_before', label: 'Days Before Period End', value_type: 'number', description: 'Negative values shift the window start to AFTER period end (e.g. -1 = day after).' });
+  if (!isSet(finalAfter))  prompts.push({ code: 'days_after',  label: 'Days After Period End',  value_type: 'number' });
+
+  if (prompts.length > 0) {
     return {
       action: 'pause',
       outputs: {
         prompt_title: (inputs.prompt_title as string) || 'Cut-Off Window',
         prompt_description: (inputs.prompt_description as string)
-          || 'Set the days before and after the engagement period end to define the test window.',
-        // Multi-field prompt config consumed by MultiFieldPromptPanel.
-        prompts: [
-          { code: 'days_before', label: 'Days Before Period End', value_type: 'number', default_value: Number.isFinite(defaultBefore) ? defaultBefore : 0, min_value: 0 },
-          { code: 'days_after',  label: 'Days After Period End',  value_type: 'number', default_value: Number.isFinite(defaultAfter)  ? defaultAfter  : 60, min_value: 0 },
-        ],
+          || 'Set the date window for the test relative to the engagement period end.',
+        prompts,
         repeatOnResume: true,
       },
       pauseReason: 'user_input',
@@ -1309,7 +1318,7 @@ async function handleCutOffDateRange(ctx: ActionHandlerContext): Promise<ActionH
     };
   }
 
-  // ── Phase 2: compute and continue ───────────────────────────────
+  // Both values resolved — compute and continue.
   const baseRaw = inputs.period_end as string | Date | null | undefined;
   if (!baseRaw) {
     return { action: 'error', outputs: {}, errorMessage: 'period_end is required (bind to $ctx.engagement.periodEnd or supply a literal date)' };
@@ -1319,8 +1328,8 @@ async function handleCutOffDateRange(ctx: ActionHandlerContext): Promise<ActionH
     return { action: 'error', outputs: {}, errorMessage: `period_end is not a valid date: ${String(baseRaw)}` };
   }
 
-  const daysBefore = Math.max(0, Math.round(Number(submitted!.days_before)));
-  const daysAfter  = Math.max(0, Math.round(Number(submitted!.days_after)));
+  const daysBefore = Math.round(Number(finalBefore));
+  const daysAfter  = Math.round(Number(finalAfter));
   const startMs = Date.UTC(base.getUTCFullYear(), base.getUTCMonth(), base.getUTCDate() - daysBefore);
   const endMs   = Date.UTC(base.getUTCFullYear(), base.getUTCMonth(), base.getUTCDate() + daysAfter);
   const fmt = (d: Date) => d.toISOString().slice(0, 10);
