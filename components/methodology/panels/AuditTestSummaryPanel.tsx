@@ -280,6 +280,13 @@ export function AuditTestSummaryPanel({ engagementId, userRole }: Props) {
   // the Expand-All / Collapse-All button at the panel top toggles
   // every group at once.
   const [expandedFsLines, setExpandedFsLines] = useState<Set<string>>(new Set());
+  // Toggle for showing FS Lines / TB codes that have no test
+  // allocated (the slate-tinted "No test allocated" rows + the
+  // fully-untested FS-line groups like Cash and Cash Equivalents
+  // when no tests have been added yet). Default ON so coverage
+  // gaps are visible at first glance; toggle OFF to focus on
+  // tested rows only.
+  const [showUntested, setShowUntested] = useState(true);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -716,7 +723,9 @@ export function AuditTestSummaryPanel({ engagementId, userRole }: Props) {
                 isPlaceholder: true,
               }))
           : [];
-        const allRows = [...groupRows, ...placeholders];
+        // Hide placeholder rows when the toggle is off — but keep
+        // the group itself since it has tests.
+        const allRows = showUntested ? [...groupRows, ...placeholders] : groupRows;
         init[cat].push({
           key: `${cat}::${fsLine}`,
           fsLine,
@@ -729,8 +738,11 @@ export function AuditTestSummaryPanel({ engagementId, userRole }: Props) {
           // Distinct-code count uses the TB-side population (not
           // just the codes the tests cover) so the header pill
           // matches the count of rows the operator sees on
-          // expansion.
-          distinctCodeCount: tbCodes.length || new Set(groupRows.map(r => r.accountCode).filter(Boolean)).size,
+          // expansion. When the untested toggle is off, narrow it
+          // to the codes actually covered by a test.
+          distinctCodeCount: showUntested
+            ? (tbCodes.length || new Set(groupRows.map(r => r.accountCode).filter(Boolean)).size)
+            : new Set(groupRows.map(r => r.accountCode).filter(Boolean)).size,
         });
       }
     }
@@ -738,47 +750,50 @@ export function AuditTestSummaryPanel({ engagementId, userRole }: Props) {
     // Coverage-gap groups: every FS line in the TB that doesn't
     // appear in any tested-bucket above. Lands in the 'execution'
     // section so it's visible in the main work area without
-    // creating a new section just for empty groups.
-    for (const [key, codes] of tbCodesByFsLine) {
-      if (testedFsLines.has(key)) continue;
-      const fsLine = codes[0]?.fsLineDisplay || key;
-      const placeholders: SummaryRow[] = codes.map(c => ({
-        key: `placeholder:execution:${fsLine}:${c.code}`,
-        testDescription: '',
-        fsLine,
-        fsLineValue: lookupFsLineValue(fsLine),
-        accountCode: c.code,
-        tbCodeValue: c.currentYear,
-        tbCodeDescription: c.description,
-        tbCheck: null,
-        progress: 'pending',
-        result: 'pending',
-        durationMs: null,
-        totalErrors: 0,
-        extrapolatedError: 0,
-        status: 'untested',
-        conclusionId: null,
-        executionId: null,
-        reviewerSignedByName: null,
-        riSignedByName: null,
-        category: 'execution',
-        isPlaceholder: true,
-      }));
-      init.execution.push({
-        key: `execution::${fsLine}`,
-        fsLine,
-        fsLineValue: lookupFsLineValue(fsLine),
-        rows: placeholders,
-        progress: 'pending',
-        result: 'pending',
-        tbCheckDot: null,
-        extrapolatedErrorTotal: 0,
-        distinctCodeCount: codes.length,
-      });
+    // creating a new section just for empty groups. Skipped
+    // entirely when the untested toggle is off.
+    if (showUntested) {
+      for (const [key, codes] of tbCodesByFsLine) {
+        if (testedFsLines.has(key)) continue;
+        const fsLine = codes[0]?.fsLineDisplay || key;
+        const placeholders: SummaryRow[] = codes.map(c => ({
+          key: `placeholder:execution:${fsLine}:${c.code}`,
+          testDescription: '',
+          fsLine,
+          fsLineValue: lookupFsLineValue(fsLine),
+          accountCode: c.code,
+          tbCodeValue: c.currentYear,
+          tbCodeDescription: c.description,
+          tbCheck: null,
+          progress: 'pending',
+          result: 'pending',
+          durationMs: null,
+          totalErrors: 0,
+          extrapolatedError: 0,
+          status: 'untested',
+          conclusionId: null,
+          executionId: null,
+          reviewerSignedByName: null,
+          riSignedByName: null,
+          category: 'execution',
+          isPlaceholder: true,
+        }));
+        init.execution.push({
+          key: `execution::${fsLine}`,
+          fsLine,
+          fsLineValue: lookupFsLineValue(fsLine),
+          rows: placeholders,
+          progress: 'pending',
+          result: 'pending',
+          tbCheckDot: null,
+          extrapolatedErrorTotal: 0,
+          distinctCodeCount: codes.length,
+        });
+      }
     }
 
     return init;
-  }, [filteredSorted, tbCodesByFsLine, fsLineValueByName]);
+  }, [filteredSorted, tbCodesByFsLine, fsLineValueByName, showUntested]);
 
   // Stable list of every FS-Line group key currently in view — used by
   // the Expand-All / Collapse-All button and by the chevron click
@@ -898,6 +913,20 @@ export function AuditTestSummaryPanel({ engagementId, userRole }: Props) {
           </div>
         </div>
         <div className="flex items-center gap-3 text-[10px] text-slate-400">
+          {/* Untested toggle — checkbox so the on/off state is
+              obvious at a glance and matches the rest of the
+              panel's filter idioms. Hides FS-line groups with
+              zero tests AND placeholder rows under tested
+              groups. */}
+          <label className="inline-flex items-center gap-1 text-slate-600 cursor-pointer select-none" title="Show FS Lines and TB codes that don't have a test allocated">
+            <input
+              type="checkbox"
+              checked={showUntested}
+              onChange={e => setShowUntested(e.target.checked)}
+              className="w-3 h-3 cursor-pointer"
+            />
+            <span>Show untested</span>
+          </label>
           <button
             onClick={() => allExpanded ? collapseAll() : expandAll()}
             className="text-[10px] text-slate-500 hover:text-slate-700 underline"
