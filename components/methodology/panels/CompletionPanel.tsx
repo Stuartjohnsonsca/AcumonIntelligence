@@ -92,6 +92,22 @@ const COMPLETION_TABS = [
   { key: 'error-schedule', label: 'Error Schedule', icon: AlertTriangle, templateType: null, scheduleKey: 'error_schedule' },
 ] as const;
 
+// Sub-tabs whose Reviewer/RI sign-off lives in its own AuditPermanentFile
+// section. The keys here are sub-tab keys; the values are the section key
+// the panel writes to. Only sub-tabs in this map get sign-off dots on
+// their pill in the sub-tab strip. Test Summary Results was added when
+// the panel got its 2-dot header (see AuditTestSummaryPanel.tsx). Other
+// sub-tabs can be wired in by adding an entry here once they expose a
+// PF-section sign-off in the same `{ reviewer, ri, partner }` shape.
+const SUBTAB_SIGNOFF_PF_SECTIONS: Partial<Record<CompletionTabKey, string>> = {
+  'test-summary': 'test_summary_results_signoffs',
+};
+
+interface SubTabSignOffStatus {
+  reviewer: 'signed' | 'none';
+  ri: 'signed' | 'none';
+}
+
 type CompletionTabKey = typeof COMPLETION_TABS[number]['key'];
 
 export function CompletionPanel({
@@ -108,6 +124,42 @@ export function CompletionPanel({
       ? (initialActiveTab as CompletionTabKey)
       : 'summary-memo'
   );
+
+  // Sub-tab Reviewer/RI sign-off dots. Each entry in
+  // SUBTAB_SIGNOFF_PF_SECTIONS gets a fetch + a small pair of dots
+  // rendered on its sub-tab pill below. Refresh fires on the
+  // `engagement:signoffs-changed` window event the panels dispatch
+  // when their dots toggle, so the strip stays in lockstep with the
+  // dots inside the active panel.
+  const [subTabSignoffs, setSubTabSignoffs] = useState<Partial<Record<CompletionTabKey, SubTabSignOffStatus>>>({});
+  const loadSubTabSignoffs = useCallback(async () => {
+    const out: Partial<Record<CompletionTabKey, SubTabSignOffStatus>> = {};
+    await Promise.all(
+      Object.entries(SUBTAB_SIGNOFF_PF_SECTIONS).map(async ([subTabKey, section]) => {
+        try {
+          const res = await fetch(`/api/engagements/${engagementId}/permanent-file?section=${encodeURIComponent(section)}`);
+          if (!res.ok) return;
+          const json = await res.json();
+          const so = (json?.data || {}) as { reviewer?: { at?: string; timestamp?: string }; partner?: { at?: string; timestamp?: string }; ri?: { at?: string; timestamp?: string } };
+          // Same shape + cascade rule as EngagementTabs.tsx — RI sign
+          // implies the Reviewer slot is signed too.
+          const reviewerTs = so.reviewer?.at || so.reviewer?.timestamp || so.partner?.at || so.partner?.timestamp || so.ri?.at || so.ri?.timestamp;
+          const riTs = so.ri?.at || so.ri?.timestamp || so.partner?.at || so.partner?.timestamp;
+          out[subTabKey as CompletionTabKey] = {
+            reviewer: reviewerTs ? 'signed' : 'none',
+            ri: riTs ? 'signed' : 'none',
+          };
+        } catch { /* ignore */ }
+      }),
+    );
+    setSubTabSignoffs(out);
+  }, [engagementId]);
+  useEffect(() => { void loadSubTabSignoffs(); }, [loadSubTabSignoffs]);
+  useEffect(() => {
+    const handler = () => { void loadSubTabSignoffs(); };
+    window.addEventListener('engagement:signoffs-changed', handler);
+    return () => window.removeEventListener('engagement:signoffs-changed', handler);
+  }, [loadSubTabSignoffs]);
 
   // Notify the parent whenever the tab changes so EngagementTabs can
   // remember the user's location for the "Back to Completion: X"
@@ -161,12 +213,24 @@ export function CompletionPanel({
         {orderedCompletionTabs.map(tab => {
           const Icon = tab.icon;
           const isActive = activeTab === tab.key;
+          // Sign-off dots only render for sub-tabs declared in
+          // SUBTAB_SIGNOFF_PF_SECTIONS. The dots reflect the same
+          // PF-section the panel header writes to, so toggling a dot
+          // inside the panel updates this strip via the
+          // engagement:signoffs-changed event.
+          const so = subTabSignoffs[tab.key as CompletionTabKey];
           return (
             <button key={tab.key} onClick={() => setActiveTab(tab.key)}
               className={`flex items-center gap-1 px-2.5 py-1.5 text-[10px] font-medium rounded-md whitespace-nowrap transition-colors ${
                 isActive ? 'bg-blue-600 text-white' : 'bg-white text-slate-600 border border-slate-200 hover:bg-slate-100'
               }`}>
               <Icon className="h-3 w-3" /> {tab.label}
+              {so && (
+                <span className="inline-flex items-center gap-0.5 ml-1" title={`Reviewer ${so.reviewer === 'signed' ? 'signed' : 'unsigned'} · RI ${so.ri === 'signed' ? 'signed' : 'unsigned'}`}>
+                  <span className={`w-1.5 h-1.5 rounded-full ${so.reviewer === 'signed' ? 'bg-green-500' : (isActive ? 'bg-blue-300' : 'bg-slate-300')}`} />
+                  <span className={`w-1.5 h-1.5 rounded-full ${so.ri === 'signed' ? 'bg-green-500' : (isActive ? 'bg-blue-300' : 'bg-slate-300')}`} />
+                </span>
+              )}
             </button>
           );
         })}
