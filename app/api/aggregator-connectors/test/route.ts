@@ -2,11 +2,13 @@ import { NextResponse } from 'next/server';
 import { auth } from '@/lib/auth';
 import { prisma } from '@/lib/db';
 import {
-  HMLR_BASE_URL_DEFAULT,
+  HMLR_BASE_URL_LIVE,
+  HMLR_BASE_URL_TEST,
   HMLR_TEST_ADDRESSES,
   runEpdTestFixtures,
   toEpdAddress,
 } from '@/lib/hmlr-client';
+import { probeHmlrConnection } from '@/lib/hmlr-tls';
 
 const LR_SPARQL_ENDPOINT = 'https://landregistry.data.gov.uk/landregistry/query';
 
@@ -78,8 +80,11 @@ async function testConnector(type: string, config: Record<string, string>): Prom
     }
 
     case 'hmlr_business_gateway': {
-      if (!config.clientId || !config.clientSecret) {
-        return { success: false, message: 'Client ID and Client Secret are required' };
+      // Three required PEM blocks: client cert, client key, CA bundle.
+      // The passphrase is only needed for encrypted private keys, so
+      // we don't insist on it. baseUrl is only mandatory when overriding.
+      if (!config.clientCertPem || !config.clientKeyPem || !config.caBundlePem) {
+        return { success: false, message: 'Client certificate (PEM), private key (PEM), and CA bundle (PEM) are required.' };
       }
       // Validate the EPD Best Practice mapping locally — this runs even
       // without network access, so we always get a mapping health check.
@@ -103,16 +108,32 @@ async function testConnector(type: string, config: Record<string, string>): Prom
         };
       }
 
-      // Attempt a live round-trip against the dummy-data account using the
-      // first fixture. If the Business Gateway endpoint is unreachable from
-      // the server (e.g. network restrictions), we still report mapping
-      // success so Super Admin can at least verify credentials are stored.
+      // Probe the mTLS handshake against the configured environment's
+      // splash URL. This doesn't make a billable call — just confirms
+      // the cert is accepted at the TLS layer.
+      const probe = await probeHmlrConnection();
+      if (!probe.ok) {
+        return {
+          success: false,
+          message: `EPD mapping verified (${HMLR_TEST_ADDRESSES.length}/${HMLR_TEST_ADDRESSES.length}). mTLS handshake failed: ${probe.errorMessage || `status ${probe.status}`}`,
+        };
+      }
+
+      // Handshake succeeded — now run the EPD Best Practice fixtures
+      // through the dummy-data account to confirm the gateway accepts
+      // our payload, not just the cert. If the gateway round-trip
+      // fails after a successful handshake we still report the
+      // handshake as a partial success so the operator can see
+      // exactly where the chain broke.
+      const env = (config.environment === 'live' ? 'live' : 'test') as 'test' | 'live';
       try {
         const connector = {
-          clientId: config.clientId,
-          clientSecret: config.clientSecret,
-          environment: (config.environment as 'test' | 'live') || 'test',
-          baseUrl: config.baseUrl || HMLR_BASE_URL_DEFAULT,
+          environment: env,
+          baseUrl: config.baseUrl || (env === 'live' ? HMLR_BASE_URL_LIVE : HMLR_BASE_URL_TEST),
+          clientCertPem: config.clientCertPem,
+          clientKeyPem: config.clientKeyPem,
+          clientKeyPassphrase: config.clientKeyPassphrase || undefined,
+          caBundlePem: config.caBundlePem,
         };
         const results = await runEpdTestFixtures(connector, {
           firmId: '__test__',
@@ -124,17 +145,17 @@ async function testConnector(type: string, config: Record<string, string>): Prom
         if (ok === 0) {
           return {
             success: false,
-            message: `EPD mapping verified (${mappingOk}/${results.length}). Live round-trip returned no titles — check credentials and environment. First error: ${results.find(r => r.error)?.error || 'no response'}`,
+            message: `EPD mapping verified (${mappingOk}/${results.length}). mTLS handshake OK (HTTP ${probe.status}). Live round-trip returned no titles — check the cert is enrolled for the ${env} environment. First error: ${results.find(r => r.error)?.error || 'no response'}`,
           };
         }
         return {
           success: true,
-          message: `EPD mapping verified (${mappingOk}/${results.length}). Live round-trip: ${ok}/${results.length} returned a title number from the ${connector.environment} account.`,
+          message: `EPD mapping verified (${mappingOk}/${results.length}). mTLS handshake OK. Live round-trip: ${ok}/${results.length} returned a title number from the ${env} account.`,
         };
       } catch (err) {
         return {
           success: true,
-          message: `EPD mapping verified (${HMLR_TEST_ADDRESSES.length}/${HMLR_TEST_ADDRESSES.length}). Credentials saved. Live round-trip skipped: ${err instanceof Error ? err.message : 'network error'}`,
+          message: `EPD mapping verified (${HMLR_TEST_ADDRESSES.length}/${HMLR_TEST_ADDRESSES.length}). mTLS handshake OK (HTTP ${probe.status}). EPD round-trip skipped: ${err instanceof Error ? err.message : 'network error'}`,
         };
       }
     }

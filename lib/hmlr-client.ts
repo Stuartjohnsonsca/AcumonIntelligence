@@ -53,6 +53,10 @@ export const LAND_REGISTRY_CONTAINER = 'land-registry';
 // schemas are known. See lib/hmlr-client.ts test fixtures (HMLR_TEST_ADDRESSES)
 // for the specific test properties supplied with the dummy-data account.
 
+// Legacy alias preserved for any external import that used it
+// before the test/live URLs were split. New code should use
+// HMLR_BASE_URL_LIVE / HMLR_BASE_URL_TEST defined below the
+// connector type.
 export const HMLR_BASE_URL_DEFAULT = 'https://business-gateway.landregistry.gov.uk';
 
 // ─── Types ──────────────────────────────────────────────────────────────────
@@ -256,12 +260,24 @@ export interface HmlrResult {
   errorMessage?: string;
 }
 
-interface HmlrConnector {
-  clientId: string;
-  clientSecret: string;
+// HMLR Business Gateway authenticates via mutual TLS — every request
+// must present a client X.509 cert that HMLR signed. The connector
+// row therefore holds the PEM material rather than a clientId /
+// clientSecret pair.
+export interface HmlrConnector {
   environment: 'test' | 'live';
   baseUrl: string;
+  clientCertPem: string;     // -----BEGIN CERTIFICATE----- ... -----END CERTIFICATE-----
+  clientKeyPem: string;      // -----BEGIN PRIVATE KEY----- ... -----END PRIVATE KEY-----
+  clientKeyPassphrase?: string; // Only when the key block is encrypted.
+  caBundlePem: string;       // Root + Issuing CA concatenated.
 }
+
+// Default base URLs per environment. The "test" URL hosts the
+// dummy-data account HMLR provisions for new applicants; the "live"
+// URL is the production gateway.
+export const HMLR_BASE_URL_LIVE = 'https://business-gateway.landregistry.gov.uk';
+export const HMLR_BASE_URL_TEST = 'https://bgtest.landregistry.gov.uk';
 
 // ─── Connector loading ──────────────────────────────────────────────────────
 
@@ -270,7 +286,9 @@ interface HmlrConnector {
  * scoped to a well-known global firm id so every firm shares the same
  * credentials (the HMLR account is platform-level).
  *
- * Returns null if the connector has not been configured yet.
+ * Returns null if the connector has not been configured yet, or if the
+ * cert material is missing — `getHmlrAgent` (lib/hmlr-tls.ts) needs
+ * cert + key + CA bundle to build the mTLS dispatcher.
  */
 export async function getHmlrConnector(): Promise<HmlrConnector | null> {
   // Look for the connector in any firm — it's platform-level but stored in
@@ -288,13 +306,19 @@ export async function getHmlrConnector(): Promise<HmlrConnector | null> {
     ? (record.items as Record<string, unknown>)
     : {};
   const config = (items.config as Record<string, string>) || {};
-  if (!config.clientId || !config.clientSecret) return null;
+  const clientCertPem = (config.clientCertPem || '').trim();
+  const clientKeyPem = (config.clientKeyPem || '').trim();
+  const caBundlePem = (config.caBundlePem || '').trim();
+  if (!clientCertPem || !clientKeyPem || !caBundlePem) return null;
 
+  const environment = (config.environment === 'live' ? 'live' : 'test') as 'test' | 'live';
   return {
-    clientId: config.clientId,
-    clientSecret: config.clientSecret,
-    environment: (config.environment as 'test' | 'live') || 'test',
-    baseUrl: config.baseUrl || 'https://business-gateway.landregistry.gov.uk',
+    environment,
+    baseUrl: config.baseUrl || (environment === 'live' ? HMLR_BASE_URL_LIVE : HMLR_BASE_URL_TEST),
+    clientCertPem,
+    clientKeyPem,
+    clientKeyPassphrase: config.clientKeyPassphrase || undefined,
+    caBundlePem,
   };
 }
 
@@ -404,7 +428,6 @@ async function callHmlr(
         ? 'text/xml, application/soap+xml, application/pdf'
         : 'application/json, application/pdf',
       'X-HMLR-Environment': connector.environment,
-      'Authorization': `Basic ${Buffer.from(`${connector.clientId}:${connector.clientSecret}`).toString('base64')}`,
     };
     if (isSoap) {
       headers['Content-Type'] = 'text/xml; charset=utf-8';
@@ -413,10 +436,23 @@ async function callHmlr(
       headers['Content-Type'] = 'application/json';
     }
 
+    // Build the mTLS dispatcher from the connector's PEM material
+    // and pass it on every fetch — HMLR's gateway requires a client
+    // cert presented during the TLS handshake. No Authorization
+    // header (HMLR doesn't use Basic / Bearer auth on top of mTLS).
+    const { getHmlrAgent } = await import('@/lib/hmlr-tls');
+    const { agent, status } = await getHmlrAgent();
+    if (!agent) {
+      return { ok: false, status: 0, error: status.errorMessage || 'HMLR mTLS agent not available' };
+    }
+
     const res = await fetch(`${connector.baseUrl}${endpoint}`, {
       method: 'POST',
       headers,
       body: isSoap ? (body as string) : JSON.stringify(body),
+      // @ts-expect-error — Node's global fetch (built on undici)
+      // accepts `dispatcher` though TS types don't surface it.
+      dispatcher: agent,
     });
 
     const contentType = res.headers.get('content-type') || '';

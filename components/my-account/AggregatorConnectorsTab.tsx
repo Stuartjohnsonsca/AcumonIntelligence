@@ -11,7 +11,7 @@ import { Button } from '@/components/ui/button';
 interface ConnectorField {
   key: string;
   label: string;
-  type: 'text' | 'password' | 'url' | 'select';
+  type: 'text' | 'password' | 'url' | 'select' | 'textarea' | 'textarea_secret';
   placeholder?: string;
   required?: boolean;
   options?: { value: string; label: string }[];
@@ -58,12 +58,14 @@ const CONNECTOR_REGISTRY: ConnectorType[] = [
     label: 'HM Land Registry — Business Gateway',
     category: 'government',
     icon: '🏠',
-    description: 'HMLR paid Business Gateway — SOAP APIs for Enquiry by Property Description (EPD), Owner Verification, Official Copies, Register Extract, and Application Enquiry. A single platform-level account is shared across all firms; the Test button runs the EPD Best Practice fixtures against the dummy-data account.',
+    description: 'HMLR paid Business Gateway — SOAP APIs for Enquiry by Property Description (EPD), Owner Verification, Official Copies, Register Extract, and Application Enquiry. Authenticated via mutual TLS using a client X.509 certificate that HMLR signs after you submit a CSR (per their "Generating a New Signed Certificate in IIS 7" procedure). Once you have the .pfx HMLR sent back, run two openssl commands to extract a PEM cert + PEM private key, then paste those + the Root CA + Issuing CA into the fields below. Test button runs the EPD Best Practice fixtures against the test account.',
     fields: [
-      { key: 'clientId', label: 'Client ID', type: 'text', required: true, helpText: 'Business Gateway Client ID supplied by HMLR' },
-      { key: 'clientSecret', label: 'Client Secret', type: 'password', required: true },
-      { key: 'environment', label: 'Environment', type: 'select', options: [{ value: 'test', label: 'Test (dummy data account)' }, { value: 'live', label: 'Live' }] },
-      { key: 'baseUrl', label: 'Base URL', type: 'url', placeholder: 'https://business-gateway.landregistry.gov.uk', helpText: 'Override if HMLR provides a tenant-specific endpoint' },
+      { key: 'environment', label: 'Environment', type: 'select', required: true, options: [{ value: 'test', label: 'Test (bgtest.landregistry.gov.uk)' }, { value: 'live', label: 'Live (business-gateway.landregistry.gov.uk)' }] },
+      { key: 'clientCertPem', label: 'Client Certificate (PEM)', type: 'textarea', required: true, helpText: 'The X.509 cert HMLR signed and returned. Paste the full PEM block including -----BEGIN CERTIFICATE----- / -----END CERTIFICATE----- lines. Extract from your .pfx with: openssl pkcs12 -in your.pfx -clcerts -nokeys -out client.crt' },
+      { key: 'clientKeyPem', label: 'Client Private Key (PEM)', type: 'textarea_secret', required: true, helpText: 'Your private key, paired with the client certificate. Paste the full PEM block including -----BEGIN PRIVATE KEY----- (or RSA PRIVATE KEY / ENCRYPTED PRIVATE KEY) / -----END lines. Extract from your .pfx with: openssl pkcs12 -in your.pfx -nocerts -nodes -out client.key' },
+      { key: 'clientKeyPassphrase', label: 'Private Key Passphrase (optional)', type: 'password', helpText: 'Only required when the key block is encrypted (e.g. when you used -nodes was omitted on the openssl extract). Leave blank when the key is unencrypted.' },
+      { key: 'caBundlePem', label: 'HMLR CA Bundle (PEM)', type: 'textarea', required: true, helpText: 'Concatenate the Land Registry Root CA (liverootCA2017.cer) and Issuing CA (LR Issuing CA 2020.cer) into one block — Root first, then Issuing. Both should be in -----BEGIN CERTIFICATE----- format. If files are .cer (DER), convert with: openssl x509 -inform der -in liverootCA2017.cer -out root.pem' },
+      { key: 'baseUrl', label: 'Base URL Override (optional)', type: 'url', placeholder: 'Leave blank to use the standard URL for the selected environment', helpText: 'Override only if HMLR provides a tenant-specific endpoint.' },
     ],
     testEndpoint: '/api/aggregator-connectors/test',
   },
@@ -418,6 +420,31 @@ export function AggregatorConnectorsTab({ firmId }: { firmId: string }) {
                           <option key={o.value} value={o.value}>{o.label}</option>
                         ))}
                       </select>
+                    ) : field.type === 'textarea' || field.type === 'textarea_secret' ? (
+                      // Multi-line input — used for PEM blocks (cert,
+                      // key, CA bundle). textarea_secret renders as
+                      // monospace + masked-by-default with a Show
+                      // toggle, so the private key isn't shoulder-
+                      // surfed by anyone passing the screen.
+                      <div className="relative">
+                        <textarea
+                          value={configValues[field.key] || ''}
+                          onChange={(e) => setConfigValues({ ...configValues, [field.key]: e.target.value })}
+                          placeholder={field.placeholder || `-----BEGIN ${field.key === 'clientKeyPem' ? 'PRIVATE KEY' : 'CERTIFICATE'}-----\n...\n-----END ${field.key === 'clientKeyPem' ? 'PRIVATE KEY' : 'CERTIFICATE'}-----`}
+                          rows={6}
+                          spellCheck={false}
+                          className={`w-full px-2 py-1.5 text-[11px] border rounded-md font-mono ${field.type === 'textarea_secret' && !showPasswords[field.key] ? 'text-transparent caret-slate-700 selection:text-slate-700' : ''}`}
+                        />
+                        {field.type === 'textarea_secret' && (
+                          <button
+                            type="button"
+                            onClick={() => setShowPasswords({ ...showPasswords, [field.key]: !showPasswords[field.key] })}
+                            className="absolute right-2 top-2 text-[10px] text-slate-400 hover:text-slate-600 bg-white/80 px-1 rounded"
+                          >
+                            {showPasswords[field.key] ? 'Hide' : 'Show'}
+                          </button>
+                        )}
+                      </div>
                     ) : (
                       <div className="relative">
                         <input
@@ -551,8 +578,14 @@ export function AggregatorConnectorsTab({ firmId }: { firmId: string }) {
                             <div key={field.key} className="flex items-center gap-2">
                               <span className="text-xs text-slate-500 w-28 flex-shrink-0">{field.label}:</span>
                               <span className="text-xs text-slate-700 font-mono">
-                                {field.type === 'password'
+                                {field.type === 'password' || field.type === 'textarea_secret'
                                   ? (connector.config[field.key] ? '••••••••' : '—')
+                                  : field.type === 'textarea'
+                                  // Multi-line PEM blocks summarise as
+                                  // a length pill; full value is in the
+                                  // edit form. Avoids splatting kilobytes
+                                  // of cert text into the row preview.
+                                  ? (connector.config[field.key] ? `${connector.config[field.key].length} chars` : '—')
                                   : (connector.config[field.key] || '—')
                                 }
                               </span>

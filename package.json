@@ -70,6 +70,7 @@
     "stripe": "^17.4.0",
     "tailwind-merge": "^2.5.5",
     "tailwindcss-animate": "^1.0.7",
+    "undici": "^8.2.0",
     "unpdf": "^1.4.0",
     "uuid": "^11.0.3",
     "xlsx": "^0.18.5",
