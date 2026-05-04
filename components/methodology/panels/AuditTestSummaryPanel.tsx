@@ -984,28 +984,29 @@ export function AuditTestSummaryPanel({ engagementId, userRole }: Props) {
                           {CATEGORY_LABEL[cat]}
                         </span>
 
-                        {/* Progress group — per-state counted dots
-                            so "how is the run going?" is answered
-                            at a glance. Each chip shows count;
-                            hover spells out what the colour means
-                            for Progress specifically. */}
-                        <div className="inline-flex items-center gap-1.5 text-[10px] text-slate-600">
+                        {/* Progress group — per-state counted pills
+                            in the site-standard "coloured pill +
+                            number inside" style (matches the count
+                            badges on Review Point / RI Matters /
+                            Outstanding etc.). All four states are
+                            shown even when 0 so the layout stays
+                            stable across sections. */}
+                        <div className="inline-flex items-center gap-1 text-[10px] text-slate-600">
                           <span className="font-medium text-slate-500">Progress:</span>
-                          {s.progressCounts.red > 0 && <span className="inline-flex items-center gap-0.5" title={`${s.progressCounts.red} test${s.progressCounts.red === 1 ? '' : 's'} failed to run`}><span className="w-2.5 h-2.5 rounded-full bg-red-500" />{s.progressCounts.red}</span>}
-                          {s.progressCounts.orange > 0 && <span className="inline-flex items-center gap-0.5" title={`${s.progressCounts.orange} test${s.progressCounts.orange === 1 ? '' : 's'} in progress`}><span className="w-2.5 h-2.5 rounded-full bg-orange-500" />{s.progressCounts.orange}</span>}
-                          {s.progressCounts.green > 0 && <span className="inline-flex items-center gap-0.5" title={`${s.progressCounts.green} test${s.progressCounts.green === 1 ? '' : 's'} ran successfully`}><span className="w-2.5 h-2.5 rounded-full bg-green-500" />{s.progressCounts.green}</span>}
-                          {s.progressCounts.pending > 0 && <span className="inline-flex items-center gap-0.5" title={`${s.progressCounts.pending} test${s.progressCounts.pending === 1 ? '' : 's'} not yet started`}><span className="w-2.5 h-2.5 rounded-full bg-slate-300" />{s.progressCounts.pending}</span>}
+                          <CountPill colour="red" count={s.progressCounts.red} title={`${s.progressCounts.red} test${s.progressCounts.red === 1 ? '' : 's'} failed to run`} />
+                          <CountPill colour="orange" count={s.progressCounts.orange} title={`${s.progressCounts.orange} test${s.progressCounts.orange === 1 ? '' : 's'} in progress`} />
+                          <CountPill colour="green" count={s.progressCounts.green} title={`${s.progressCounts.green} test${s.progressCounts.green === 1 ? '' : 's'} ran successfully`} />
+                          <CountPill colour="pending" count={s.progressCounts.pending} title={`${s.progressCounts.pending} test${s.progressCounts.pending === 1 ? '' : 's'} not yet started`} />
                         </div>
 
-                        {/* Result group — per-state counted dots,
-                            error-size buckets. Same shape as
-                            Progress, hover explains the band. */}
-                        <div className="inline-flex items-center gap-1.5 text-[10px] text-slate-600">
+                        {/* Result group — same pill style; error-
+                            size buckets. */}
+                        <div className="inline-flex items-center gap-1 text-[10px] text-slate-600">
                           <span className="font-medium text-slate-500">Result:</span>
-                          {s.resultCounts.red > 0 && <span className="inline-flex items-center gap-0.5" title={`${s.resultCounts.red} test${s.resultCounts.red === 1 ? '' : 's'} with error above Performance Materiality`}><span className="w-2.5 h-2.5 rounded-full bg-red-500" />{s.resultCounts.red}</span>}
-                          {s.resultCounts.orange > 0 && <span className="inline-flex items-center gap-0.5" title={`${s.resultCounts.orange} test${s.resultCounts.orange === 1 ? '' : 's'} with error between Clearly Trivial and Performance Materiality`}><span className="w-2.5 h-2.5 rounded-full bg-orange-500" />{s.resultCounts.orange}</span>}
-                          {s.resultCounts.green > 0 && <span className="inline-flex items-center gap-0.5" title={`${s.resultCounts.green} test${s.resultCounts.green === 1 ? '' : 's'} with no error or below Clearly Trivial`}><span className="w-2.5 h-2.5 rounded-full bg-green-500" />{s.resultCounts.green}</span>}
-                          {s.resultCounts.pending > 0 && <span className="inline-flex items-center gap-0.5" title={`${s.resultCounts.pending} test${s.resultCounts.pending === 1 ? '' : 's'} with no result yet`}><span className="w-2.5 h-2.5 rounded-full bg-slate-300" />{s.resultCounts.pending}</span>}
+                          <CountPill colour="red" count={s.resultCounts.red} title={`${s.resultCounts.red} test${s.resultCounts.red === 1 ? '' : 's'} with error above Performance Materiality`} />
+                          <CountPill colour="orange" count={s.resultCounts.orange} title={`${s.resultCounts.orange} test${s.resultCounts.orange === 1 ? '' : 's'} with error between Clearly Trivial and Performance Materiality`} />
+                          <CountPill colour="green" count={s.resultCounts.green} title={`${s.resultCounts.green} test${s.resultCounts.green === 1 ? '' : 's'} with no error or below Clearly Trivial`} />
+                          <CountPill colour="pending" count={s.resultCounts.pending} title={`${s.resultCounts.pending} test${s.resultCounts.pending === 1 ? '' : 's'} with no result yet`} />
                         </div>
 
                         <span className="text-[10px] font-medium text-slate-700">{s.count} item{s.count !== 1 ? 's' : ''}</span>
@@ -1247,6 +1248,27 @@ function FilterRow({ filter, filters, setFilters, toggleDotFilter, onClose }: Fi
     );
   }
   return null;
+}
+
+// Coloured count pill — matches the site-standard count badge
+// shape used on Review Point / RI Matters / Outstanding etc.
+// (white-on-colour for the active states; dark-on-slate for
+// pending so a 0 still reads as a neutral, present cell rather
+// than disappearing).
+function CountPill({ colour, count, title }: { colour: 'red' | 'orange' | 'green' | 'pending'; count: number; title: string }) {
+  const cls =
+    colour === 'red'    ? 'bg-red-600 text-white' :
+    colour === 'orange' ? 'bg-orange-500 text-white' :
+    colour === 'green'  ? 'bg-green-600 text-white' :
+                          'bg-slate-200 text-slate-600';
+  return (
+    <span
+      className={`inline-flex items-center justify-center min-w-[16px] h-[16px] px-1 rounded-full text-[9px] font-bold leading-none ${cls}`}
+      title={title}
+    >
+      {count}
+    </span>
+  );
 }
 
 function FilterShell({ label, onClose, onClear, hasValue, children }: { label: string; onClose: () => void; onClear: () => void; hasValue: boolean; children: React.ReactNode }) {
