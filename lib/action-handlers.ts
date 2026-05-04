@@ -1578,6 +1578,13 @@ async function handleRecalculateBalance(ctx: ActionHandlerContext): Promise<Acti
       unrecalculated_count: skipped,
       findings,
       pass_fail: overall,
+      // Tolerance + booked-column name persisted on the output so
+      // the cell-edit endpoint can recompute variance / pass_fail
+      // when the auditor manually overrides a `calculated` value
+      // on a review-marked row, without needing to re-resolve the
+      // original input bindings.
+      tolerance_gbp: tolerance,
+      booked_charge_column: bookedColumn,
     },
   };
 }

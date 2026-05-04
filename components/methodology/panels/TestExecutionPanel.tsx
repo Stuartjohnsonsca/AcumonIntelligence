@@ -727,8 +727,25 @@ export function TestExecutionPanel({ testId, testDescription, testType, engageme
                               <span className="text-slate-700">{step.output.dateRange.from} to {step.output.dateRange.to}</span>
                             </div>
                           )}
-                          {/* Raw JSON fallback — only for outputs without summary */}
-                          {!step.output.summary && !step.output.decisionLog && (
+                          {/* Editable recalc table — surfaces when a
+                              step's output has a recalc_table (from
+                              Recalculate Balance et al.). The auditor
+                              can override calculated/notes on rows
+                              the handler couldn't compute (the ones
+                              marked pass_fail='review'). Saves go
+                              through the cell-edit endpoint which
+                              recomputes per-row variance and table
+                              totals server-side. */}
+                          {Array.isArray(step.output.recalc_table) && step.output.recalc_table.length > 0 && (
+                            <EditableRecalcTable
+                              step={step}
+                              engagementId={engagementId}
+                              executionId={executionId || ''}
+                              onSaved={() => { if (executionId) startPolling(executionId); }}
+                            />
+                          )}
+                          {/* Raw JSON fallback — only for outputs without summary AND no editable table */}
+                          {!step.output.summary && !step.output.decisionLog && !Array.isArray(step.output.recalc_table) && (
                             <div className="text-[9px] font-mono text-slate-600 whitespace-pre-wrap max-h-[200px] overflow-auto bg-white rounded border border-slate-200 p-2">
                               {(() => {
                                 const display = { ...step.output };
@@ -1861,6 +1878,212 @@ function TeamEvidencePanel(props: {
           </button>
         </div>
       </div>
+    </div>
+  );
+}
+
+// ─── Editable recalc table ───────────────────────────────────────────
+// Surfaces inside a step's expansion when its output carries a
+// recalc_table (Recalculate Balance and friends). Read-only for rows
+// the handler computed cleanly; rows marked pass_fail='review' get an
+// editable `calculated` cell + a notes box so the auditor can plug in
+// the answer for any case the auto-recalc couldn't cover (sum-of-
+// years digits, half-year convention, units of production, etc.).
+//
+// Save POSTs to /test-execution/[id]/cell-edit which recomputes
+// per-row variance + table totals + findings server-side, then we
+// nudge the parent to re-poll so the new values flow back into the
+// rest of the UI (test summary panel, conclusion totals, etc.).
+function EditableRecalcTable(props: {
+  step: { id: string; output?: any };
+  engagementId: string;
+  executionId: string;
+  onSaved: () => void;
+}) {
+  const tableInit = (props.step.output?.recalc_table as Array<Record<string, any>>) || [];
+  // Snapshot the original review-flagged rows so a row that the
+  // auditor just resolved still renders the editable input until
+  // they hit Save (otherwise the row would disappear under them as
+  // soon as they typed a number, which feels broken).
+  const reviewIndexesInit = tableInit
+    .map((r, i) => (r.pass_fail === 'review' ? i : -1))
+    .filter(i => i >= 0);
+
+  const [edits, setEdits] = useState<Record<number, { calculated?: string; notes?: string }>>({});
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [lastSavedTotals, setLastSavedTotals] = useState<Record<string, any> | null>(null);
+
+  // Pull stepIndex out of the nodeId — the action_pipeline runner
+  // names node runs `pipeline_step_<index>` (see flow-engine.ts).
+  // Falls back to null when the id doesn't match (legacy flow runs
+  // — the editable table doesn't apply to those anyway).
+  const stepIndex = (() => {
+    const m = String(props.step.id).match(/^pipeline_step_(\d+)$/);
+    return m ? Number(m[1]) : null;
+  })();
+
+  if (tableInit.length === 0) return null;
+  const reviewSet = new Set(reviewIndexesInit);
+  const editableRowCount = reviewSet.size;
+  const totals = lastSavedTotals || props.step.output;
+
+  function setEdit(rowIdx: number, field: 'calculated' | 'notes', value: string) {
+    setEdits(prev => ({ ...prev, [rowIdx]: { ...prev[rowIdx], [field]: value } }));
+  }
+
+  async function handleSave() {
+    if (stepIndex == null) { setError('Could not resolve step index — refresh and try again.'); return; }
+    const rowEdits = Object.entries(edits)
+      .map(([k, v]) => {
+        const rowIndex = Number(k);
+        const out: { rowIndex: number; calculated?: number | null; notes?: string } = { rowIndex };
+        if (v.calculated !== undefined) {
+          const trimmed = v.calculated.trim();
+          if (trimmed === '') out.calculated = null;
+          else {
+            const n = parseFloat(trimmed);
+            if (!Number.isFinite(n)) { setError(`Row ${rowIndex + 1}: calculated must be a number.`); throw new Error('validation'); }
+            out.calculated = n;
+          }
+        }
+        if (v.notes !== undefined) out.notes = v.notes;
+        return out;
+      })
+      .filter(e => e.calculated !== undefined || e.notes !== undefined);
+    if (rowEdits.length === 0) { setError('Nothing to save.'); return; }
+    setError(null);
+    setSaving(true);
+    try {
+      const res = await fetch(`/api/engagements/${props.engagementId}/test-execution/${props.executionId}/cell-edit`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ stepIndex, rowEdits }),
+      });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        setError(body?.error || `Save failed (${res.status})`);
+        return;
+      }
+      const data = await res.json();
+      if (data?.output) setLastSavedTotals(data.output);
+      setEdits({});
+      props.onSaved();
+    } catch (e: any) {
+      if (e?.message !== 'validation') setError(e?.message || 'Save failed');
+    } finally { setSaving(false); }
+  }
+
+  // Column order: ID-ish columns first, then the recalc columns.
+  const allCols = Array.from(tableInit.reduce<Set<string>>((set, r) => {
+    for (const k of Object.keys(r)) set.add(k);
+    return set;
+  }, new Set()));
+  const recalcCols = ['policy_applied', 'calculated', 'booked', 'variance', 'pass_fail', 'notes'];
+  const otherCols = allCols.filter(c => !recalcCols.includes(c));
+  const cols = [...otherCols, ...recalcCols.filter(c => allCols.includes(c))];
+
+  return (
+    <div className="border border-emerald-200 rounded-lg overflow-hidden bg-white">
+      <div className="px-3 py-2 bg-emerald-50 border-b border-emerald-200 flex items-center justify-between gap-2">
+        <div className="flex items-center gap-2">
+          <span className="text-[10px] font-bold text-emerald-700 uppercase">Recalculation</span>
+          {editableRowCount > 0 && (
+            <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-amber-100 text-amber-700 font-medium">
+              {editableRowCount} row{editableRowCount === 1 ? '' : 's'} need{editableRowCount === 1 ? 's' : ''} manual recalculation
+            </span>
+          )}
+        </div>
+        <div className="flex items-center gap-3 text-[10px] text-slate-600">
+          {totals?.total_calculated != null && <span>Calc <span className="font-medium tabular-nums">{Number(totals.total_calculated).toLocaleString()}</span></span>}
+          {totals?.total_booked != null && <span>Booked <span className="font-medium tabular-nums">{Number(totals.total_booked).toLocaleString()}</span></span>}
+          {totals?.total_variance != null && <span className={Math.abs(Number(totals.total_variance)) > 0 ? 'text-red-600 font-medium' : ''}>Variance <span className="tabular-nums">{Number(totals.total_variance).toLocaleString()}</span></span>}
+        </div>
+      </div>
+      <div className="overflow-auto max-h-[400px]">
+        <table className="w-full text-[10px]">
+          <thead className="bg-slate-50 text-slate-500 sticky top-0">
+            <tr>
+              <th className="px-2 py-1 text-center w-6">#</th>
+              {cols.map(c => <th key={c} className="px-2 py-1 text-left font-semibold whitespace-nowrap">{c}</th>)}
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-slate-100">
+            {tableInit.map((row, i) => {
+              const wasReview = reviewSet.has(i);
+              const editing = edits[i];
+              const isFail = row.pass_fail === 'fail';
+              return (
+                <tr key={i} className={wasReview ? 'bg-amber-50/40' : isFail ? 'bg-red-50/40' : ''}>
+                  <td className="px-2 py-1 text-center text-slate-400">{i + 1}</td>
+                  {cols.map(c => {
+                    if (c === 'calculated' && wasReview) {
+                      return (
+                        <td key={c} className="px-2 py-1">
+                          <input
+                            type="number"
+                            step="any"
+                            value={editing?.calculated ?? (row.calculated == null ? '' : String(row.calculated))}
+                            onChange={e => setEdit(i, 'calculated', e.target.value)}
+                            placeholder="Enter manual recalc"
+                            className="w-24 px-1.5 py-0.5 text-[10px] border border-slate-300 rounded bg-white focus:outline-none focus:border-emerald-400 tabular-nums text-right"
+                          />
+                        </td>
+                      );
+                    }
+                    if (c === 'notes' && wasReview) {
+                      return (
+                        <td key={c} className="px-2 py-1">
+                          <input
+                            type="text"
+                            value={editing?.notes ?? (row.notes ?? '')}
+                            onChange={e => setEdit(i, 'notes', e.target.value)}
+                            placeholder="Why this value?"
+                            className="w-48 px-1.5 py-0.5 text-[10px] border border-slate-300 rounded bg-white focus:outline-none focus:border-emerald-400"
+                          />
+                        </td>
+                      );
+                    }
+                    if (c === 'pass_fail') {
+                      const v = row.pass_fail;
+                      const cls =
+                        v === 'pass' ? 'bg-green-100 text-green-700' :
+                        v === 'fail' ? 'bg-red-100 text-red-700' :
+                        v === 'review' ? 'bg-amber-100 text-amber-700' : 'bg-slate-100 text-slate-500';
+                      return <td key={c} className="px-2 py-1"><span className={`text-[9px] px-1.5 py-0.5 rounded-full font-medium ${cls}`}>{v}</span></td>;
+                    }
+                    const v = (row as any)[c];
+                    const isNum = typeof v === 'number';
+                    return (
+                      <td key={c} className={`px-2 py-1 text-slate-700 ${isNum ? 'text-right tabular-nums' : ''}`}>
+                        {v == null ? <span className="text-slate-300">—</span> : isNum ? Number(v).toLocaleString() : String(v)}
+                      </td>
+                    );
+                  })}
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+      {editableRowCount > 0 && (
+        <div className="px-3 py-2 bg-slate-50 border-t border-slate-200 flex items-center justify-between gap-2">
+          <span className="text-[10px] text-slate-500">
+            Edits to manually-recalculated rows save as `(manual override)` in the row's notes for audit-trail clarity.
+          </span>
+          <div className="flex items-center gap-2">
+            {error && <span className="text-[10px] text-red-600">{error}</span>}
+            <button
+              onClick={handleSave}
+              disabled={saving || Object.keys(edits).length === 0}
+              className="inline-flex items-center gap-1.5 px-3 py-1 text-[10px] font-medium rounded bg-emerald-600 text-white hover:bg-emerald-700 disabled:opacity-40"
+            >
+              {saving ? <Loader2 className="h-3 w-3 animate-spin" /> : null}
+              Save manual recalculations
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
