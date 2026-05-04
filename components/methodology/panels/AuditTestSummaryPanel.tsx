@@ -695,11 +695,17 @@ export function AuditTestSummaryPanel({ engagementId, userRole }: Props) {
                           <span>Result</span>
                         </span>
                         <span className="text-[10px] font-medium text-slate-700">{s.count} item{s.count !== 1 ? 's' : ''}</span>
+                        {/* Row count by worst-state. Each chip is the
+                            count of rows whose Progress OR Result is
+                            at that state — so a row with green
+                            progress but red result lands in the red
+                            bucket. Hover spells out what each bucket
+                            captures. */}
                         <div className="flex items-center gap-2 text-[10px] text-slate-600">
-                          {s.red > 0 && <span className="inline-flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-red-500" />{s.red}</span>}
-                          {s.orange > 0 && <span className="inline-flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-orange-500" />{s.orange}</span>}
-                          {s.green > 0 && <span className="inline-flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-green-500" />{s.green}</span>}
-                          {s.pending > 0 && <span className="inline-flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-slate-300" />{s.pending}</span>}
+                          {s.red > 0 && <span className="inline-flex items-center gap-1" title={`${s.red} test${s.red === 1 ? '' : 's'} red — failed to run, OR error above Performance Materiality`}><span className="w-2 h-2 rounded-full bg-red-500" />{s.red}</span>}
+                          {s.orange > 0 && <span className="inline-flex items-center gap-1" title={`${s.orange} test${s.orange === 1 ? '' : 's'} orange — in progress, OR error between Clearly Trivial and Performance Materiality`}><span className="w-2 h-2 rounded-full bg-orange-500" />{s.orange}</span>}
+                          {s.green > 0 && <span className="inline-flex items-center gap-1" title={`${s.green} test${s.green === 1 ? '' : 's'} green — ran successfully with no error or below Clearly Trivial`}><span className="w-2 h-2 rounded-full bg-green-500" />{s.green}</span>}
+                          {s.pending > 0 && <span className="inline-flex items-center gap-1" title={`${s.pending} test${s.pending === 1 ? '' : 's'} pending — not yet started`}><span className="w-2 h-2 rounded-full bg-slate-300" />{s.pending}</span>}
                         </div>
                       </div>
                     </td>
