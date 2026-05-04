@@ -81,6 +81,10 @@ interface SummaryRow {
   // accountCode. Null when the test isn't tied to a single code
   // (multi-code tests / planning items / unmapped accountCode).
   tbCodeValue: number | null;
+  // TB-row description for accountCode — shown alongside the code
+  // in the TB Code column so the auditor doesn't have to memorise
+  // every chart-of-accounts number.
+  tbCodeDescription: string | null;
   tbCheck: TbCheck | null;
   progress: Dot;
   result: Dot;
@@ -93,6 +97,10 @@ interface SummaryRow {
   reviewerSignedByName: string | null;
   riSignedByName: string | null;
   category: Category;
+  // True when this row was synthesised from a TB code with no test
+  // allocated to it (a coverage placeholder). Renders just the
+  // code/description/value cells; all other columns blank.
+  isPlaceholder?: boolean;
 }
 
 interface ExpectedTest {
@@ -360,6 +368,51 @@ export function AuditTestSummaryPanel({ engagementId, userRole }: Props) {
     return m;
   }, [tbRows]);
 
+  // TB-row description lookup — same key shape as tbValueByCode.
+  // The TB Code column renders "<code> <description>" using this.
+  const tbDescriptionByCode = useMemo<Map<string, string>>(() => {
+    const m = new Map<string, string>();
+    for (const r of tbRows) {
+      const code = (r.accountCode || '').toString().trim().toLowerCase();
+      if (!code) continue;
+      m.set(code, (r.description || '').toString());
+    }
+    return m;
+  }, [tbRows]);
+
+  // Every TB code mapped to each FS line, keyed by FS line name
+  // (lowercased). Used to render coverage-placeholder rows for TB
+  // codes that don't have a test, AND to surface FS Lines that
+  // exist in the TB but have zero tests anywhere (e.g. Cash and
+  // Cash Equivalents at the start of an engagement).
+  interface TbCodeUnderFsLine {
+    code: string;
+    description: string | null;
+    currentYear: number;
+    fsLineDisplay: string; // original-cased FS line name from the TB
+  }
+  const tbCodesByFsLine = useMemo<Map<string, TbCodeUnderFsLine[]>>(() => {
+    const m = new Map<string, TbCodeUnderFsLine[]>();
+    for (const r of tbRows) {
+      const display = (r.canonicalFsLine?.name || r.fsLine || '').toString();
+      const key = display.trim().toLowerCase();
+      if (!key) continue;
+      const code = (r.accountCode || '').toString();
+      if (!code) continue;
+      const list = m.get(key) || [];
+      list.push({
+        code,
+        description: r.description || null,
+        currentYear: Number(r.currentYear || 0),
+        fsLineDisplay: display,
+      });
+      m.set(key, list);
+    }
+    // Stable order within each FS line by accountCode.
+    for (const list of m.values()) list.sort((a, b) => a.code.localeCompare(b.code));
+    return m;
+  }, [tbRows]);
+
   function lookupFsLineValue(fsLine: string): number | null {
     const v = fsLineValueByName.get((fsLine || '').trim().toLowerCase());
     return v === undefined ? null : v;
@@ -369,6 +422,12 @@ export function AuditTestSummaryPanel({ engagementId, userRole }: Props) {
     if (!accountCode) return null;
     const v = tbValueByCode.get(accountCode.toString().trim().toLowerCase());
     return v === undefined ? null : v;
+  }
+
+  function lookupTbCodeDescription(accountCode: string | null): string | null {
+    if (!accountCode) return null;
+    const v = tbDescriptionByCode.get(accountCode.toString().trim().toLowerCase());
+    return v === undefined || v === '' ? null : v;
   }
 
   // Build the per-test row list. Same join logic as before but with
@@ -390,6 +449,7 @@ export function AuditTestSummaryPanel({ engagementId, userRole }: Props) {
         fsLineValue: lookupFsLineValue(e.fsLine),
         accountCode: ac,
         tbCodeValue: lookupTbCodeValue(ac),
+        tbCodeDescription: lookupTbCodeDescription(ac),
         tbCheck: e.tbCheck || null,
         progress: progressFromStatus(e.status),
         result: resultFromConclusion(conc, e.status, performanceMateriality, clearlyTrivial),
@@ -414,6 +474,7 @@ export function AuditTestSummaryPanel({ engagementId, userRole }: Props) {
         fsLineValue: lookupFsLineValue(c.fsLine),
         accountCode: c.accountCode,
         tbCodeValue: lookupTbCodeValue(c.accountCode),
+        tbCodeDescription: lookupTbCodeDescription(c.accountCode),
         tbCheck: null,
         progress: c.status === 'pending' ? 'pending' : 'green',
         result: resultFromConclusion(c, 'completed', performanceMateriality, clearlyTrivial),
@@ -439,6 +500,7 @@ export function AuditTestSummaryPanel({ engagementId, userRole }: Props) {
         fsLineValue: lookupFsLineValue(et.fsLine),
         accountCode: et.accountCode,
         tbCodeValue: lookupTbCodeValue(et.accountCode),
+        tbCodeDescription: lookupTbCodeDescription(et.accountCode),
         tbCheck: null,
         progress: 'pending',
         result: 'pending',
@@ -461,6 +523,7 @@ export function AuditTestSummaryPanel({ engagementId, userRole }: Props) {
         fsLineValue: null,
         accountCode: null,
         tbCodeValue: null,
+        tbCodeDescription: null,
         tbCheck: null,
         progress: p.progress,
         result: p.progress === 'green' ? 'green' : 'pending',
@@ -600,6 +663,17 @@ export function AuditTestSummaryPanel({ engagementId, userRole }: Props) {
       if (!map.has(fsLine)) map.set(fsLine, []);
       map.get(fsLine)!.push(r);
     }
+
+    // Track which FS lines (lowercased) appear in ANY category as a
+    // tested FS line. Anything in tbCodesByFsLine that's missing
+    // here is a coverage gap — surfaced as an empty group in the
+    // 'execution' section so the auditor can see the FS line they
+    // haven't tested at all (e.g. Cash and Cash Equivalents).
+    const testedFsLines = new Set<string>();
+    for (const cat of ['execution', 'pending_audit_plan', 'planning'] as Category[]) {
+      for (const fsLine of buckets[cat].keys()) testedFsLines.add(fsLine.trim().toLowerCase());
+    }
+
     for (const cat of ['execution', 'pending_audit_plan', 'planning'] as Category[]) {
       for (const [fsLine, groupRows] of buckets[cat]) {
         const tbDots: Dot[] = [];
@@ -607,21 +681,104 @@ export function AuditTestSummaryPanel({ engagementId, userRole }: Props) {
           if (!r.tbCheck) continue;
           tbDots.push(r.tbCheck.reconciled || r.tbCheck.percentage === 100 ? 'green' : 'red');
         }
+        // Append placeholder rows for TB codes under this FS line
+        // that don't have a test row in this section. Lets the
+        // operator see the codes that haven't been tested when
+        // they expand the group. Codes already covered by a test
+        // row in this section are skipped to avoid duplication.
+        const codesInTests = new Set(
+          groupRows.map(r => (r.accountCode || '').toString().trim().toLowerCase()).filter(Boolean),
+        );
+        const tbCodes = tbCodesByFsLine.get(fsLine.trim().toLowerCase()) || [];
+        const placeholders: SummaryRow[] = (cat === 'execution')
+          ? tbCodes
+              .filter(c => !codesInTests.has(c.code.trim().toLowerCase()))
+              .map(c => ({
+                key: `placeholder:${cat}:${fsLine}:${c.code}`,
+                testDescription: '',
+                fsLine,
+                fsLineValue: lookupFsLineValue(fsLine),
+                accountCode: c.code,
+                tbCodeValue: c.currentYear,
+                tbCodeDescription: c.description,
+                tbCheck: null,
+                progress: 'pending',
+                result: 'pending',
+                durationMs: null,
+                totalErrors: 0,
+                extrapolatedError: 0,
+                status: 'untested',
+                conclusionId: null,
+                executionId: null,
+                reviewerSignedByName: null,
+                riSignedByName: null,
+                category: 'execution',
+                isPlaceholder: true,
+              }))
+          : [];
+        const allRows = [...groupRows, ...placeholders];
         init[cat].push({
           key: `${cat}::${fsLine}`,
           fsLine,
-          fsLineValue: groupRows[0]?.fsLineValue ?? null,
-          rows: groupRows,
+          fsLineValue: groupRows[0]?.fsLineValue ?? lookupFsLineValue(fsLine),
+          rows: allRows,
           progress: aggregateDot(groupRows.map(r => r.progress)),
           result: aggregateDot(groupRows.map(r => r.result)),
           tbCheckDot: tbDots.length === 0 ? null : aggregateDot(tbDots),
           extrapolatedErrorTotal: groupRows.reduce((acc, r) => acc + (r.extrapolatedError || 0), 0),
-          distinctCodeCount: new Set(groupRows.map(r => r.accountCode).filter(Boolean)).size,
+          // Distinct-code count uses the TB-side population (not
+          // just the codes the tests cover) so the header pill
+          // matches the count of rows the operator sees on
+          // expansion.
+          distinctCodeCount: tbCodes.length || new Set(groupRows.map(r => r.accountCode).filter(Boolean)).size,
         });
       }
     }
+
+    // Coverage-gap groups: every FS line in the TB that doesn't
+    // appear in any tested-bucket above. Lands in the 'execution'
+    // section so it's visible in the main work area without
+    // creating a new section just for empty groups.
+    for (const [key, codes] of tbCodesByFsLine) {
+      if (testedFsLines.has(key)) continue;
+      const fsLine = codes[0]?.fsLineDisplay || key;
+      const placeholders: SummaryRow[] = codes.map(c => ({
+        key: `placeholder:execution:${fsLine}:${c.code}`,
+        testDescription: '',
+        fsLine,
+        fsLineValue: lookupFsLineValue(fsLine),
+        accountCode: c.code,
+        tbCodeValue: c.currentYear,
+        tbCodeDescription: c.description,
+        tbCheck: null,
+        progress: 'pending',
+        result: 'pending',
+        durationMs: null,
+        totalErrors: 0,
+        extrapolatedError: 0,
+        status: 'untested',
+        conclusionId: null,
+        executionId: null,
+        reviewerSignedByName: null,
+        riSignedByName: null,
+        category: 'execution',
+        isPlaceholder: true,
+      }));
+      init.execution.push({
+        key: `execution::${fsLine}`,
+        fsLine,
+        fsLineValue: lookupFsLineValue(fsLine),
+        rows: placeholders,
+        progress: 'pending',
+        result: 'pending',
+        tbCheckDot: null,
+        extrapolatedErrorTotal: 0,
+        distinctCodeCount: codes.length,
+      });
+    }
+
     return init;
-  }, [filteredSorted]);
+  }, [filteredSorted, tbCodesByFsLine, fsLineValueByName]);
 
   // Stable list of every FS-Line group key currently in view — used by
   // the Expand-All / Collapse-All button and by the chevron click
@@ -868,37 +1025,57 @@ export function AuditTestSummaryPanel({ engagementId, userRole }: Props) {
 
                         {/* Child rows */}
                         {isExpanded && group.rows.map(row => (
-                          <tr key={row.key} className={row.progress === 'red' || row.result === 'red' ? 'bg-red-50/40' : ''}>
+                          <tr key={row.key} className={row.isPlaceholder ? 'bg-slate-50/40' : (row.progress === 'red' || row.result === 'red' ? 'bg-red-50/40' : '')}>
                             <td className="px-2 py-1.5 text-slate-300 text-[9px] pl-6">
                               {/* indent shown via pl-6; FS Line name lives on the group header */}
                             </td>
-                            <td className="px-2 py-1.5 text-left text-slate-600 font-mono text-[10px]">
-                              {row.accountCode || <span className="text-slate-300 italic font-sans">—</span>}
+                            {/* TB Code + description side by side. Code
+                                in mono so the digits read clearly,
+                                description in regular text afterwards. */}
+                            <td className="px-2 py-1.5 text-left text-slate-600 text-[10px]">
+                              {row.accountCode ? (
+                                <div className="flex items-baseline gap-1.5 min-w-0">
+                                  <span className="font-mono text-slate-700 flex-shrink-0">{row.accountCode}</span>
+                                  {row.tbCodeDescription && (
+                                    <span className="text-slate-500 truncate" title={row.tbCodeDescription}>{row.tbCodeDescription}</span>
+                                  )}
+                                </div>
+                              ) : (
+                                <span className="text-slate-300 italic">—</span>
+                              )}
                             </td>
                             <td className="px-2 py-1.5 text-right text-slate-600 tabular-nums">
                               {formatGbp(row.tbCodeValue)}
                             </td>
                             <td className="px-2 py-1.5 text-center">{renderTbDot(row.tbCheck)}</td>
                             <td className="px-3 py-1.5 text-slate-700">
-                              <div className="truncate max-w-[420px]">{row.testDescription}</div>
-                              {row.totalErrors > 0 && (
-                                <div className="text-[9px] text-red-600 mt-0.5 inline-flex items-center gap-0.5">
-                                  <AlertTriangle className="h-2.5 w-2.5" />{row.totalErrors} error{row.totalErrors !== 1 ? 's' : ''}
-                                </div>
+                              {row.isPlaceholder ? (
+                                <span className="text-[10px] text-slate-400 italic">No test allocated</span>
+                              ) : (
+                                <>
+                                  <div className="truncate max-w-[420px]">{row.testDescription}</div>
+                                  {row.totalErrors > 0 && (
+                                    <div className="text-[9px] text-red-600 mt-0.5 inline-flex items-center gap-0.5">
+                                      <AlertTriangle className="h-2.5 w-2.5" />{row.totalErrors} error{row.totalErrors !== 1 ? 's' : ''}
+                                    </div>
+                                  )}
+                                </>
                               )}
                             </td>
                             <td className="px-2 py-1.5 text-center">
-                              <div className={`w-3 h-3 rounded-full mx-auto ${DOT_BG[row.progress]}`} title={PROGRESS_TITLE[row.progress]} />
+                              {row.isPlaceholder ? <span className="text-slate-300 text-[9px]">—</span>
+                                : <div className={`w-3 h-3 rounded-full mx-auto ${DOT_BG[row.progress]}`} title={PROGRESS_TITLE[row.progress]} />}
                             </td>
                             <td className="px-2 py-1.5 text-center">
-                              <div className={`w-3 h-3 rounded-full mx-auto ${DOT_BG[row.result]}`} title={RESULT_TITLE[row.result]} />
+                              {row.isPlaceholder ? <span className="text-slate-300 text-[9px]">—</span>
+                                : <div className={`w-3 h-3 rounded-full mx-auto ${DOT_BG[row.result]}`} title={RESULT_TITLE[row.result]} />}
                             </td>
                             <td className="px-2 py-1.5 text-right text-slate-600 tabular-nums">
                               {row.extrapolatedError ? formatGbp(row.extrapolatedError) : <span className="text-slate-300">—</span>}
                             </td>
                             <td className="px-2 py-1.5 text-right text-slate-500 tabular-nums">{formatDuration(row.durationMs)}</td>
-                            <td className="px-2 py-1.5 text-center">{renderSignOffButton(row, 'reviewer')}</td>
-                            <td className="px-2 py-1.5 text-center">{renderSignOffButton(row, 'ri')}</td>
+                            <td className="px-2 py-1.5 text-center">{row.isPlaceholder ? <span className="text-slate-300 text-[9px]">—</span> : renderSignOffButton(row, 'reviewer')}</td>
+                            <td className="px-2 py-1.5 text-center">{row.isPlaceholder ? <span className="text-slate-300 text-[9px]">—</span> : renderSignOffButton(row, 'ri')}</td>
                           </tr>
                         ))}
                       </Fragment>
