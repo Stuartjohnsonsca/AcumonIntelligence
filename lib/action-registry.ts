@@ -99,6 +99,11 @@ export function resolveBindingValue(
 ): any {
   if (typeof value !== 'string') return value;
 
+  // Whole-string binding — the entire field value IS the binding
+  // expression. Returns the resolved value as-is, preserving its
+  // type (number, array, table, etc.) so a downstream field
+  // expecting json_table doesn't get a stringified blob.
+
   // $prev.<field>[.<deeper>...]
   if (value.startsWith('$prev.')) {
     const path = value.slice(6).split('.');
@@ -115,6 +120,27 @@ export function resolveBindingValue(
   // $ctx.<path>
   if (value.startsWith('$ctx.')) {
     return readPath(ctx, value.slice(5).split('.'));
+  }
+
+  // Template-token substitution — any {{$prev.X}} / {{$step.N.X}} /
+  // {{$ctx.X}} inside the string is replaced inline with the
+  // resolved value coerced to text. Lets text fields (e.g.
+  // message_to_client) embed dynamic values without overriding the
+  // whole field. Unknown tokens are left untouched so typos are
+  // visible to the operator instead of silently disappearing.
+  if (value.includes('{{')) {
+    return value.replace(/\{\{\s*([^{}]+?)\s*\}\}/g, (match, expr) => {
+      const trimmed = String(expr).trim();
+      if (!trimmed.startsWith('$prev.') && !trimmed.startsWith('$step.') && !trimmed.startsWith('$ctx.')) {
+        return match;
+      }
+      const resolved = resolveBindingValue(trimmed, pipelineState, currentStepIndex, ctx);
+      if (resolved === null || resolved === undefined) return '';
+      if (typeof resolved === 'string') return resolved;
+      if (Array.isArray(resolved)) return resolved.join(', ');
+      if (typeof resolved === 'object') return JSON.stringify(resolved);
+      return String(resolved);
+    });
   }
 
   return value;
