@@ -1,7 +1,7 @@
 'use client';
 
 import { Fragment, useState, useEffect, useCallback, useMemo } from 'react';
-import { AlertTriangle, ArrowUpDown, ArrowUp, ArrowDown, Filter as FilterIcon } from 'lucide-react';
+import { AlertTriangle, ArrowUpDown, ArrowUp, ArrowDown, Filter as FilterIcon, ChevronRight, ChevronDown as ChevronDownIcon } from 'lucide-react';
 
 /**
  * Audit Test Summary Results — Completion view.
@@ -77,6 +77,10 @@ interface SummaryRow {
   fsLine: string;
   fsLineValue: number | null;
   accountCode: string | null;
+  // Per-TB-code currentYear pulled from auditTBRow keyed by
+  // accountCode. Null when the test isn't tied to a single code
+  // (multi-code tests / planning items / unmapped accountCode).
+  tbCodeValue: number | null;
   tbCheck: TbCheck | null;
   progress: Dot;
   result: Dot;
@@ -110,6 +114,8 @@ interface PlanningItem {
 interface TbRow {
   fsLineId: string | null;
   fsLine?: string | null;
+  accountCode?: string | null;
+  description?: string | null;
   currentYear: number | null;
   canonicalFsLine?: { name: string } | null;
 }
@@ -193,7 +199,7 @@ function resultFromConclusion(
 }
 
 // ─── Sorting / filtering ───────────────────────────────────────────
-type SortKey = 'fsLine' | 'fsLineValue' | 'tbCheck' | 'testDescription' | 'progress' | 'result' | 'extrapolatedError' | 'durationMs' | 'reviewer' | 'ri';
+type SortKey = 'fsLine' | 'tbCode' | 'value' | 'tbCheck' | 'testDescription' | 'progress' | 'result' | 'extrapolatedError' | 'durationMs' | 'reviewer' | 'ri';
 type SortDir = 'asc' | 'desc';
 
 interface ColumnFilters {
@@ -227,7 +233,8 @@ function compareRow(a: SummaryRow, b: SummaryRow, key: SortKey, dir: SortDir): n
   const sign = dir === 'asc' ? 1 : -1;
   switch (key) {
     case 'fsLine':           return sign * (a.fsLine || '').localeCompare(b.fsLine || '');
-    case 'fsLineValue':      return sign * ((a.fsLineValue ?? -Infinity) - (b.fsLineValue ?? -Infinity));
+    case 'tbCode':           return sign * (a.accountCode || '').localeCompare(b.accountCode || '');
+    case 'value':            return sign * ((a.tbCodeValue ?? -Infinity) - (b.tbCodeValue ?? -Infinity));
     case 'tbCheck': {
       const aP = a.tbCheck?.percentage ?? -1;
       const bP = b.tbCheck?.percentage ?? -1;
@@ -259,6 +266,12 @@ export function AuditTestSummaryPanel({ engagementId, userRole }: Props) {
   const [sortDir, setSortDir] = useState<SortDir>('asc');
   const [filters, setFilters] = useState<ColumnFilters>(EMPTY_FILTERS);
   const [openFilter, setOpenFilter] = useState<keyof ColumnFilters | null>(null);
+  // FS-Line groups default to collapsed so the panel reads as a
+  // tidy "one row per FS line" summary at first glance. Click the
+  // chevron on a group header to drill into the per-TB-code rows;
+  // the Expand-All / Collapse-All button at the panel top toggles
+  // every group at once.
+  const [expandedFsLines, setExpandedFsLines] = useState<Set<string>>(new Set());
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -333,8 +346,28 @@ export function AuditTestSummaryPanel({ engagementId, userRole }: Props) {
     return m;
   }, [tbRows]);
 
+  // Per-TB-code currentYear lookup. Used to populate the per-row
+  // Value column under each FS-line group. Account codes are
+  // normalised (trim + lowercase) so casing differences between
+  // conclusions and TB rows don't cause false misses.
+  const tbValueByCode = useMemo<Map<string, number>>(() => {
+    const m = new Map<string, number>();
+    for (const r of tbRows) {
+      const code = (r.accountCode || '').toString().trim().toLowerCase();
+      if (!code) continue;
+      m.set(code, Number(r.currentYear || 0));
+    }
+    return m;
+  }, [tbRows]);
+
   function lookupFsLineValue(fsLine: string): number | null {
     const v = fsLineValueByName.get((fsLine || '').trim().toLowerCase());
+    return v === undefined ? null : v;
+  }
+
+  function lookupTbCodeValue(accountCode: string | null): number | null {
+    if (!accountCode) return null;
+    const v = tbValueByCode.get(accountCode.toString().trim().toLowerCase());
     return v === undefined ? null : v;
   }
 
@@ -349,12 +382,14 @@ export function AuditTestSummaryPanel({ engagementId, userRole }: Props) {
       const startedAt = e.startedAt ? new Date(e.startedAt).getTime() : null;
       const completedAt = e.completedAt ? new Date(e.completedAt).getTime() : null;
       const durationMs = startedAt != null && completedAt != null ? completedAt - startedAt : null;
+      const ac = conc?.accountCode || null;
       out.push({
         key: e.id,
         testDescription: e.testDescription,
         fsLine: e.fsLine,
         fsLineValue: lookupFsLineValue(e.fsLine),
-        accountCode: conc?.accountCode || null,
+        accountCode: ac,
+        tbCodeValue: lookupTbCodeValue(ac),
         tbCheck: e.tbCheck || null,
         progress: progressFromStatus(e.status),
         result: resultFromConclusion(conc, e.status, performanceMateriality, clearlyTrivial),
@@ -378,6 +413,7 @@ export function AuditTestSummaryPanel({ engagementId, userRole }: Props) {
         fsLine: c.fsLine,
         fsLineValue: lookupFsLineValue(c.fsLine),
         accountCode: c.accountCode,
+        tbCodeValue: lookupTbCodeValue(c.accountCode),
         tbCheck: null,
         progress: c.status === 'pending' ? 'pending' : 'green',
         result: resultFromConclusion(c, 'completed', performanceMateriality, clearlyTrivial),
@@ -402,6 +438,7 @@ export function AuditTestSummaryPanel({ engagementId, userRole }: Props) {
         fsLine: et.fsLine,
         fsLineValue: lookupFsLineValue(et.fsLine),
         accountCode: et.accountCode,
+        tbCodeValue: lookupTbCodeValue(et.accountCode),
         tbCheck: null,
         progress: 'pending',
         result: 'pending',
@@ -423,6 +460,7 @@ export function AuditTestSummaryPanel({ engagementId, userRole }: Props) {
         fsLine: 'Planning',
         fsLineValue: null,
         accountCode: null,
+        tbCodeValue: null,
         tbCheck: null,
         progress: p.progress,
         result: p.progress === 'green' ? 'green' : 'pending',
@@ -438,7 +476,7 @@ export function AuditTestSummaryPanel({ engagementId, userRole }: Props) {
       });
     }
     return out;
-  }, [executions, conclusions, expectedTests, planningItems, performanceMateriality, clearlyTrivial, fsLineValueByName]);
+  }, [executions, conclusions, expectedTests, planningItems, performanceMateriality, clearlyTrivial, fsLineValueByName, tbValueByCode]);
 
   // Filter + sort applied over the whole row list. Grouping by category
   // happens in the render below.
@@ -531,6 +569,82 @@ export function AuditTestSummaryPanel({ engagementId, userRole }: Props) {
     } catch {}
   }, [overallAggregate, loading, engagementId]);
 
+  // ─── FS-Line grouping ──────────────────────────────────────────────
+  // Within each Category section, rows are grouped by FS Line. Each
+  // group exposes a chevron-toggleable header that summarises the
+  // group (Value rolled up from the FS Line's TB total, worst-state
+  // dot aggregates, sum extrapolatedError, count of tests). Children
+  // render only when the group is expanded.
+  interface FsLineGroup {
+    key: string; // unique within the panel: `${category}::${fsLine}`
+    fsLine: string;
+    fsLineValue: number | null;
+    rows: SummaryRow[];
+    progress: Dot;
+    result: Dot;
+    tbCheckDot: Dot | null;
+    extrapolatedErrorTotal: number;
+    distinctCodeCount: number;
+  }
+  const groupsByCategory = useMemo<Record<Category, FsLineGroup[]>>(() => {
+    const init: Record<Category, FsLineGroup[]> = { execution: [], pending_audit_plan: [], planning: [] };
+    const buckets: Record<Category, Map<string, SummaryRow[]>> = {
+      execution: new Map(), pending_audit_plan: new Map(), planning: new Map(),
+    };
+    // Preserve the post-sort order: walk filteredSorted in order and
+    // append rows to their FS-line bucket. Bucket insertion order
+    // determines the on-screen order of FS-line groups.
+    for (const r of filteredSorted) {
+      const fsLine = r.fsLine || '(unassigned)';
+      const map = buckets[r.category];
+      if (!map.has(fsLine)) map.set(fsLine, []);
+      map.get(fsLine)!.push(r);
+    }
+    for (const cat of ['execution', 'pending_audit_plan', 'planning'] as Category[]) {
+      for (const [fsLine, groupRows] of buckets[cat]) {
+        const tbDots: Dot[] = [];
+        for (const r of groupRows) {
+          if (!r.tbCheck) continue;
+          tbDots.push(r.tbCheck.reconciled || r.tbCheck.percentage === 100 ? 'green' : 'red');
+        }
+        init[cat].push({
+          key: `${cat}::${fsLine}`,
+          fsLine,
+          fsLineValue: groupRows[0]?.fsLineValue ?? null,
+          rows: groupRows,
+          progress: aggregateDot(groupRows.map(r => r.progress)),
+          result: aggregateDot(groupRows.map(r => r.result)),
+          tbCheckDot: tbDots.length === 0 ? null : aggregateDot(tbDots),
+          extrapolatedErrorTotal: groupRows.reduce((acc, r) => acc + (r.extrapolatedError || 0), 0),
+          distinctCodeCount: new Set(groupRows.map(r => r.accountCode).filter(Boolean)).size,
+        });
+      }
+    }
+    return init;
+  }, [filteredSorted]);
+
+  // Stable list of every FS-Line group key currently in view — used by
+  // the Expand-All / Collapse-All button and by the chevron click
+  // handlers below.
+  const allGroupKeys = useMemo<string[]>(() => {
+    const keys: string[] = [];
+    for (const cat of ['execution', 'pending_audit_plan', 'planning'] as Category[]) {
+      for (const g of groupsByCategory[cat]) keys.push(g.key);
+    }
+    return keys;
+  }, [groupsByCategory]);
+
+  function toggleGroup(key: string) {
+    setExpandedFsLines(prev => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key); else next.add(key);
+      return next;
+    });
+  }
+  function expandAll() { setExpandedFsLines(new Set(allGroupKeys)); }
+  function collapseAll() { setExpandedFsLines(new Set()); }
+  const allExpanded = allGroupKeys.length > 0 && allGroupKeys.every(k => expandedFsLines.has(k));
+
   function toggleSort(key: SortKey) {
     if (key === sortKey) {
       setSortDir(d => (d === 'asc' ? 'desc' : 'asc'));
@@ -570,13 +684,6 @@ export function AuditTestSummaryPanel({ engagementId, userRole }: Props) {
   if (rows.length === 0) return <div className="p-6 text-center text-xs text-slate-400">No tests recorded yet.</div>;
 
   const haveThresholds = performanceMateriality > 0;
-
-  // Group filtered rows by category for rendering.
-  const byCategory: Record<Category, SummaryRow[]> = {
-    execution: filteredSorted.filter(r => r.category === 'execution'),
-    pending_audit_plan: filteredSorted.filter(r => r.category === 'pending_audit_plan'),
-    planning: filteredSorted.filter(r => r.category === 'planning'),
-  };
 
   function renderTbDot(tb: TbCheck | null) {
     if (!tb) return <span className="text-slate-300 text-[9px]">—</span>;
@@ -633,11 +740,20 @@ export function AuditTestSummaryPanel({ engagementId, userRole }: Props) {
             </span>
           </div>
         </div>
-        <div className="text-[10px] text-slate-400">
-          {filteredSorted.length} of {rows.length} test{rows.length !== 1 ? 's' : ''}
-          {haveThresholds && (
-            <> · CT {clearlyTrivial.toLocaleString()} · PM {performanceMateriality.toLocaleString()}</>
-          )}
+        <div className="flex items-center gap-3 text-[10px] text-slate-400">
+          <button
+            onClick={() => allExpanded ? collapseAll() : expandAll()}
+            className="text-[10px] text-slate-500 hover:text-slate-700 underline"
+            title={allExpanded ? 'Collapse every FS-line group' : 'Expand every FS-line group'}
+          >
+            {allExpanded ? 'Collapse all' : 'Expand all'}
+          </button>
+          <span>
+            {filteredSorted.length} of {rows.length} test{rows.length !== 1 ? 's' : ''}
+            {haveThresholds && (
+              <> · CT {clearlyTrivial.toLocaleString()} · PM {performanceMateriality.toLocaleString()}</>
+            )}
+          </span>
         </div>
       </div>
 
@@ -646,8 +762,9 @@ export function AuditTestSummaryPanel({ engagementId, userRole }: Props) {
         <table className="w-full text-[11px]">
           <thead className="bg-slate-50 text-[10px] uppercase tracking-wide text-slate-500">
             <tr>
-              <SortableHeader label="FS Line" col="fsLine" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} onFilterToggle={() => setOpenFilter(o => o === 'fsLine' ? null : 'fsLine')} hasFilter={!!filters.fsLine} className="w-32 text-left" />
-              <SortableHeader label="FS Value" col="fsLineValue" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} className="w-24 text-right" />
+              <SortableHeader label="FS Line" col="fsLine" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} onFilterToggle={() => setOpenFilter(o => o === 'fsLine' ? null : 'fsLine')} hasFilter={!!filters.fsLine} className="w-40 text-left" />
+              <SortableHeader label="TB Code" col="tbCode" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} className="w-20 text-left" />
+              <SortableHeader label="Value" col="value" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} className="w-24 text-right" />
               <SortableHeader label="TB" col="tbCheck" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} onFilterToggle={() => setOpenFilter(o => o === 'tbCheck' ? null : 'tbCheck')} hasFilter={filters.tbCheck !== 'any'} className="w-12 text-center" />
               <SortableHeader label="Test" col="testDescription" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} onFilterToggle={() => setOpenFilter(o => o === 'testDescription' ? null : 'testDescription')} hasFilter={!!filters.testDescription} className="text-left" />
               <SortableHeader label="Progress" col="progress" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} onFilterToggle={() => setOpenFilter(o => o === 'progress' ? null : 'progress')} hasFilter={filters.progress.size > 0} className="w-20 text-center" />
@@ -659,7 +776,7 @@ export function AuditTestSummaryPanel({ engagementId, userRole }: Props) {
             </tr>
             {openFilter && (
               <tr>
-                <td colSpan={10} className="px-3 py-2 bg-slate-50 border-t border-slate-200">
+                <td colSpan={11} className="px-3 py-2 bg-slate-50 border-t border-slate-200">
                   <FilterRow filter={openFilter} filters={filters} setFilters={setFilters} toggleDotFilter={toggleDotFilter} onClose={() => setOpenFilter(null)} />
                 </td>
               </tr>
@@ -667,25 +784,18 @@ export function AuditTestSummaryPanel({ engagementId, userRole }: Props) {
           </thead>
           <tbody className="divide-y divide-slate-100">
             {(['execution', 'pending_audit_plan', 'planning'] as Category[]).map(cat => {
-              const list = byCategory[cat];
-              if (list.length === 0) return null;
+              const groups = groupsByCategory[cat];
+              if (groups.length === 0) return null;
               const s = categorySummary[cat];
               return (
                 <Fragment key={`section:${cat}`}>
-                  {/* Section header — count + dot summary so the
-                      operator can see at a glance how much work is
-                      still outstanding in each section. */}
+                  {/* Section header */}
                   <tr className="bg-slate-100/70">
-                    <td colSpan={10} className="px-3 py-1.5">
+                    <td colSpan={11} className="px-3 py-1.5">
                       <div className="flex items-center gap-3">
                         <span className={`text-[10px] px-1.5 py-0.5 rounded font-semibold uppercase tracking-wide border ${CATEGORY_PILL[cat]}`}>
                           {CATEGORY_LABEL[cat]}
                         </span>
-                        {/* Section-level Progress + Result aggregates
-                            (worst-state-wins across the section's
-                            rows). Sit between the section pill and
-                            the count so the eye reads them as the
-                            section's summary state. */}
                         <span className="inline-flex items-center gap-1 text-[10px] text-slate-600" title={`Progress (section) — ${PROGRESS_TITLE[s.progress]}`}>
                           <span className={`w-2.5 h-2.5 rounded-full ${DOT_BG[s.progress]}`} />
                           <span>Progress</span>
@@ -695,12 +805,6 @@ export function AuditTestSummaryPanel({ engagementId, userRole }: Props) {
                           <span>Result</span>
                         </span>
                         <span className="text-[10px] font-medium text-slate-700">{s.count} item{s.count !== 1 ? 's' : ''}</span>
-                        {/* Row count by worst-state. Each chip is the
-                            count of rows whose Progress OR Result is
-                            at that state — so a row with green
-                            progress but red result lands in the red
-                            bucket. Hover spells out what each bucket
-                            captures. */}
                         <div className="flex items-center gap-2 text-[10px] text-slate-600">
                           {s.red > 0 && <span className="inline-flex items-center gap-1" title={`${s.red} test${s.red === 1 ? '' : 's'} red — failed to run, OR error above Performance Materiality`}><span className="w-2 h-2 rounded-full bg-red-500" />{s.red}</span>}
                           {s.orange > 0 && <span className="inline-flex items-center gap-1" title={`${s.orange} test${s.orange === 1 ? '' : 's'} orange — in progress, OR error between Clearly Trivial and Performance Materiality`}><span className="w-2 h-2 rounded-full bg-orange-500" />{s.orange}</span>}
@@ -710,40 +814,96 @@ export function AuditTestSummaryPanel({ engagementId, userRole }: Props) {
                       </div>
                     </td>
                   </tr>
-                  {list.map(row => (
-                    <tr key={row.key} className={row.progress === 'red' || row.result === 'red' ? 'bg-red-50/40' : ''}>
-                      <td className="px-2 py-1.5 text-slate-500 truncate">
-                        {row.fsLine}
-                        {row.accountCode && row.accountCode !== row.fsLine && (
-                          <span className="block text-[9px] text-slate-400 font-mono">{row.accountCode}</span>
-                        )}
-                      </td>
-                      <td className="px-2 py-1.5 text-right text-slate-600 tabular-nums">
-                        {formatGbp(row.fsLineValue)}
-                      </td>
-                      <td className="px-2 py-1.5 text-center">{renderTbDot(row.tbCheck)}</td>
-                      <td className="px-3 py-1.5 text-slate-700">
-                        <div className="truncate max-w-[420px]">{row.testDescription}</div>
-                        {row.totalErrors > 0 && (
-                          <div className="text-[9px] text-red-600 mt-0.5 inline-flex items-center gap-0.5">
-                            <AlertTriangle className="h-2.5 w-2.5" />{row.totalErrors} error{row.totalErrors !== 1 ? 's' : ''}
-                          </div>
-                        )}
-                      </td>
-                      <td className="px-2 py-1.5 text-center">
-                        <div className={`w-3 h-3 rounded-full mx-auto ${DOT_BG[row.progress]}`} title={PROGRESS_TITLE[row.progress]} />
-                      </td>
-                      <td className="px-2 py-1.5 text-center">
-                        <div className={`w-3 h-3 rounded-full mx-auto ${DOT_BG[row.result]}`} title={RESULT_TITLE[row.result]} />
-                      </td>
-                      <td className="px-2 py-1.5 text-right text-slate-600 tabular-nums">
-                        {row.extrapolatedError ? formatGbp(row.extrapolatedError) : <span className="text-slate-300">—</span>}
-                      </td>
-                      <td className="px-2 py-1.5 text-right text-slate-500 tabular-nums">{formatDuration(row.durationMs)}</td>
-                      <td className="px-2 py-1.5 text-center">{renderSignOffButton(row, 'reviewer')}</td>
-                      <td className="px-2 py-1.5 text-center">{renderSignOffButton(row, 'ri')}</td>
-                    </tr>
-                  ))}
+
+                  {/* FS-Line groups within the section */}
+                  {groups.map(group => {
+                    const isExpanded = expandedFsLines.has(group.key);
+                    const Chev = isExpanded ? ChevronDownIcon : ChevronRight;
+                    const tbDot = group.tbCheckDot;
+                    return (
+                      <Fragment key={group.key}>
+                        {/* Group header — clickable chevron toggles
+                            child rows. Aggregates roll up across the
+                            group (Value = FS Line TB total; dots =
+                            worst-state aggregate; Error £ = sum). */}
+                        <tr
+                          className={`bg-white hover:bg-slate-50 cursor-pointer ${group.progress === 'red' || group.result === 'red' ? 'bg-red-50/30' : ''}`}
+                          onClick={() => toggleGroup(group.key)}
+                        >
+                          <td className="px-2 py-1.5 text-slate-700 font-medium">
+                            <div className="flex items-center gap-1">
+                              <Chev className="h-3 w-3 text-slate-400 flex-shrink-0" />
+                              <span className="truncate">{group.fsLine}</span>
+                            </div>
+                          </td>
+                          <td className="px-2 py-1.5 text-left text-[9px] text-slate-400">
+                            {group.distinctCodeCount > 0
+                              ? `${group.distinctCodeCount} code${group.distinctCodeCount === 1 ? '' : 's'}`
+                              : ''}
+                          </td>
+                          <td className="px-2 py-1.5 text-right text-slate-700 tabular-nums font-medium">
+                            {formatGbp(group.fsLineValue)}
+                          </td>
+                          <td className="px-2 py-1.5 text-center">
+                            {tbDot
+                              ? <div className={`w-3 h-3 rounded-full mx-auto ${DOT_BG[tbDot]}`} title={`TB check (group) — ${tbDot === 'green' ? 'all reconciled' : tbDot === 'red' ? 'one or more variances' : 'pending'}`} />
+                              : <span className="text-slate-300 text-[9px]">—</span>}
+                          </td>
+                          <td className="px-3 py-1.5 text-[10px] text-slate-500 italic">
+                            {group.rows.length} test{group.rows.length === 1 ? '' : 's'} {isExpanded ? '— click to collapse' : '— click to expand'}
+                          </td>
+                          <td className="px-2 py-1.5 text-center">
+                            <div className={`w-3 h-3 rounded-full mx-auto ${DOT_BG[group.progress]}`} title={`Progress (group) — ${PROGRESS_TITLE[group.progress]}`} />
+                          </td>
+                          <td className="px-2 py-1.5 text-center">
+                            <div className={`w-3 h-3 rounded-full mx-auto ${DOT_BG[group.result]}`} title={`Result (group) — ${RESULT_TITLE[group.result]}`} />
+                          </td>
+                          <td className="px-2 py-1.5 text-right text-slate-700 tabular-nums font-medium">
+                            {group.extrapolatedErrorTotal ? formatGbp(group.extrapolatedErrorTotal) : <span className="text-slate-300 font-normal">—</span>}
+                          </td>
+                          <td className="px-2 py-1.5 text-right text-slate-300">—</td>
+                          <td className="px-2 py-1.5 text-center text-slate-300">—</td>
+                          <td className="px-2 py-1.5 text-center text-slate-300">—</td>
+                        </tr>
+
+                        {/* Child rows */}
+                        {isExpanded && group.rows.map(row => (
+                          <tr key={row.key} className={row.progress === 'red' || row.result === 'red' ? 'bg-red-50/40' : ''}>
+                            <td className="px-2 py-1.5 text-slate-300 text-[9px] pl-6">
+                              {/* indent shown via pl-6; FS Line name lives on the group header */}
+                            </td>
+                            <td className="px-2 py-1.5 text-left text-slate-600 font-mono text-[10px]">
+                              {row.accountCode || <span className="text-slate-300 italic font-sans">—</span>}
+                            </td>
+                            <td className="px-2 py-1.5 text-right text-slate-600 tabular-nums">
+                              {formatGbp(row.tbCodeValue)}
+                            </td>
+                            <td className="px-2 py-1.5 text-center">{renderTbDot(row.tbCheck)}</td>
+                            <td className="px-3 py-1.5 text-slate-700">
+                              <div className="truncate max-w-[420px]">{row.testDescription}</div>
+                              {row.totalErrors > 0 && (
+                                <div className="text-[9px] text-red-600 mt-0.5 inline-flex items-center gap-0.5">
+                                  <AlertTriangle className="h-2.5 w-2.5" />{row.totalErrors} error{row.totalErrors !== 1 ? 's' : ''}
+                                </div>
+                              )}
+                            </td>
+                            <td className="px-2 py-1.5 text-center">
+                              <div className={`w-3 h-3 rounded-full mx-auto ${DOT_BG[row.progress]}`} title={PROGRESS_TITLE[row.progress]} />
+                            </td>
+                            <td className="px-2 py-1.5 text-center">
+                              <div className={`w-3 h-3 rounded-full mx-auto ${DOT_BG[row.result]}`} title={RESULT_TITLE[row.result]} />
+                            </td>
+                            <td className="px-2 py-1.5 text-right text-slate-600 tabular-nums">
+                              {row.extrapolatedError ? formatGbp(row.extrapolatedError) : <span className="text-slate-300">—</span>}
+                            </td>
+                            <td className="px-2 py-1.5 text-right text-slate-500 tabular-nums">{formatDuration(row.durationMs)}</td>
+                            <td className="px-2 py-1.5 text-center">{renderSignOffButton(row, 'reviewer')}</td>
+                            <td className="px-2 py-1.5 text-center">{renderSignOffButton(row, 'ri')}</td>
+                          </tr>
+                        ))}
+                      </Fragment>
+                    );
+                  })}
                 </Fragment>
               );
             })}
