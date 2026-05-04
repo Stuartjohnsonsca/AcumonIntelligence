@@ -585,14 +585,20 @@ export function AuditTestSummaryPanel({ engagementId, userRole }: Props) {
     return 'pending';
   }
 
-  // Per-category Progress + Result aggregates plus the count summary
-  // used in section headers. Each category gets:
-  //   - count: total rows in the section
-  //   - progress / result: worst-state aggregate of that dot type
-  //   - red / orange / green / pending: count buckets (worst-of the
-  //     two row dots) so the section header can show "5 red" etc.
+  // Per-category Progress + Result counts used in section headers.
+  // Each category exposes two independent count buckets (one per
+  // dot type) so the header can show, separately:
+  //   Progress: 🔴N 🟠N 🟢N ⚪N
+  //   Result  : 🔴N 🟠N 🟢N ⚪N
+  // The single worst-state aggregates (`progress`/`result`) are
+  // retained for any caller that wants the at-a-glance dot.
+  type DotCounts = { red: number; orange: number; green: number; pending: number };
   const categorySummary = useMemo(() => {
-    const init = (): { count: number; progress: Dot; result: Dot; red: number; orange: number; green: number; pending: number } => ({ count: 0, progress: 'pending', result: 'pending', red: 0, orange: 0, green: 0, pending: 0 });
+    const init = (): { count: number; progress: Dot; result: Dot; progressCounts: DotCounts; resultCounts: DotCounts } => ({
+      count: 0, progress: 'pending', result: 'pending',
+      progressCounts: { red: 0, orange: 0, green: 0, pending: 0 },
+      resultCounts: { red: 0, orange: 0, green: 0, pending: 0 },
+    });
     const summary: Record<Category, ReturnType<typeof init>> = {
       execution: init(), pending_audit_plan: init(), planning: init(),
     };
@@ -603,13 +609,8 @@ export function AuditTestSummaryPanel({ engagementId, userRole }: Props) {
       s.count++;
       progressByCat[r.category].push(r.progress);
       resultByCat[r.category].push(r.result);
-      // Count buckets use the WORSE of progress / result so the operator
-      // can see at a glance how much trouble each section has.
-      const worst: Dot =
-        r.progress === 'red' || r.result === 'red' ? 'red' :
-        r.progress === 'orange' || r.result === 'orange' ? 'orange' :
-        r.progress === 'green' ? 'green' : 'pending';
-      s[worst]++;
+      s.progressCounts[r.progress]++;
+      s.resultCounts[r.result]++;
     }
     for (const cat of ['execution', 'pending_audit_plan', 'planning'] as Category[]) {
       summary[cat].progress = aggregateDot(progressByCat[cat]);
@@ -978,25 +979,36 @@ export function AuditTestSummaryPanel({ engagementId, userRole }: Props) {
                   {/* Section header */}
                   <tr className="bg-slate-100/70">
                     <td colSpan={11} className="px-3 py-1.5">
-                      <div className="flex items-center gap-3">
+                      <div className="flex items-center gap-4 flex-wrap">
                         <span className={`text-[10px] px-1.5 py-0.5 rounded font-semibold uppercase tracking-wide border ${CATEGORY_PILL[cat]}`}>
                           {CATEGORY_LABEL[cat]}
                         </span>
-                        <span className="inline-flex items-center gap-1 text-[10px] text-slate-600" title={`Progress (section) — ${PROGRESS_TITLE[s.progress]}`}>
-                          <span className={`w-2.5 h-2.5 rounded-full ${DOT_BG[s.progress]}`} />
-                          <span>Progress</span>
-                        </span>
-                        <span className="inline-flex items-center gap-1 text-[10px] text-slate-600" title={`Result (section) — ${RESULT_TITLE[s.result]}`}>
-                          <span className={`w-2.5 h-2.5 rounded-full ${DOT_BG[s.result]}`} />
-                          <span>Result</span>
-                        </span>
-                        <span className="text-[10px] font-medium text-slate-700">{s.count} item{s.count !== 1 ? 's' : ''}</span>
-                        <div className="flex items-center gap-2 text-[10px] text-slate-600">
-                          {s.red > 0 && <span className="inline-flex items-center gap-1" title={`${s.red} test${s.red === 1 ? '' : 's'} red — failed to run, OR error above Performance Materiality`}><span className="w-2 h-2 rounded-full bg-red-500" />{s.red}</span>}
-                          {s.orange > 0 && <span className="inline-flex items-center gap-1" title={`${s.orange} test${s.orange === 1 ? '' : 's'} orange — in progress, OR error between Clearly Trivial and Performance Materiality`}><span className="w-2 h-2 rounded-full bg-orange-500" />{s.orange}</span>}
-                          {s.green > 0 && <span className="inline-flex items-center gap-1" title={`${s.green} test${s.green === 1 ? '' : 's'} green — ran successfully with no error or below Clearly Trivial`}><span className="w-2 h-2 rounded-full bg-green-500" />{s.green}</span>}
-                          {s.pending > 0 && <span className="inline-flex items-center gap-1" title={`${s.pending} test${s.pending === 1 ? '' : 's'} pending — not yet started`}><span className="w-2 h-2 rounded-full bg-slate-300" />{s.pending}</span>}
+
+                        {/* Progress group — per-state counted dots
+                            so "how is the run going?" is answered
+                            at a glance. Each chip shows count;
+                            hover spells out what the colour means
+                            for Progress specifically. */}
+                        <div className="inline-flex items-center gap-1.5 text-[10px] text-slate-600">
+                          <span className="font-medium text-slate-500">Progress:</span>
+                          {s.progressCounts.red > 0 && <span className="inline-flex items-center gap-0.5" title={`${s.progressCounts.red} test${s.progressCounts.red === 1 ? '' : 's'} failed to run`}><span className="w-2.5 h-2.5 rounded-full bg-red-500" />{s.progressCounts.red}</span>}
+                          {s.progressCounts.orange > 0 && <span className="inline-flex items-center gap-0.5" title={`${s.progressCounts.orange} test${s.progressCounts.orange === 1 ? '' : 's'} in progress`}><span className="w-2.5 h-2.5 rounded-full bg-orange-500" />{s.progressCounts.orange}</span>}
+                          {s.progressCounts.green > 0 && <span className="inline-flex items-center gap-0.5" title={`${s.progressCounts.green} test${s.progressCounts.green === 1 ? '' : 's'} ran successfully`}><span className="w-2.5 h-2.5 rounded-full bg-green-500" />{s.progressCounts.green}</span>}
+                          {s.progressCounts.pending > 0 && <span className="inline-flex items-center gap-0.5" title={`${s.progressCounts.pending} test${s.progressCounts.pending === 1 ? '' : 's'} not yet started`}><span className="w-2.5 h-2.5 rounded-full bg-slate-300" />{s.progressCounts.pending}</span>}
                         </div>
+
+                        {/* Result group — per-state counted dots,
+                            error-size buckets. Same shape as
+                            Progress, hover explains the band. */}
+                        <div className="inline-flex items-center gap-1.5 text-[10px] text-slate-600">
+                          <span className="font-medium text-slate-500">Result:</span>
+                          {s.resultCounts.red > 0 && <span className="inline-flex items-center gap-0.5" title={`${s.resultCounts.red} test${s.resultCounts.red === 1 ? '' : 's'} with error above Performance Materiality`}><span className="w-2.5 h-2.5 rounded-full bg-red-500" />{s.resultCounts.red}</span>}
+                          {s.resultCounts.orange > 0 && <span className="inline-flex items-center gap-0.5" title={`${s.resultCounts.orange} test${s.resultCounts.orange === 1 ? '' : 's'} with error between Clearly Trivial and Performance Materiality`}><span className="w-2.5 h-2.5 rounded-full bg-orange-500" />{s.resultCounts.orange}</span>}
+                          {s.resultCounts.green > 0 && <span className="inline-flex items-center gap-0.5" title={`${s.resultCounts.green} test${s.resultCounts.green === 1 ? '' : 's'} with no error or below Clearly Trivial`}><span className="w-2.5 h-2.5 rounded-full bg-green-500" />{s.resultCounts.green}</span>}
+                          {s.resultCounts.pending > 0 && <span className="inline-flex items-center gap-0.5" title={`${s.resultCounts.pending} test${s.resultCounts.pending === 1 ? '' : 's'} with no result yet`}><span className="w-2.5 h-2.5 rounded-full bg-slate-300" />{s.resultCounts.pending}</span>}
+                        </div>
+
+                        <span className="text-[10px] font-medium text-slate-700">{s.count} item{s.count !== 1 ? 's' : ''}</span>
                       </div>
                     </td>
                   </tr>
