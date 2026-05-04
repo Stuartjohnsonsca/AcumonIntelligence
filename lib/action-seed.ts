@@ -1067,6 +1067,39 @@ export const SYSTEM_ACTIONS: ActionDefinitionData[] = [
   },
 
   {
+    code: 'request_team_evidence',
+    name: 'Request Evidence from Team',
+    description: 'Sends a task to a team member (preparer / reviewer / partner) asking them to provide evidence — a physical verification photo, a signed observation note, an email confirmation, a typed comment ("Yes, I verified the asset exists"), or any combination. The pipeline pauses until the team marks it complete in the test execution panel. Their response and any uploaded files are emitted on the output (`response_text` and `documents`) so a downstream Verify Evidence / Physical Verification / Conclusion step can use them. Supports `{{}}` template tokens in the message so you can embed sample items, dates, account codes etc. from earlier steps.',
+    category: 'evidence',
+    handlerName: 'requestTeamEvidence',
+    icon: 'Users',
+    color: '#0ea5e9',
+    isSystem: true,
+    inputSchema: [
+      { code: 'message_to_team', label: 'Message to Team', type: 'textarea', required: true, source: 'user', group: 'Request', description: 'Instructions shown on the team task. Supports {{$prev.field}} / {{$step.N.field}} / {{$ctx.field}} placeholders — e.g. "Please attend at the warehouse on {{$ctx.engagement.periodEnd}} and confirm the existence of the assets in the attached register."' },
+      { code: 'assigned_to', label: 'Assign To', type: 'select', required: true, source: 'user', defaultValue: 'preparer', group: 'Request', options: [
+        { value: 'preparer', label: 'Preparer' },
+        { value: 'reviewer', label: 'Reviewer' },
+        { value: 'partner',  label: 'Engagement Partner / RI' },
+      ]},
+      { code: 'evidence_label', label: 'Evidence Label (optional)', type: 'text', required: false, source: 'user', group: 'Request', description: 'A short noun phrase describing the evidence requested — e.g. "Site visit photos", "Signed verification note", "Cash count sheet". Surfaces on the team task header.' },
+      { code: 'sample_items', label: 'Context Items', type: 'json_table', required: false, source: 'auto', autoMapFrom: '$prev.sample_items', group: 'Context', description: 'Auto-bound from the upstream Select Sample step. Surfaced to the team alongside the message so they know which items to verify.' },
+      { code: 'priority', label: 'Priority', type: 'select', required: false, source: 'user', defaultValue: 'normal', group: 'Request', options: [
+        { value: 'normal', label: 'Normal' },
+        { value: 'high',   label: 'High' },
+        { value: 'urgent', label: 'Urgent' },
+      ]},
+    ],
+    outputSchema: [
+      { code: 'documents', label: 'Uploaded Files', type: 'file_array', description: 'Files the team uploaded when marking the task complete. Empty array when the team responded with text only. Bind downstream to `$prev.documents`.' },
+      { code: 'response_text', label: 'Team Response', type: 'text', description: 'Free-text comment the team typed alongside (or instead of) any uploaded files. Bind downstream to `$prev.response_text`.' },
+      { code: 'outstanding_id', label: 'Outstanding Item ID', type: 'text' },
+      { code: 'completed_by', label: 'Completed By', type: 'text' },
+      { code: 'completed_at', label: 'Completed At', type: 'text' },
+    ],
+  },
+
+  {
     code: 'request_confirmations',
     name: 'Request Third-Party Confirmations',
     description: 'Sends confirmation letters to third parties (bank, debtor, creditor, loan counterparty, legal, pension administrator). Tracks responses via portal/email, chases non-responses on a schedule, extracts confirmed balances, reconciles to the entity\'s books, and emits an exceptions table with guidance on alternative procedures for non-responses.',

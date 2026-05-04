@@ -931,6 +931,30 @@ export function TestExecutionPanel({ testId, testDescription, testType, engageme
                   )
                 )}
 
+                {/* Team-evidence panel — surfaces when a step paused
+                    via the request_team_evidence action. The team
+                    member types a comment and/or uploads files and
+                    clicks Mark Complete. Submission goes through the
+                    Outstanding PUT endpoint with multipart/form-data
+                    so the files reach Azure Blob in the same request;
+                    the endpoint then resumes the pipeline. */}
+                {pauseReason === 'awaiting_team' && pausedStep && (
+                  <TeamEvidencePanel
+                    step={pausedStep}
+                    onSubmit={async ({ responseText, files }) => {
+                      const itemId = pausedStep.output?.outstandingItemId as string | undefined;
+                      if (!itemId) return;
+                      const fd = new FormData();
+                      fd.append('itemId', itemId);
+                      fd.append('responseText', responseText);
+                      for (const f of files) fd.append('file', f, f.name);
+                      await fetch(`/api/engagements/${engagementId}/outstanding`, { method: 'PUT', body: fd });
+                      setExecutionStatus('running');
+                      if (executionId) startPolling(executionId);
+                    }}
+                  />
+                )}
+
                 {/* Sampling calculator — shown when population data exists, but NOT for review_flagged tests */}
                 {!isReviewFlaggedTest && (isSamplingPause || samplingCompleted || flowSteps.some(s => s.output?.populationData?.length > 0 || s.output?.dataTable?.length > 0 || s.output?.triggerType === 'sampling')) && (
                   <div className="border border-teal-200 rounded-lg overflow-hidden">
@@ -1667,6 +1691,132 @@ function MultiFieldPromptPanel(props: {
           >
             {submitting ? <Loader2 className="h-3 w-3 animate-spin" /> : null}
             Submit
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── Team evidence request panel ─────────────────────────────────────
+// Renders the runtime UI for the request_team_evidence action: shows
+// the message + (optional) sample-item context, lets the team type a
+// comment and/or attach files, and submits via multipart to the
+// Outstanding PUT endpoint which uploads + resumes the pipeline.
+function TeamEvidencePanel(props: {
+  step: { output?: any };
+  onSubmit: (payload: { responseText: string; files: File[] }) => Promise<void>;
+}) {
+  const cfg = props.step.output || {};
+  const message = (cfg.message_to_team as string) || 'Please provide the requested evidence.';
+  const evidenceLabel = (cfg.evidence_label as string) || '';
+  const assignedTo = (cfg.assigned_to as string) || 'team';
+  const sampleItems = Array.isArray(cfg.sample_items) ? cfg.sample_items : [];
+
+  const [responseText, setResponseText] = useState('');
+  const [files, setFiles] = useState<File[]>([]);
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  function onPickFiles(e: React.ChangeEvent<HTMLInputElement>) {
+    const list = e.target.files;
+    if (!list) return;
+    const next: File[] = [];
+    for (let i = 0; i < list.length; i++) next.push(list.item(i)!);
+    setFiles(prev => [...prev, ...next]);
+    e.target.value = '';
+  }
+  function removeFile(idx: number) {
+    setFiles(prev => prev.filter((_, i) => i !== idx));
+  }
+
+  async function handleSubmit() {
+    if (responseText.trim() === '' && files.length === 0) {
+      setError('Add a comment, an attached file, or both before marking complete.');
+      return;
+    }
+    setError(null);
+    setSubmitting(true);
+    try { await props.onSubmit({ responseText: responseText.trim(), files }); }
+    finally { setSubmitting(false); }
+  }
+
+  const sampleColumns = sampleItems.length > 0 ? Object.keys(sampleItems[0] as Record<string, unknown>) : [];
+
+  return (
+    <div className="border border-sky-200 rounded-lg overflow-hidden bg-sky-50/30">
+      <div className="px-3 py-2 bg-sky-50 border-b border-sky-200 flex items-center gap-2">
+        <span className="text-[10px] font-bold text-sky-700 uppercase">Team Evidence Required</span>
+        <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-sky-100 text-sky-700 font-medium capitalize">{assignedTo}</span>
+        {evidenceLabel && <span className="text-[10px] text-slate-600">— {evidenceLabel}</span>}
+      </div>
+      <div className="p-3 space-y-3">
+        <div className="text-[11px] text-slate-700 whitespace-pre-wrap">{message}</div>
+
+        {sampleItems.length > 0 && (
+          <div className="border border-slate-200 rounded bg-white overflow-hidden">
+            <div className="px-2 py-1 bg-slate-50 border-b border-slate-200">
+              <span className="text-[9px] font-bold text-slate-500 uppercase">Sample to verify ({sampleItems.length} item{sampleItems.length === 1 ? '' : 's'})</span>
+            </div>
+            <div className="overflow-auto max-h-48">
+              <table className="w-full text-[10px]">
+                <thead className="bg-slate-50 text-slate-500">
+                  <tr>{sampleColumns.map(c => <th key={c} className="px-2 py-1 text-left font-semibold">{c}</th>)}</tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100">
+                  {sampleItems.slice(0, 50).map((row: any, i: number) => (
+                    <tr key={i}>
+                      {sampleColumns.map(c => <td key={c} className="px-2 py-1 text-slate-700">{String((row as any)[c] ?? '')}</td>)}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+              {sampleItems.length > 50 && <div className="px-2 py-1 text-[9px] text-slate-400 italic">… {sampleItems.length - 50} more rows</div>}
+            </div>
+          </div>
+        )}
+
+        <div>
+          <label className="text-xs font-medium text-slate-700 block mb-1">Your response</label>
+          <textarea
+            value={responseText}
+            onChange={e => setResponseText(e.target.value)}
+            rows={3}
+            placeholder='e.g. "Yes I verified the asset exists" or describe what you observed.'
+            className="w-full px-2 py-1.5 text-sm border border-slate-200 rounded bg-white focus:outline-none focus:border-sky-400"
+          />
+        </div>
+
+        <div>
+          <label className="text-xs font-medium text-slate-700 block mb-1">Attach evidence (optional)</label>
+          <input
+            type="file"
+            multiple
+            onChange={onPickFiles}
+            className="text-[11px] text-slate-600 file:mr-2 file:px-2 file:py-1 file:text-[10px] file:font-medium file:rounded file:border file:border-slate-200 file:bg-white hover:file:bg-slate-50"
+          />
+          {files.length > 0 && (
+            <ul className="mt-1.5 space-y-1">
+              {files.map((f, i) => (
+                <li key={i} className="flex items-center gap-2 text-[10px] text-slate-600 bg-white border border-slate-200 rounded px-2 py-1">
+                  <span className="flex-1 truncate">{f.name}</span>
+                  <span className="text-slate-400">{Math.round(f.size / 1024)} KB</span>
+                  <button onClick={() => removeFile(i)} className="text-red-500 hover:text-red-700 text-[10px]">remove</button>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+
+        {error && <div className="text-[11px] text-red-600">{error}</div>}
+        <div className="flex justify-end pt-1">
+          <button
+            onClick={handleSubmit}
+            disabled={submitting}
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-md bg-sky-600 text-white hover:bg-sky-700 disabled:opacity-40"
+          >
+            {submitting ? <Loader2 className="h-3 w-3 animate-spin" /> : null}
+            Mark complete
           </button>
         </div>
       </div>

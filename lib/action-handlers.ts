@@ -65,6 +65,7 @@ const HANDLERS: Record<string, ActionHandler> = {
   applyFactor: handleApplyFactor,
   promptUserForValue: handlePromptUserForValue,
   cutOffDateRange: handleCutOffDateRange,
+  requestTeamEvidence: handleRequestTeamEvidence,
   requestListing: handleRequestListing,
   verifyEvidence: handleVerifyEvidence,
   teamReview: handleTeamReview,
@@ -1343,6 +1344,97 @@ async function handleCutOffDateRange(ctx: ActionHandlerContext): Promise<ActionH
       days_before: daysBefore,
       days_after: daysAfter,
       total_days: daysBefore + daysAfter,
+    },
+  };
+}
+
+/**
+ * Request Evidence from Team — two-phase action.
+ *
+ *   Phase 1 (new): create an OutstandingItem assigned to the chosen
+ *   team role with the message + sample-item context. Pause with
+ *   pauseReason 'awaiting_team' so the runtime UI can render the
+ *   team-evidence panel where the team member types a comment
+ *   and/or uploads files and clicks Mark Complete.
+ *
+ *   Phase 2 (resumed): the resume payload merges the team's
+ *   responseData into pipelineState[step]. We read documents and
+ *   response_text out of it, mark the OutstandingItem complete (the
+ *   /outstanding PUT endpoint already does this; here we just make
+ *   sure the values are normalised), and return clean outputs that
+ *   downstream `$prev.documents` / `$prev.response_text` can bind to.
+ */
+async function handleRequestTeamEvidence(ctx: ActionHandlerContext): Promise<ActionHandlerResult> {
+  const { engagementId, executionId, inputs, pipelineState, stepIndex, config } = ctx;
+  const stepState = pipelineState[stepIndex] || {};
+
+  // Phase 2 marker — the resume merged a `completed: true` payload
+  // (or just the documents / response_text fields) into the step's
+  // outputs. Re-running the handler now picks it up and continues.
+  const isResumed = stepState.completed === true
+    || stepState.response_text !== undefined
+    || (Array.isArray(stepState.documents) && stepState.documents.length > 0);
+
+  if (!isResumed) {
+    const role = (inputs.assigned_to as string) || 'preparer';
+    const evidenceLabel = (inputs.evidence_label as string) || '';
+    const message = (inputs.message_to_team as string) || 'Please provide the requested evidence.';
+    const priority = (inputs.priority as string) || 'normal';
+    const sampleCtx = Array.isArray(inputs.sample_items) ? inputs.sample_items : null;
+
+    const item = await prisma.outstandingItem.create({
+      data: {
+        engagementId,
+        executionId,
+        type: 'evidence_request',
+        title: evidenceLabel
+          ? `${evidenceLabel} — ${config.testDescription || 'Test'}`
+          : `Team evidence: ${config.testDescription || 'Test'}`,
+        description: message,
+        source: 'flow',
+        assignedTo: role,
+        status: 'awaiting_team',
+        priority: priority === 'normal' ? 'normal' : priority,
+        fsLine: config.fsLine,
+        testName: config.testDescription,
+        // Stash the sample table on responseData so the team panel
+        // can render it without a second query.
+        responseData: sampleCtx ? { sample_items: sampleCtx } : undefined,
+      },
+    });
+
+    return {
+      action: 'pause',
+      outputs: {
+        outstandingItemId: item.id,
+        message_to_team: message,
+        evidence_label: evidenceLabel,
+        assigned_to: role,
+        priority,
+        sample_items: sampleCtx || [],
+        repeatOnResume: true,
+      },
+      pauseReason: 'awaiting_team',
+      pauseRefId: item.id,
+    };
+  }
+
+  // ── Phase 2: emit clean outputs ────────────────────────────────
+  const documentsRaw = stepState.documents;
+  const documents = Array.isArray(documentsRaw) ? documentsRaw : [];
+  const responseText = (stepState.response_text as string | undefined) || '';
+  const completedBy = (stepState.completed_by as string | undefined) || '';
+  const completedAt = (stepState.completed_at as string | undefined) || new Date().toISOString();
+  const outstandingId = (stepState.outstandingItemId as string | undefined) || '';
+
+  return {
+    action: 'continue',
+    outputs: {
+      documents,
+      response_text: responseText,
+      outstanding_id: outstandingId,
+      completed_by: completedBy,
+      completed_at: completedAt,
     },
   };
 }
