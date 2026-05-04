@@ -69,10 +69,11 @@ try {
   }
   console.log(`action_definitions: ${created} created, ${updated} updated`);
 
-  // Step 2 — seed the three payroll MethodologyTests for every firm.
+  // Step 2 — seed the four payroll MethodologyTests for every firm.
   const { seedPeriodicPayrollTest } = await import('../lib/periodic-payroll-test-seed.ts');
   const { seedPayrollLeaversTest } = await import('../lib/payroll-leavers-test-seed.ts');
   const { seedPayrollJoinersTest } = await import('../lib/payroll-joiners-test-seed.ts');
+  const { seedPayrollCheckToBankTest } = await import('../lib/payroll-check-to-bank-test-seed.ts');
 
   // Also seed the earlier tests the API-side seed button does.
   const { seedAccrualsTest } = await import('../lib/accruals-test-seed.ts');
@@ -88,6 +89,7 @@ try {
       ['Periodic Payroll Test',         seedPeriodicPayrollTest],
       ['Payroll Leavers Test',          seedPayrollLeaversTest],
       ['Payroll Joiners Test',          seedPayrollJoinersTest],
+      ['Payroll Check to Bank',         seedPayrollCheckToBankTest],
       ['Year-End Accruals Test',        seedAccrualsTest],
       ['Unrecorded Liabilities Test',   seedUnrecordedLiabilitiesTest],
       ['Gross Margin Test',             seedGrossMarginTest],
