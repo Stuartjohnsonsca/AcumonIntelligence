@@ -251,7 +251,6 @@ export function AuditTestSummaryPanel({ engagementId, userRole }: Props) {
   const [expectedTests, setExpectedTests] = useState<ExpectedTest[]>([]);
   const [planningItems, setPlanningItems] = useState<PlanningItem[]>([]);
   const [tbRows, setTbRows] = useState<TbRow[]>([]);
-  const [tabSignOffs, setTabSignOffs] = useState<{ reviewer: { name: string; at: string } | null; ri: { name: string; at: string } | null }>({ reviewer: null, ri: null });
   const [performanceMateriality, setPerformanceMateriality] = useState(0);
   const [clearlyTrivial, setClearlyTrivial] = useState(0);
   const [loading, setLoading] = useState(true);
@@ -264,14 +263,13 @@ export function AuditTestSummaryPanel({ engagementId, userRole }: Props) {
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const [execRes, concRes, matRes, expectedRes, ppRes, tbRes, signoffRes] = await Promise.all([
+      const [execRes, concRes, matRes, expectedRes, ppRes, tbRes] = await Promise.all([
         fetch(`/api/engagements/${engagementId}/test-execution?lite=true`),
         fetch(`/api/engagements/${engagementId}/test-conclusions`),
         fetch(`/api/engagements/${engagementId}/materiality`),
         fetch(`/api/engagements/${engagementId}/audit-plan/expected-tests`),
         fetch(`/api/engagements/${engagementId}/prior-period`),
         fetch(`/api/engagements/${engagementId}/trial-balance`),
-        fetch(`/api/engagements/${engagementId}/permanent-file?section=test_summary_results_signoffs`),
       ]);
       if (execRes.ok) {
         const data = await execRes.json();
@@ -294,16 +292,6 @@ export function AuditTestSummaryPanel({ engagementId, userRole }: Props) {
       if (tbRes.ok) {
         const data = await tbRes.json();
         setTbRows(Array.isArray(data?.rows) ? data.rows : []);
-      }
-      if (signoffRes.ok) {
-        const data = await signoffRes.json();
-        const so = (data?.data || {}) as any;
-        const reviewer = so.reviewer?.timestamp || so.reviewer?.at;
-        const ri = so.ri?.timestamp || so.ri?.at || so.partner?.timestamp || so.partner?.at;
-        setTabSignOffs({
-          reviewer: reviewer ? { name: so.reviewer?.name || so.reviewer?.userName || '', at: reviewer } : null,
-          ri: ri ? { name: so.ri?.name || so.partner?.name || '', at: ri } : null,
-        });
       }
       if (ppRes.ok) {
         const data = await ppRes.json();
@@ -479,25 +467,69 @@ export function AuditTestSummaryPanel({ engagementId, userRole }: Props) {
     });
   }, [rows, filters, sortKey, sortDir]);
 
-  // Per-category dot summary used in the section headers.
+  // Worst-state aggregator: red beats orange beats green beats pending.
+  // Used to roll up row-level dots into a section/tab aggregate.
+  function aggregateDot(dots: Dot[]): Dot {
+    if (dots.length === 0) return 'pending';
+    if (dots.some(d => d === 'red')) return 'red';
+    if (dots.some(d => d === 'orange')) return 'orange';
+    if (dots.every(d => d === 'green')) return 'green';
+    return 'pending';
+  }
+
+  // Per-category Progress + Result aggregates plus the count summary
+  // used in section headers. Each category gets:
+  //   - count: total rows in the section
+  //   - progress / result: worst-state aggregate of that dot type
+  //   - red / orange / green / pending: count buckets (worst-of the
+  //     two row dots) so the section header can show "5 red" etc.
   const categorySummary = useMemo(() => {
-    const init = (): { count: number; red: number; orange: number; green: number; pending: number } => ({ count: 0, red: 0, orange: 0, green: 0, pending: 0 });
+    const init = (): { count: number; progress: Dot; result: Dot; red: number; orange: number; green: number; pending: number } => ({ count: 0, progress: 'pending', result: 'pending', red: 0, orange: 0, green: 0, pending: 0 });
     const summary: Record<Category, ReturnType<typeof init>> = {
       execution: init(), pending_audit_plan: init(), planning: init(),
     };
+    const progressByCat: Record<Category, Dot[]> = { execution: [], pending_audit_plan: [], planning: [] };
+    const resultByCat: Record<Category, Dot[]> = { execution: [], pending_audit_plan: [], planning: [] };
     for (const r of filteredSorted) {
       const s = summary[r.category];
       s.count++;
-      // Section dot summary uses the WORSE of progress / result so the
-      // operator can see how much trouble each section has at a glance.
+      progressByCat[r.category].push(r.progress);
+      resultByCat[r.category].push(r.result);
+      // Count buckets use the WORSE of progress / result so the operator
+      // can see at a glance how much trouble each section has.
       const worst: Dot =
         r.progress === 'red' || r.result === 'red' ? 'red' :
         r.progress === 'orange' || r.result === 'orange' ? 'orange' :
         r.progress === 'green' ? 'green' : 'pending';
       s[worst]++;
     }
+    for (const cat of ['execution', 'pending_audit_plan', 'planning'] as Category[]) {
+      summary[cat].progress = aggregateDot(progressByCat[cat]);
+      summary[cat].result = aggregateDot(resultByCat[cat]);
+    }
     return summary;
   }, [filteredSorted]);
+
+  // Tab-level aggregate — Progress + Result rolled across every row in
+  // the panel. Drives the panel-header dots and the sub-tab pill dots
+  // in CompletionPanel (via the engagement:test-summary-aggregates
+  // window event below).
+  const overallAggregate = useMemo<{ progress: Dot; result: Dot }>(() => ({
+    progress: aggregateDot(rows.map(r => r.progress)),
+    result: aggregateDot(rows.map(r => r.result)),
+  }), [rows]);
+
+  // Broadcast the overall aggregate so CompletionPanel can sync the
+  // sub-tab pill dots without re-fetching the same data. Fires on
+  // every aggregate change, including the initial load.
+  useEffect(() => {
+    if (loading) return;
+    try {
+      window.dispatchEvent(new CustomEvent('engagement:test-summary-aggregates', {
+        detail: { engagementId, progress: overallAggregate.progress, result: overallAggregate.result },
+      }));
+    } catch {}
+  }, [overallAggregate, loading, engagementId]);
 
   function toggleSort(key: SortKey) {
     if (key === sortKey) {
@@ -534,37 +566,10 @@ export function AuditTestSummaryPanel({ engagementId, userRole }: Props) {
     } catch {}
   }
 
-  async function handleHeaderSignOff(role: 'reviewer' | 'ri') {
-    const isUnsign = role === 'ri' ? !!tabSignOffs.ri : !!tabSignOffs.reviewer;
-    // Stamp into a dedicated PF section so the EngagementTabs reader
-    // (which scans section data for `reviewer.at` / `ri.at`) can pick
-    // it up without a bespoke loader. Shape matches Walkthroughs and
-    // the other PF-section sign-off tabs.
-    const stamp = { at: new Date().toISOString(), name: '' };
-    const data = role === 'ri'
-      ? { ri: isUnsign ? null : stamp }
-      : { reviewer: isUnsign ? null : stamp };
-    try {
-      await fetch(`/api/engagements/${engagementId}/permanent-file`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ sectionKey: 'test_summary_results_signoffs', data }),
-      });
-      // Notify EngagementTabs so it refreshes the tab-bar dot without
-      // waiting for the next remount.
-      try { window.dispatchEvent(new Event('engagement:signoffs-changed')); } catch {}
-      await load();
-    } catch {}
-  }
-
   if (loading) return <div className="p-6 text-center text-xs text-slate-400 animate-pulse">Loading test summary…</div>;
   if (rows.length === 0) return <div className="p-6 text-center text-xs text-slate-400">No tests recorded yet.</div>;
 
   const haveThresholds = performanceMateriality > 0;
-
-  // Cascade: if RI signed, the Reviewer slot is implicitly signed too.
-  const reviewerEffective = !!(tabSignOffs.reviewer || tabSignOffs.ri);
-  const riEffective = !!tabSignOffs.ri;
 
   // Group filtered rows by category for rendering.
   const byCategory: Record<Category, SummaryRow[]> = {
@@ -609,32 +614,23 @@ export function AuditTestSummaryPanel({ engagementId, userRole }: Props) {
 
   return (
     <div className="space-y-3">
-      {/* ─── Header: title + 2 sign-off dots + materiality context ── */}
+      {/* ─── Header: title + 2 aggregate dots + materiality context ─
+          The two header dots are Progress + Result rolled across
+          every row in the panel (worst-state-wins). Sub-tab pill
+          dots in CompletionPanel sync with the same aggregate via
+          the engagement:test-summary-aggregates window event. */}
       <div className="flex items-center justify-between px-1">
         <div className="flex items-center gap-3">
           <h3 className="text-sm font-bold text-slate-700">Audit Test Summary Results</h3>
-          {/* Reviewer + RI dots — sync'd with the tab label dots
-              because both read from the same auditPermanentFile
-              section. RI sign cascades to Reviewer. */}
-          <div className="flex items-center gap-2 text-[10px]">
-            <button
-              onClick={() => userRole === 'RI' || userRole === 'Reviewer' ? handleHeaderSignOff('reviewer') : undefined}
-              disabled={!(userRole === 'RI' || userRole === 'Reviewer') || riEffective}
-              className="inline-flex items-center gap-1 disabled:cursor-not-allowed"
-              title={reviewerEffective ? `Reviewer signed${tabSignOffs.ri ? ' (via RI)' : ''} — click to unsign` : 'Sign tab as Reviewer'}
-            >
-              <span className={`w-2.5 h-2.5 rounded-full ${reviewerEffective ? 'bg-green-500' : 'bg-slate-300'}`} />
-              <span className="text-slate-500">Reviewer</span>
-            </button>
-            <button
-              onClick={() => userRole === 'RI' ? handleHeaderSignOff('ri') : undefined}
-              disabled={userRole !== 'RI'}
-              className="inline-flex items-center gap-1 disabled:cursor-not-allowed"
-              title={riEffective ? 'RI signed — click to unsign' : 'Sign tab as RI'}
-            >
-              <span className={`w-2.5 h-2.5 rounded-full ${riEffective ? 'bg-green-500' : 'bg-slate-300'}`} />
-              <span className="text-slate-500">RI</span>
-            </button>
+          <div className="flex items-center gap-3 text-[10px]">
+            <span className="inline-flex items-center gap-1" title={`Progress (overall) — ${PROGRESS_TITLE[overallAggregate.progress]}`}>
+              <span className={`w-2.5 h-2.5 rounded-full ${DOT_BG[overallAggregate.progress]}`} />
+              <span className="text-slate-500">Progress</span>
+            </span>
+            <span className="inline-flex items-center gap-1" title={`Result (overall) — ${RESULT_TITLE[overallAggregate.result]}`}>
+              <span className={`w-2.5 h-2.5 rounded-full ${DOT_BG[overallAggregate.result]}`} />
+              <span className="text-slate-500">Result</span>
+            </span>
           </div>
         </div>
         <div className="text-[10px] text-slate-400">
@@ -684,6 +680,19 @@ export function AuditTestSummaryPanel({ engagementId, userRole }: Props) {
                       <div className="flex items-center gap-3">
                         <span className={`text-[10px] px-1.5 py-0.5 rounded font-semibold uppercase tracking-wide border ${CATEGORY_PILL[cat]}`}>
                           {CATEGORY_LABEL[cat]}
+                        </span>
+                        {/* Section-level Progress + Result aggregates
+                            (worst-state-wins across the section's
+                            rows). Sit between the section pill and
+                            the count so the eye reads them as the
+                            section's summary state. */}
+                        <span className="inline-flex items-center gap-1 text-[10px] text-slate-600" title={`Progress (section) — ${PROGRESS_TITLE[s.progress]}`}>
+                          <span className={`w-2.5 h-2.5 rounded-full ${DOT_BG[s.progress]}`} />
+                          <span>Progress</span>
+                        </span>
+                        <span className="inline-flex items-center gap-1 text-[10px] text-slate-600" title={`Result (section) — ${RESULT_TITLE[s.result]}`}>
+                          <span className={`w-2.5 h-2.5 rounded-full ${DOT_BG[s.result]}`} />
+                          <span>Result</span>
                         </span>
                         <span className="text-[10px] font-medium text-slate-700">{s.count} item{s.count !== 1 ? 's' : ''}</span>
                         <div className="flex items-center gap-2 text-[10px] text-slate-600">

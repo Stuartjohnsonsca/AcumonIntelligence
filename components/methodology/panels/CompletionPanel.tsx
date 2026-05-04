@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect } from 'react';
 import { FileText, CheckSquare, ClipboardList, BarChart3, Eye, AlertTriangle, ChevronDown, ChevronUp, ChevronRight, CheckCircle2, Loader2, Sparkles, ShieldAlert, ShieldCheck, ExternalLink, Plus, Trash2 } from 'lucide-react';
 import { buildVisibilityChecker, type Trigger, type TriggerContext } from '@/lib/schedule-triggers';
 import { AuditTestSummaryPanel } from './AuditTestSummaryPanel';
@@ -92,21 +92,28 @@ const COMPLETION_TABS = [
   { key: 'error-schedule', label: 'Error Schedule', icon: AlertTriangle, templateType: null, scheduleKey: 'error_schedule' },
 ] as const;
 
-// Sub-tabs whose Reviewer/RI sign-off lives in its own AuditPermanentFile
-// section. The keys here are sub-tab keys; the values are the section key
-// the panel writes to. Only sub-tabs in this map get sign-off dots on
-// their pill in the sub-tab strip. Test Summary Results was added when
-// the panel got its 2-dot header (see AuditTestSummaryPanel.tsx). Other
-// sub-tabs can be wired in by adding an entry here once they expose a
-// PF-section sign-off in the same `{ reviewer, ri, partner }` shape.
-const SUBTAB_SIGNOFF_PF_SECTIONS: Partial<Record<CompletionTabKey, string>> = {
-  'test-summary': 'test_summary_results_signoffs',
+// Sub-tab pill dots aggregate the row-level Progress + Result dots
+// inside each Completion sub-tab — three tiers in total:
+//   1. Row-level dots inside the panel
+//   2. Section-level aggregates inside the panel
+//   3. Tab-pill aggregate (here) syncing with #2
+// Each panel that opts in dispatches a window CustomEvent on load /
+// state change with its overall { progress, result } aggregate; the
+// pill listens and renders the dots in lockstep. Today only Test
+// Summary Results emits — other sub-tabs can opt in by dispatching
+// their own `engagement:<event-name>` event with the same shape.
+const SUBTAB_AGGREGATE_EVENTS: Partial<Record<CompletionTabKey, string>> = {
+  'test-summary': 'engagement:test-summary-aggregates',
 };
 
-interface SubTabSignOffStatus {
-  reviewer: 'signed' | 'none';
-  ri: 'signed' | 'none';
-}
+type Dot = 'green' | 'orange' | 'red' | 'pending';
+const DOT_BG: Record<Dot, string> = {
+  green: 'bg-green-500',
+  orange: 'bg-orange-500',
+  red: 'bg-red-500',
+  pending: 'bg-slate-300',
+};
+interface SubTabAggregate { progress: Dot; result: Dot; }
 
 type CompletionTabKey = typeof COMPLETION_TABS[number]['key'];
 
@@ -125,41 +132,25 @@ export function CompletionPanel({
       : 'summary-memo'
   );
 
-  // Sub-tab Reviewer/RI sign-off dots. Each entry in
-  // SUBTAB_SIGNOFF_PF_SECTIONS gets a fetch + a small pair of dots
-  // rendered on its sub-tab pill below. Refresh fires on the
-  // `engagement:signoffs-changed` window event the panels dispatch
-  // when their dots toggle, so the strip stays in lockstep with the
-  // dots inside the active panel.
-  const [subTabSignoffs, setSubTabSignoffs] = useState<Partial<Record<CompletionTabKey, SubTabSignOffStatus>>>({});
-  const loadSubTabSignoffs = useCallback(async () => {
-    const out: Partial<Record<CompletionTabKey, SubTabSignOffStatus>> = {};
-    await Promise.all(
-      Object.entries(SUBTAB_SIGNOFF_PF_SECTIONS).map(async ([subTabKey, section]) => {
-        try {
-          const res = await fetch(`/api/engagements/${engagementId}/permanent-file?section=${encodeURIComponent(section)}`);
-          if (!res.ok) return;
-          const json = await res.json();
-          const so = (json?.data || {}) as { reviewer?: { at?: string; timestamp?: string }; partner?: { at?: string; timestamp?: string }; ri?: { at?: string; timestamp?: string } };
-          // Same shape + cascade rule as EngagementTabs.tsx — RI sign
-          // implies the Reviewer slot is signed too.
-          const reviewerTs = so.reviewer?.at || so.reviewer?.timestamp || so.partner?.at || so.partner?.timestamp || so.ri?.at || so.ri?.timestamp;
-          const riTs = so.ri?.at || so.ri?.timestamp || so.partner?.at || so.partner?.timestamp;
-          out[subTabKey as CompletionTabKey] = {
-            reviewer: reviewerTs ? 'signed' : 'none',
-            ri: riTs ? 'signed' : 'none',
-          };
-        } catch { /* ignore */ }
-      }),
-    );
-    setSubTabSignoffs(out);
-  }, [engagementId]);
-  useEffect(() => { void loadSubTabSignoffs(); }, [loadSubTabSignoffs]);
+  // Sub-tab pill Progress + Result aggregates — fed by CustomEvents
+  // each opted-in panel dispatches on data change. We match by
+  // `detail.engagementId` to ignore aggregates from a stale tab if
+  // the user has multiple engagements open.
+  const [subTabAggregates, setSubTabAggregates] = useState<Partial<Record<CompletionTabKey, SubTabAggregate>>>({});
   useEffect(() => {
-    const handler = () => { void loadSubTabSignoffs(); };
-    window.addEventListener('engagement:signoffs-changed', handler);
-    return () => window.removeEventListener('engagement:signoffs-changed', handler);
-  }, [loadSubTabSignoffs]);
+    const handlers: Array<{ event: string; fn: (e: Event) => void }> = [];
+    for (const [subTabKey, eventName] of Object.entries(SUBTAB_AGGREGATE_EVENTS)) {
+      const fn = (e: Event) => {
+        const detail = (e as CustomEvent).detail as { engagementId?: string; progress?: Dot; result?: Dot } | undefined;
+        if (!detail || detail.engagementId !== engagementId) return;
+        if (!detail.progress || !detail.result) return;
+        setSubTabAggregates(prev => ({ ...prev, [subTabKey as CompletionTabKey]: { progress: detail.progress!, result: detail.result! } }));
+      };
+      window.addEventListener(eventName, fn);
+      handlers.push({ event: eventName, fn });
+    }
+    return () => { for (const { event, fn } of handlers) window.removeEventListener(event, fn); };
+  }, [engagementId]);
 
   // Notify the parent whenever the tab changes so EngagementTabs can
   // remember the user's location for the "Back to Completion: X"
@@ -213,22 +204,21 @@ export function CompletionPanel({
         {orderedCompletionTabs.map(tab => {
           const Icon = tab.icon;
           const isActive = activeTab === tab.key;
-          // Sign-off dots only render for sub-tabs declared in
-          // SUBTAB_SIGNOFF_PF_SECTIONS. The dots reflect the same
-          // PF-section the panel header writes to, so toggling a dot
-          // inside the panel updates this strip via the
-          // engagement:signoffs-changed event.
-          const so = subTabSignoffs[tab.key as CompletionTabKey];
+          // Pill aggregate dots — Progress + Result rolled across
+          // every row in the sub-tab. Only renders for sub-tabs
+          // listed in SUBTAB_AGGREGATE_EVENTS that have actually
+          // dispatched their first aggregate event.
+          const agg = subTabAggregates[tab.key as CompletionTabKey];
           return (
             <button key={tab.key} onClick={() => setActiveTab(tab.key)}
               className={`flex items-center gap-1 px-2.5 py-1.5 text-[10px] font-medium rounded-md whitespace-nowrap transition-colors ${
                 isActive ? 'bg-blue-600 text-white' : 'bg-white text-slate-600 border border-slate-200 hover:bg-slate-100'
               }`}>
               <Icon className="h-3 w-3" /> {tab.label}
-              {so && (
-                <span className="inline-flex items-center gap-0.5 ml-1" title={`Reviewer ${so.reviewer === 'signed' ? 'signed' : 'unsigned'} · RI ${so.ri === 'signed' ? 'signed' : 'unsigned'}`}>
-                  <span className={`w-1.5 h-1.5 rounded-full ${so.reviewer === 'signed' ? 'bg-green-500' : (isActive ? 'bg-blue-300' : 'bg-slate-300')}`} />
-                  <span className={`w-1.5 h-1.5 rounded-full ${so.ri === 'signed' ? 'bg-green-500' : (isActive ? 'bg-blue-300' : 'bg-slate-300')}`} />
+              {agg && (
+                <span className="inline-flex items-center gap-0.5 ml-1" title={`Progress ${agg.progress} · Result ${agg.result}`}>
+                  <span className={`w-1.5 h-1.5 rounded-full ${DOT_BG[agg.progress]}`} />
+                  <span className={`w-1.5 h-1.5 rounded-full ${DOT_BG[agg.result]}`} />
                 </span>
               )}
             </button>
