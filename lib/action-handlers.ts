@@ -66,6 +66,7 @@ const HANDLERS: Record<string, ActionHandler> = {
   promptUserForValue: handlePromptUserForValue,
   cutOffDateRange: handleCutOffDateRange,
   requestTeamEvidence: handleRequestTeamEvidence,
+  recalculateBalance: handleRecalculateBalance,
   requestListing: handleRequestListing,
   verifyEvidence: handleVerifyEvidence,
   teamReview: handleTeamReview,
@@ -1486,6 +1487,286 @@ async function handleRequestTeamEvidence(ctx: ActionHandlerContext): Promise<Act
     pauseReason: 'awaiting_team',
     pauseRefId: item.id,
   };
+}
+
+/**
+ * Recalculate Balance — generic recalculation wrapper.
+ *
+ * Today's coverage: depreciation (straight-line, reducing-balance,
+ * including AUTO mode which picks the policy per row from each row's
+ * `depreciation_method` column). Other policy_type values land in
+ * the `unsupported` branch with a clear note rather than silently
+ * pretending to recalculate.
+ *
+ * Auto mode is the only sensible choice for a Fixed Asset Register
+ * that mixes policies (motor vehicles reducing-balance + plant
+ * straight-line + leasehold improvements over the lease, etc.). The
+ * handler reads `depreciation_method` per row, picks the matching
+ * formula, and computes the period charge — pro-rated by acquisition
+ * date for additions and disposal date for disposals (actual months,
+ * no half-year convention).
+ *
+ * Column-name normalisation: tolerates several common spellings for
+ * each input field (cost / gross_cost / purchase_price; useful_life
+ * / useful_life_years; accumulated_depreciation_bf vs the slashed /
+ * spaced variants; etc.) so the same handler works against FARs from
+ * different accounting systems.
+ */
+async function handleRecalculateBalance(ctx: ActionHandlerContext): Promise<ActionHandlerResult> {
+  const { inputs } = ctx;
+  const policyType = ((inputs.policy_type as string) || 'auto').toLowerCase();
+  const tolerance = Math.max(0, Number(inputs.tolerance_gbp ?? 1));
+  const bookedColumn = (inputs.booked_charge_column as string) || 'charge_for_period';
+  const periodEnd = inputs.period_end ? toUtcDate(inputs.period_end) : null;
+  const periodStart = inputs.period_start
+    ? toUtcDate(inputs.period_start)
+    : (periodEnd ? new Date(Date.UTC(periodEnd.getUTCFullYear() - 1, periodEnd.getUTCMonth(), periodEnd.getUTCDate() + 1)) : null);
+  const rows = Array.isArray(inputs.inputs) ? inputs.inputs as Array<Record<string, any>> : [];
+
+  const recalc: Array<Record<string, any>> = [];
+  let totalCalc = 0;
+  let totalBooked = 0;
+  let red = 0;
+  let green = 0;
+  let skipped = 0;
+
+  for (const row of rows) {
+    const result = depreciationForRow(row, policyType, periodStart, periodEnd, bookedColumn);
+    if (result.calculated == null) {
+      skipped++;
+    } else {
+      const variance = result.calculated - result.booked;
+      const within = Math.abs(variance) <= tolerance;
+      if (within) green++; else red++;
+      totalCalc += result.calculated;
+      totalBooked += result.booked;
+      recalc.push({
+        ...row,
+        policy_applied: result.policyApplied,
+        calculated: round2(result.calculated),
+        booked: round2(result.booked),
+        variance: round2(variance),
+        pass_fail: within ? 'pass' : 'fail',
+        notes: result.notes,
+      });
+      continue;
+    }
+    recalc.push({
+      ...row,
+      policy_applied: result.policyApplied,
+      calculated: null,
+      booked: round2(result.booked),
+      variance: null,
+      pass_fail: 'review',
+      notes: result.notes,
+    });
+  }
+
+  const findings = recalc.filter(r => r.pass_fail === 'fail');
+  const overall: 'pass' | 'fail' = red === 0 ? 'pass' : 'fail';
+
+  return {
+    action: 'continue',
+    outputs: {
+      recalc_table: recalc,
+      data_table: recalc,
+      total_calculated: round2(totalCalc),
+      total_booked: round2(totalBooked),
+      total_variance: round2(totalCalc - totalBooked),
+      red_count: red,
+      green_count: green,
+      unrecalculated_count: skipped,
+      findings,
+      pass_fail: overall,
+    },
+  };
+}
+
+// ── Depreciation maths ────────────────────────────────────────────
+
+interface DepRowResult {
+  policyApplied: string;
+  calculated: number | null; // null when can't recalc
+  booked: number;
+  notes: string;
+}
+
+function depreciationForRow(
+  row: Record<string, any>,
+  defaultPolicy: string,
+  periodStart: Date | null,
+  periodEnd: Date | null,
+  bookedColumn: string,
+): DepRowResult {
+  const cost = num(pick(row, ['cost', 'gross_cost', 'purchase_price', 'asset_cost']));
+  const salvage = num(pick(row, ['salvage_value', 'residual_value']));
+  const usefulLife = num(pick(row, ['useful_life', 'useful_life_years', 'life_years']));
+  const usefulLifeMonths = num(pick(row, ['useful_life_months']));
+  const acqDate = toUtcDate(pick(row, ['acquisition_date', 'purchase_date', 'date_acquired', 'in_use_from']));
+  const disposalDate = toUtcDate(pick(row, ['disposal_date', 'date_disposed']));
+  const accumBf = num(pick(row, [
+    'accumulated_depreciation_bf', 'accumulated_depreciation_b_f', 'accumulated_depreciation_b/f',
+    'accum_dep_bf', 'opening_accumulated_depreciation', 'acc_dep_bf',
+  ]));
+  const declaredRate = num(pick(row, ['depreciation_rate', 'rate', 'rb_rate']));
+  const booked = num(row[bookedColumn] ?? pick(row, ['charge_for_period', 'depreciation_charge', 'period_charge', 'charge', 'dep_charge']));
+  const declaredMethod = String(pick(row, ['depreciation_method', 'method', 'dep_method']) ?? '').toLowerCase();
+
+  // Resolve the policy for THIS row.
+  let policy: 'straight_line_depreciation' | 'reducing_balance_depreciation' | 'unsupported' = 'unsupported';
+  if (defaultPolicy === 'auto') {
+    if (declaredMethod.includes('reducing') || declaredMethod.includes('declining') || declaredMethod === 'rb') policy = 'reducing_balance_depreciation';
+    else if (declaredMethod.includes('straight') || declaredMethod.includes('linear') || declaredMethod === 'sl') policy = 'straight_line_depreciation';
+    else policy = 'unsupported';
+  } else if (defaultPolicy === 'straight_line_depreciation' || defaultPolicy === 'reducing_balance_depreciation') {
+    policy = defaultPolicy;
+  }
+
+  if (policy === 'unsupported') {
+    return {
+      policyApplied: defaultPolicy === 'auto' ? `auto:no-method` : defaultPolicy,
+      calculated: null,
+      booked,
+      notes: defaultPolicy === 'auto'
+        ? `Could not detect policy from depreciation_method="${declaredMethod || '(blank)'}". Add a depreciation_method column with "straight_line" or "reducing_balance" per row, or pin policy_type at the test level.`
+        : `Recalc for policy_type="${defaultPolicy}" not supported by this handler yet — supported: straight_line_depreciation, reducing_balance_depreciation, auto.`,
+    };
+  }
+
+  // Period months — defaults to 12 when period bounds aren't known.
+  // Pro-rate from acquisition date / to disposal date when within
+  // the engagement period. Uses calendar-month fractions so a 15th-
+  // of-the-month addition gets ~½ a month, matching most clients'
+  // monthly-pro-rata convention without going as far as daily
+  // proration.
+  let inPeriodMonths = 12;
+  let prorationNote = '';
+  if (periodStart && periodEnd) {
+    const span = monthsFraction(periodStart, periodEnd);
+    inPeriodMonths = span;
+    let effStart = periodStart;
+    let effEnd = periodEnd;
+    if (acqDate && acqDate > periodStart) {
+      effStart = acqDate;
+      prorationNote += `pro-rata from ${fmtDate(acqDate)}; `;
+    }
+    if (disposalDate && disposalDate < periodEnd) {
+      effEnd = disposalDate;
+      prorationNote += `pro-rata to ${fmtDate(disposalDate)}; `;
+    }
+    if (effStart >= effEnd) inPeriodMonths = 0;
+    else inPeriodMonths = Math.min(span, monthsFraction(effStart, effEnd));
+  }
+
+  let calculated = 0;
+  let policyApplied = policy;
+  let notes = prorationNote;
+
+  if (policy === 'straight_line_depreciation') {
+    let life = usefulLife;
+    if (!life && usefulLifeMonths) life = usefulLifeMonths / 12;
+    if (life <= 0) {
+      return {
+        policyApplied: 'straight_line_depreciation',
+        calculated: null,
+        booked,
+        notes: notes + 'Missing useful_life — cannot recalculate straight-line.',
+      };
+    }
+    if (cost <= 0) {
+      return {
+        policyApplied: 'straight_line_depreciation',
+        calculated: null,
+        booked,
+        notes: notes + 'Missing cost — cannot recalculate.',
+      };
+    }
+    const annualCharge = (cost - salvage) / life;
+    calculated = annualCharge * (inPeriodMonths / 12);
+  } else if (policy === 'reducing_balance_depreciation') {
+    let rate = declaredRate;
+    // If no explicit rate but useful_life supplied, derive a
+    // reasonable rate using 1/life * 200% (declining-balance double
+    // declining); flagged in notes so the auditor knows the
+    // assumption applied.
+    if (rate <= 0 && usefulLife > 0) {
+      rate = (200 / usefulLife);
+      notes += `derived rate ${rate.toFixed(2)}% from 200%/useful_life; `;
+    }
+    if (rate <= 0) {
+      return {
+        policyApplied: 'reducing_balance_depreciation',
+        calculated: null,
+        booked,
+        notes: notes + 'Missing depreciation_rate (and useful_life) — cannot recalculate reducing-balance.',
+      };
+    }
+    if (cost <= 0) {
+      return {
+        policyApplied: 'reducing_balance_depreciation',
+        calculated: null,
+        booked,
+        notes: notes + 'Missing cost — cannot recalculate.',
+      };
+    }
+    const nbv = cost - accumBf;
+    const annualCharge = nbv * (rate / 100);
+    calculated = annualCharge * (inPeriodMonths / 12);
+  }
+
+  return { policyApplied, calculated, booked, notes: notes.trim() };
+}
+
+// ── Small helpers ─────────────────────────────────────────────────
+
+function pick(row: Record<string, any>, keys: string[]): any {
+  // Case-insensitive lookup; first non-null hit wins.
+  const lcMap = new Map<string, string>();
+  for (const k of Object.keys(row)) lcMap.set(k.toLowerCase(), k);
+  for (const want of keys) {
+    const real = lcMap.get(want.toLowerCase());
+    if (real == null) continue;
+    const v = row[real];
+    if (v !== null && v !== undefined && v !== '') return v;
+  }
+  return null;
+}
+
+function num(v: unknown): number {
+  if (v == null) return 0;
+  if (typeof v === 'number') return Number.isFinite(v) ? v : 0;
+  const s = String(v).replace(/[,£$€\s]/g, '').replace(/\((.+)\)/, '-$1');
+  const n = parseFloat(s);
+  return Number.isFinite(n) ? n : 0;
+}
+
+function toUtcDate(v: unknown): Date | null {
+  if (!v) return null;
+  if (v instanceof Date) return Number.isNaN(v.getTime()) ? null : v;
+  const d = new Date(String(v));
+  return Number.isNaN(d.getTime()) ? null : d;
+}
+
+function fmtDate(d: Date): string {
+  return d.toISOString().slice(0, 10);
+}
+
+// Months between two dates as a decimal — counts whole months between
+// the day-of-month equivalents and adds a partial month for any extra
+// days. Good enough for monthly-pro-rata depreciation; doesn't model
+// half-year or daily conventions.
+function monthsFraction(a: Date, b: Date): number {
+  if (a > b) return 0;
+  const wholeMonths = (b.getUTCFullYear() - a.getUTCFullYear()) * 12 + (b.getUTCMonth() - a.getUTCMonth());
+  const dayDiff = b.getUTCDate() - a.getUTCDate();
+  // Days-in-month basis varies; using 30 keeps it predictable and
+  // matches the convention most accounting systems use for partial
+  // months.
+  return wholeMonths + dayDiff / 30;
+}
+
+function round2(n: number): number {
+  return Math.round(n * 100) / 100;
 }
 
 async function handleRequestListing(ctx: ActionHandlerContext): Promise<ActionHandlerResult> {
