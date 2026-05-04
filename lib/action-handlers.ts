@@ -432,10 +432,35 @@ async function handleSelectTbAccountCodes(ctx: ActionHandlerContext): Promise<Ac
     .map(s => s.trim().toLowerCase())
     .filter(Boolean);
   const codePattern = (inputs.code_pattern as string | undefined) || null;
-  const descriptionContains = ((inputs.description_contains as string | undefined) || '').trim().toLowerCase();
+  const descriptionContains = ((inputs.description_contains as string | undefined) || '')
+    .split(',')
+    .map(s => s.trim().toLowerCase())
+    .filter(Boolean);
   const balanceSign = (inputs.balance_sign as string) || 'any';
   const minAbs = Number(inputs.min_abs_balance_gbp) || 0;
+  const maxAbsRaw = inputs.max_abs_balance_gbp;
+  const maxAbs = (maxAbsRaw === null || maxAbsRaw === undefined || maxAbsRaw === '') ? null : Number(maxAbsRaw);
   const isAccrualOnly = !!inputs.is_accrual_only;
+
+  // Exclusion filters — applied AFTER the include filters above. An
+  // exclude can never widen the population; it only carves out rows
+  // that already satisfied every include criterion.
+  const excludeFsLineNames = new Set(
+    ((inputs.exclude_fs_lines as string | undefined) || '')
+      .split(',')
+      .map(s => s.trim().toLowerCase())
+      .filter(Boolean),
+  );
+  const excludeFsLevelTokens = ((inputs.exclude_fs_level as string | undefined) || '')
+    .split(',')
+    .map(s => s.trim().toLowerCase())
+    .filter(Boolean);
+  const excludeCodePattern = (inputs.exclude_code_pattern as string | undefined) || null;
+  const descriptionExcludes = ((inputs.description_excludes as string | undefined) || '')
+    .split(',')
+    .map(s => s.trim().toLowerCase())
+    .filter(Boolean);
+  const excludeAccruals = !!inputs.exclude_accruals;
 
   // Resolve the FS-line ID to filter on. `this_test` uses the test's
   // configured FS line (passed through ctx.config); `specific` looks
@@ -469,12 +494,18 @@ async function handleSelectTbAccountCodes(ctx: ActionHandlerContext): Promise<Ac
   });
 
   const codeMatcher = buildCodePatternPredicate(codePattern);
+  const codeExcluder = buildCodePatternPredicate(excludeCodePattern);
+  const hasExcludeCodePattern = !!(excludeCodePattern && excludeCodePattern.trim());
   const wantsPL = statement === 'profit_loss';
   const wantsBS = statement === 'balance_sheet';
 
   const matched = rows.filter(r => {
+    // ─── Include filters ─────────────────────────────────────────────
     if (!codeMatcher(r.accountCode)) return false;
-    if (descriptionContains && !(r.description || '').toLowerCase().includes(descriptionContains)) return false;
+    if (descriptionContains.length > 0) {
+      const desc = (r.description || '').toLowerCase();
+      if (!descriptionContains.some(t => desc.includes(t))) return false;
+    }
     if (isAccrualOnly && !r.isAccrualAccount) return false;
     if (wantsPL && !((r.fsStatement || '').toLowerCase().includes('profit') || (r.fsStatement || '').toLowerCase().includes('p&l') || (r.fsStatement || '').toLowerCase().includes('income'))) return false;
     if (wantsBS && !((r.fsStatement || '').toLowerCase().includes('balance'))) return false;
@@ -486,6 +517,24 @@ async function handleSelectTbAccountCodes(ctx: ActionHandlerContext): Promise<Ac
     if (balanceSign === 'dr' && !(cy > 0)) return false;
     if (balanceSign === 'cr' && !(cy < 0)) return false;
     if (minAbs > 0 && Math.abs(cy) < minAbs) return false;
+    if (maxAbs !== null && Number.isFinite(maxAbs) && Math.abs(cy) > maxAbs) return false;
+
+    // ─── Exclude filters ─────────────────────────────────────────────
+    if (excludeAccruals && r.isAccrualAccount) return false;
+    if (hasExcludeCodePattern && codeExcluder(r.accountCode)) return false;
+    if (descriptionExcludes.length > 0) {
+      const desc = (r.description || '').toLowerCase();
+      if (descriptionExcludes.some(t => desc.includes(t))) return false;
+    }
+    if (excludeFsLevelTokens.length > 0) {
+      const lvl = (r.fsLevel || '').toLowerCase();
+      if (excludeFsLevelTokens.some(t => lvl.includes(t))) return false;
+    }
+    if (excludeFsLineNames.size > 0) {
+      const name = (r.canonicalFsLine?.name || '').toLowerCase();
+      if (name && excludeFsLineNames.has(name)) return false;
+    }
+
     return true;
   });
 
