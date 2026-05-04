@@ -941,12 +941,13 @@ export function TestExecutionPanel({ testId, testDescription, testType, engageme
                 {pauseReason === 'awaiting_team' && pausedStep && (
                   <TeamEvidencePanel
                     step={pausedStep}
-                    onSubmit={async ({ responseText, files }) => {
+                    onSubmit={async ({ responseText, verificationDate, files }) => {
                       const itemId = pausedStep.output?.outstandingItemId as string | undefined;
                       if (!itemId) return;
                       const fd = new FormData();
                       fd.append('itemId', itemId);
                       fd.append('responseText', responseText);
+                      if (verificationDate) fd.append('verificationDate', verificationDate);
                       for (const f of files) fd.append('file', f, f.name);
                       await fetch(`/api/engagements/${engagementId}/outstanding`, { method: 'PUT', body: fd });
                       setExecutionStatus('running');
@@ -1600,11 +1601,14 @@ function UserInputPromptPanel(props: {
 interface PromptFieldDef {
   code: string;
   label: string;
-  value_type?: 'number' | 'percentage' | 'currency' | 'text' | 'date';
+  value_type?: 'number' | 'percentage' | 'currency' | 'text' | 'date' | 'select';
   default_value?: number | string | null;
   min_value?: number;
   max_value?: number;
   description?: string;
+  // Required when value_type === 'select'. Each entry renders as an
+  // <option>; the chosen `value` is what gets emitted.
+  options?: Array<{ value: string; label: string }>;
 }
 function MultiFieldPromptPanel(props: {
   step: { output?: any };
@@ -1617,7 +1621,11 @@ function MultiFieldPromptPanel(props: {
 
   const [values, setValues] = useState<Record<string, string>>(() => {
     const init: Record<string, string> = {};
-    for (const p of prompts) init[p.code] = p.default_value != null ? String(p.default_value) : '';
+    for (const p of prompts) {
+      if (p.default_value != null) init[p.code] = String(p.default_value);
+      else if (p.value_type === 'select' && p.options && p.options.length > 0) init[p.code] = p.options[0].value;
+      else init[p.code] = '';
+    }
     return init;
   });
   const [submitting, setSubmitting] = useState(false);
@@ -1663,22 +1671,35 @@ function MultiFieldPromptPanel(props: {
         {prompts.map(p => {
           const numeric = isNumericType(p.value_type);
           const inputType = p.value_type === 'date' ? 'date' : numeric ? 'number' : 'text';
+          const isSelect = p.value_type === 'select';
           return (
             <div key={p.code}>
               <label className="text-xs font-medium text-slate-700 block mb-1">{p.label}</label>
               {p.description && <p className="text-[11px] text-slate-500 mb-1.5">{p.description}</p>}
-              <div className="flex items-center gap-1.5">
-                {p.value_type === 'currency' && <span className="text-xs text-slate-500">£</span>}
-                <input
-                  type={inputType}
+              {isSelect ? (
+                <select
                   value={values[p.code] ?? ''}
                   onChange={e => setValues(prev => ({ ...prev, [p.code]: e.target.value }))}
-                  placeholder={p.default_value != null ? String(p.default_value) : ''}
-                  className="flex-1 px-2 py-1.5 text-sm border border-slate-200 rounded bg-white focus:outline-none focus:border-indigo-400"
-                  step={numeric ? 'any' : undefined}
-                />
-                {p.value_type === 'percentage' && <span className="text-xs text-slate-500">%</span>}
-              </div>
+                  className="w-full px-2 py-1.5 text-sm border border-slate-200 rounded bg-white focus:outline-none focus:border-indigo-400"
+                >
+                  {(p.options || []).map(o => (
+                    <option key={o.value} value={o.value}>{o.label}</option>
+                  ))}
+                </select>
+              ) : (
+                <div className="flex items-center gap-1.5">
+                  {p.value_type === 'currency' && <span className="text-xs text-slate-500">£</span>}
+                  <input
+                    type={inputType}
+                    value={values[p.code] ?? ''}
+                    onChange={e => setValues(prev => ({ ...prev, [p.code]: e.target.value }))}
+                    placeholder={p.default_value != null ? String(p.default_value) : ''}
+                    className="flex-1 px-2 py-1.5 text-sm border border-slate-200 rounded bg-white focus:outline-none focus:border-indigo-400"
+                    step={numeric ? 'any' : undefined}
+                  />
+                  {p.value_type === 'percentage' && <span className="text-xs text-slate-500">%</span>}
+                </div>
+              )}
             </div>
           );
         })}
@@ -1705,15 +1726,18 @@ function MultiFieldPromptPanel(props: {
 // Outstanding PUT endpoint which uploads + resumes the pipeline.
 function TeamEvidencePanel(props: {
   step: { output?: any };
-  onSubmit: (payload: { responseText: string; files: File[] }) => Promise<void>;
+  onSubmit: (payload: { responseText: string; verificationDate: string | null; files: File[] }) => Promise<void>;
 }) {
   const cfg = props.step.output || {};
   const message = (cfg.message_to_team as string) || 'Please provide the requested evidence.';
   const evidenceLabel = (cfg.evidence_label as string) || '';
   const assignedTo = (cfg.assigned_to as string) || 'team';
   const sampleItems = Array.isArray(cfg.sample_items) ? cfg.sample_items : [];
+  const captureDate = cfg.capture_date !== false;
 
+  const today = new Date().toISOString().slice(0, 10);
   const [responseText, setResponseText] = useState('');
+  const [verificationDate, setVerificationDate] = useState<string>(captureDate ? today : '');
   const [files, setFiles] = useState<File[]>([]);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -1735,9 +1759,13 @@ function TeamEvidencePanel(props: {
       setError('Add a comment, an attached file, or both before marking complete.');
       return;
     }
+    if (captureDate && !verificationDate) {
+      setError('Enter the date you performed the verification.');
+      return;
+    }
     setError(null);
     setSubmitting(true);
-    try { await props.onSubmit({ responseText: responseText.trim(), files }); }
+    try { await props.onSubmit({ responseText: responseText.trim(), verificationDate: captureDate ? verificationDate : null, files }); }
     finally { setSubmitting(false); }
   }
 
@@ -1786,6 +1814,19 @@ function TeamEvidencePanel(props: {
             className="w-full px-2 py-1.5 text-sm border border-slate-200 rounded bg-white focus:outline-none focus:border-sky-400"
           />
         </div>
+
+        {captureDate && (
+          <div>
+            <label className="text-xs font-medium text-slate-700 block mb-1">Verification date <span className="text-red-500">*</span></label>
+            <input
+              type="date"
+              value={verificationDate}
+              onChange={e => setVerificationDate(e.target.value)}
+              className="px-2 py-1.5 text-sm border border-slate-200 rounded bg-white focus:outline-none focus:border-sky-400"
+            />
+            <p className="text-[10px] text-slate-500 mt-0.5">The date you performed the verification — defaults to today.</p>
+          </div>
+        )}
 
         <div>
           <label className="text-xs font-medium text-slate-700 block mb-1">Attach evidence (optional)</label>

@@ -1077,12 +1077,14 @@ export const SYSTEM_ACTIONS: ActionDefinitionData[] = [
     isSystem: true,
     inputSchema: [
       { code: 'message_to_team', label: 'Message to Team', type: 'textarea', required: true, source: 'user', group: 'Request', description: 'Instructions shown on the team task. Supports {{$prev.field}} / {{$step.N.field}} / {{$ctx.field}} placeholders — e.g. "Please attend at the warehouse on {{$ctx.engagement.periodEnd}} and confirm the existence of the assets in the attached register."' },
-      { code: 'assigned_to', label: 'Assign To', type: 'select', required: true, source: 'user', defaultValue: 'preparer', group: 'Request', options: [
+      { code: 'assigned_to', label: 'Assign To', type: 'select', required: true, source: 'user', defaultValue: 'prompt', group: 'Request', description: 'Pick a fixed role at design time, or leave on "Ask at runtime" to pop up a list of the engagement\'s actual team members so the auditor can choose a specific person each run.', options: [
+        { value: 'prompt',   label: 'Ask at runtime (popup with engagement team members)' },
         { value: 'preparer', label: 'Preparer' },
         { value: 'reviewer', label: 'Reviewer' },
         { value: 'partner',  label: 'Engagement Partner / RI' },
       ]},
       { code: 'evidence_label', label: 'Evidence Label (optional)', type: 'text', required: false, source: 'user', group: 'Request', description: 'A short noun phrase describing the evidence requested — e.g. "Site visit photos", "Signed verification note", "Cash count sheet". Surfaces on the team task header.' },
+      { code: 'capture_date', label: 'Capture Verification Date', type: 'boolean', required: false, source: 'user', defaultValue: true, group: 'Request', description: 'When on, the response panel includes a date field the team member fills in (defaulting to today). The chosen date is emitted on the output as `verification_date` so downstream actions can bind to it (e.g. Physical Verification\'s count_date).' },
       { code: 'sample_items', label: 'Context Items', type: 'json_table', required: false, source: 'auto', autoMapFrom: '$prev.sample_items', group: 'Context', description: 'Auto-bound from the upstream Select Sample step. Surfaced to the team alongside the message so they know which items to verify.' },
       { code: 'priority', label: 'Priority', type: 'select', required: false, source: 'user', defaultValue: 'normal', group: 'Request', options: [
         { value: 'normal', label: 'Normal' },
@@ -1093,6 +1095,8 @@ export const SYSTEM_ACTIONS: ActionDefinitionData[] = [
     outputSchema: [
       { code: 'documents', label: 'Uploaded Files', type: 'file_array', description: 'Files the team uploaded when marking the task complete. Empty array when the team responded with text only. Bind downstream to `$prev.documents`.' },
       { code: 'response_text', label: 'Team Response', type: 'text', description: 'Free-text comment the team typed alongside (or instead of) any uploaded files. Bind downstream to `$prev.response_text`.' },
+      { code: 'verification_date', label: 'Verification Date', type: 'text', description: 'Date the team performed the verification (ISO YYYY-MM-DD). Empty string when capture_date was off. Bind downstream to `$prev.verification_date` — e.g. as Physical Verification\'s count_date.' },
+      { code: 'assigned_to_resolved', label: 'Assigned To (resolved)', type: 'text', description: 'The actual person or role the task was assigned to once any runtime prompt resolved.' },
       { code: 'outstanding_id', label: 'Outstanding Item ID', type: 'text' },
       { code: 'completed_by', label: 'Completed By', type: 'text' },
       { code: 'completed_at', label: 'Completed At', type: 'text' },
@@ -1150,7 +1154,9 @@ export const SYSTEM_ACTIONS: ActionDefinitionData[] = [
         { value: 'cash', label: 'Cash on hand' },
       ]},
       { code: 'sample_items', label: 'Register Sample', type: 'json_table', required: true, source: 'auto', autoMapFrom: '$prev.sample_items', group: 'Scope' },
-      { code: 'count_date', label: 'Count / Inspection Date', type: 'date', required: true, source: 'user', group: 'Scope' },
+      { code: 'count_date', label: 'Count / Inspection Date', type: 'date', required: false, source: 'auto', autoMapFrom: '$prev.verification_date', group: 'Scope', description: 'The date the verification was actually performed. Auto-binds to `$prev.verification_date` so when an upstream Request Evidence from Team step captured the date, it flows through here. Manual-input to override (e.g. when the team\'s response_text already contains the date narrative).' },
+      { code: 'evidence_documents', label: 'Evidence Documents', type: 'file', required: false, source: 'auto', autoMapFrom: '$prev.documents', group: 'Scope', description: 'Files the team uploaded with their verification — photos, signed sheets, count notes. Auto-binds to `$prev.documents` from a Request Evidence from Team step.' },
+      { code: 'response_text', label: 'Verifier Notes', type: 'text', required: false, source: 'auto', autoMapFrom: '$prev.response_text', group: 'Scope', description: 'Free-text comment from the team member who performed the verification. Auto-binds to `$prev.response_text`.' },
       { code: 'locations', label: 'Locations', type: 'text', required: false, source: 'user', group: 'Scope', description: 'Comma-separated sites to attend.' },
     ],
     outputSchema: [

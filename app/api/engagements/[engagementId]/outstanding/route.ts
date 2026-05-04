@@ -55,6 +55,7 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ enga
     itemId = (form.get('itemId') as string) || null;
     if (!itemId) return NextResponse.json({ error: 'itemId required' }, { status: 400 });
     const responseText = (form.get('responseText') as string) || '';
+    const verificationDate = (form.get('verificationDate') as string) || '';
     const files = form.getAll('file').filter((f): f is File => f instanceof File);
 
     const documents: Array<{ name: string; mimeType: string; size: number; storagePath: string }> = [];
@@ -74,6 +75,7 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ enga
       completed: true,
       documents,
       response_text: responseText,
+      verification_date: verificationDate,
       completed_by: session.user.name || session.user.email || 'Team member',
       completed_at: new Date().toISOString(),
     };

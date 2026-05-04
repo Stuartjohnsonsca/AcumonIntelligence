@@ -1349,93 +1349,142 @@ async function handleCutOffDateRange(ctx: ActionHandlerContext): Promise<ActionH
 }
 
 /**
- * Request Evidence from Team — two-phase action.
+ * Request Evidence from Team — three-phase action.
  *
- *   Phase 1 (new): create an OutstandingItem assigned to the chosen
- *   team role with the message + sample-item context. Pause with
- *   pauseReason 'awaiting_team' so the runtime UI can render the
- *   team-evidence panel where the team member types a comment
- *   and/or uploads files and clicks Mark Complete.
+ *   Phase 1 (assignee prompt — only when assigned_to == 'prompt'):
+ *   pause with a multi-field popup that lists the engagement's
+ *   actual team members so the auditor can pick a specific person.
+ *   Skipped when the editor pinned a fixed role.
  *
- *   Phase 2 (resumed): the resume payload merges the team's
- *   responseData into pipelineState[step]. We read documents and
- *   response_text out of it, mark the OutstandingItem complete (the
- *   /outstanding PUT endpoint already does this; here we just make
- *   sure the values are normalised), and return clean outputs that
- *   downstream `$prev.documents` / `$prev.response_text` can bind to.
+ *   Phase 2 (create the team task): create an OutstandingItem
+ *   assigned to the chosen person/role with the message and
+ *   sample-item context. Pause with pauseReason 'awaiting_team'
+ *   so the runtime UI can render the team-evidence panel where
+ *   the verifier types a comment, picks the verification date,
+ *   uploads files, and clicks Mark Complete.
+ *
+ *   Phase 3 (resumed): the resume payload merged the team's
+ *   responseData into pipelineState[step]. Emit clean outputs
+ *   so downstream `$prev.documents` / `$prev.response_text` /
+ *   `$prev.verification_date` bindings work.
  */
 async function handleRequestTeamEvidence(ctx: ActionHandlerContext): Promise<ActionHandlerResult> {
   const { engagementId, executionId, inputs, pipelineState, stepIndex, config } = ctx;
   const stepState = pipelineState[stepIndex] || {};
 
-  // Phase 2 marker — the resume merged a `completed: true` payload
-  // (or just the documents / response_text fields) into the step's
-  // outputs. Re-running the handler now picks it up and continues.
+  const assignedToConfig = ((inputs.assigned_to as string) || 'prompt').trim();
+  const wantsRuntimePrompt = assignedToConfig === 'prompt';
+
+  // Phase 3 marker — once the team has marked complete the resume
+  // merges these fields into the step's outputs. Re-running the
+  // handler picks them up and emits clean outputs.
   const isResumed = stepState.completed === true
     || stepState.response_text !== undefined
-    || (Array.isArray(stepState.documents) && stepState.documents.length > 0);
+    || (Array.isArray(stepState.documents) && stepState.documents.length > 0)
+    || stepState.verification_date !== undefined;
 
-  if (!isResumed) {
-    const role = (inputs.assigned_to as string) || 'preparer';
-    const evidenceLabel = (inputs.evidence_label as string) || '';
-    const message = (inputs.message_to_team as string) || 'Please provide the requested evidence.';
-    const priority = (inputs.priority as string) || 'normal';
-    const sampleCtx = Array.isArray(inputs.sample_items) ? inputs.sample_items : null;
-
-    const item = await prisma.outstandingItem.create({
-      data: {
-        engagementId,
-        executionId,
-        type: 'evidence_request',
-        title: evidenceLabel
-          ? `${evidenceLabel} — ${config.testDescription || 'Test'}`
-          : `Team evidence: ${config.testDescription || 'Test'}`,
-        description: message,
-        source: 'flow',
-        assignedTo: role,
-        status: 'awaiting_team',
-        priority: priority === 'normal' ? 'normal' : priority,
-        fsLine: config.fsLine,
-        testName: config.testDescription,
-        // Stash the sample table on responseData so the team panel
-        // can render it without a second query.
-        responseData: sampleCtx ? { sample_items: sampleCtx } : undefined,
-      },
-    });
-
+  if (isResumed) {
+    const documentsRaw = stepState.documents;
+    const documents = Array.isArray(documentsRaw) ? documentsRaw : [];
     return {
-      action: 'pause',
+      action: 'continue',
       outputs: {
-        outstandingItemId: item.id,
-        message_to_team: message,
-        evidence_label: evidenceLabel,
-        assigned_to: role,
-        priority,
-        sample_items: sampleCtx || [],
-        repeatOnResume: true,
+        documents,
+        response_text: (stepState.response_text as string | undefined) || '',
+        verification_date: (stepState.verification_date as string | undefined) || '',
+        assigned_to_resolved: (stepState.assigned_to_resolved as string | undefined) || (stepState.assigned_to as string | undefined) || '',
+        outstanding_id: (stepState.outstandingItemId as string | undefined) || '',
+        completed_by: (stepState.completed_by as string | undefined) || '',
+        completed_at: (stepState.completed_at as string | undefined) || new Date().toISOString(),
       },
-      pauseReason: 'awaiting_team',
-      pauseRefId: item.id,
     };
   }
 
-  // ── Phase 2: emit clean outputs ────────────────────────────────
-  const documentsRaw = stepState.documents;
-  const documents = Array.isArray(documentsRaw) ? documentsRaw : [];
-  const responseText = (stepState.response_text as string | undefined) || '';
-  const completedBy = (stepState.completed_by as string | undefined) || '';
-  const completedAt = (stepState.completed_at as string | undefined) || new Date().toISOString();
-  const outstandingId = (stepState.outstandingItemId as string | undefined) || '';
+  // ── Phase 1: prompt for the assignee if requested ──────────────
+  // Skipped if the editor pinned a fixed role OR if a previous
+  // run-through of this phase already captured the choice in
+  // pipelineState[step].values.chosen_assignee.
+  const chosenAssignee = (stepState.values as { chosen_assignee?: string } | undefined)?.chosen_assignee
+    ?? (stepState.chosen_assignee as string | undefined);
+  if (wantsRuntimePrompt && !chosenAssignee && !stepState.outstandingItemId) {
+    // Build a select-style options list from the engagement's team.
+    // Falls back to the standard role buckets when the engagement
+    // hasn't had any team members assigned yet, so the action still
+    // works on empty engagements.
+    const team = await prisma.auditTeamMember.findMany({
+      where: { engagementId },
+      select: { role: true, user: { select: { id: true, name: true, email: true } } },
+      orderBy: { role: 'asc' },
+    });
+    const options: Array<{ value: string; label: string }> = [];
+    for (const m of team) {
+      const name = m.user?.name || m.user?.email || 'Unknown';
+      options.push({ value: name, label: `${name} — ${m.role}` });
+    }
+    if (options.length === 0) {
+      options.push(
+        { value: 'preparer', label: 'Preparer' },
+        { value: 'reviewer', label: 'Reviewer' },
+        { value: 'partner',  label: 'Engagement Partner / RI' },
+      );
+    }
+    return {
+      action: 'pause',
+      outputs: {
+        prompt_title: 'Assign Verifier',
+        prompt_description: 'Choose who should perform this verification — they will see the task in their Outstanding queue.',
+        prompts: [
+          { code: 'chosen_assignee', label: 'Assign to', value_type: 'select', options },
+        ],
+        repeatOnResume: true,
+      },
+      pauseReason: 'user_input',
+      pauseRefId: `assign_${stepIndex}`,
+    };
+  }
+
+  // ── Phase 2: create the outstanding item ───────────────────────
+  const effectiveAssignee = chosenAssignee || assignedToConfig;
+  const evidenceLabel = (inputs.evidence_label as string) || '';
+  const message = (inputs.message_to_team as string) || 'Please provide the requested evidence.';
+  const priority = (inputs.priority as string) || 'normal';
+  const captureDate = inputs.capture_date !== false; // default true
+  const sampleCtx = Array.isArray(inputs.sample_items) ? inputs.sample_items : null;
+
+  const item = await prisma.outstandingItem.create({
+    data: {
+      engagementId,
+      executionId,
+      type: 'evidence_request',
+      title: evidenceLabel
+        ? `${evidenceLabel} — ${config.testDescription || 'Test'}`
+        : `Team evidence: ${config.testDescription || 'Test'}`,
+      description: message,
+      source: 'flow',
+      assignedTo: effectiveAssignee,
+      status: 'awaiting_team',
+      priority,
+      fsLine: config.fsLine,
+      testName: config.testDescription,
+      responseData: sampleCtx ? { sample_items: sampleCtx } : undefined,
+    },
+  });
 
   return {
-    action: 'continue',
+    action: 'pause',
     outputs: {
-      documents,
-      response_text: responseText,
-      outstanding_id: outstandingId,
-      completed_by: completedBy,
-      completed_at: completedAt,
+      outstandingItemId: item.id,
+      message_to_team: message,
+      evidence_label: evidenceLabel,
+      assigned_to: effectiveAssignee,
+      assigned_to_resolved: effectiveAssignee,
+      capture_date: captureDate,
+      priority,
+      sample_items: sampleCtx || [],
+      repeatOnResume: true,
     },
+    pauseReason: 'awaiting_team',
+    pauseRefId: item.id,
   };
 }
 
