@@ -887,25 +887,48 @@ export function TestExecutionPanel({ testId, testDescription, testType, engageme
                     value resumes the pipeline through the standard
                     /test-execution/[id] resume endpoint. */}
                 {pauseReason === 'user_input' && pausedStep && (
-                  <UserInputPromptPanel
-                    step={pausedStep}
-                    onSubmit={async ({ value, valueText, justification }) => {
-                      if (!executionId) return;
-                      const responseData = {
-                        value,
-                        value_text: valueText,
-                        justification: justification || null,
-                        entered_by: testDescription, // the username should come from session — the panel itself records it server-side via the audit trail.
-                        entered_at: new Date().toISOString(),
-                      };
-                      await fetch(
-                        `/api/engagements/${engagementId}/test-execution/${executionId}`,
-                        { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'resume', responseData }) },
-                      );
-                      setExecutionStatus('running');
-                      if (executionId) startPolling(executionId);
-                    }}
-                  />
+                  Array.isArray(pausedStep.output?.prompts) && pausedStep.output.prompts.length > 0 ? (
+                    // Multi-field popup — used by Cut-Off Date Range
+                    // and any future Action that wants to ask for
+                    // several values in one runtime form.
+                    <MultiFieldPromptPanel
+                      step={pausedStep}
+                      onSubmit={async (values) => {
+                        if (!executionId) return;
+                        const responseData = {
+                          values,
+                          entered_by: testDescription,
+                          entered_at: new Date().toISOString(),
+                        };
+                        await fetch(
+                          `/api/engagements/${engagementId}/test-execution/${executionId}`,
+                          { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'resume', responseData }) },
+                        );
+                        setExecutionStatus('running');
+                        if (executionId) startPolling(executionId);
+                      }}
+                    />
+                  ) : (
+                    <UserInputPromptPanel
+                      step={pausedStep}
+                      onSubmit={async ({ value, valueText, justification }) => {
+                        if (!executionId) return;
+                        const responseData = {
+                          value,
+                          value_text: valueText,
+                          justification: justification || null,
+                          entered_by: testDescription,
+                          entered_at: new Date().toISOString(),
+                        };
+                        await fetch(
+                          `/api/engagements/${engagementId}/test-execution/${executionId}`,
+                          { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'resume', responseData }) },
+                        );
+                        setExecutionStatus('running');
+                        if (executionId) startPolling(executionId);
+                      }}
+                    />
+                  )
                 )}
 
                 {/* Sampling calculator — shown when population data exists, but NOT for review_flagged tests */}
@@ -1536,6 +1559,114 @@ function UserInputPromptPanel(props: {
           >
             {submitting ? <Loader2 className="h-3 w-3 animate-spin" /> : null}
             Submit value
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── Multi-field user-input prompt panel ────────────────────────────────────
+// Single popup that asks the auditor for several values at once.
+// Activated when a paused step's outputs include a `prompts` array
+// (currently used by Cut-Off Date Range; any future Action that
+// wants to collect multiple values in one go just emits the same
+// shape). Submits `{ values: { code: value } }` so the resumed
+// handler can read them off pipelineState[stepIndex].values.
+interface PromptFieldDef {
+  code: string;
+  label: string;
+  value_type?: 'number' | 'percentage' | 'currency' | 'text' | 'date';
+  default_value?: number | string | null;
+  min_value?: number;
+  max_value?: number;
+  description?: string;
+}
+function MultiFieldPromptPanel(props: {
+  step: { output?: any };
+  onSubmit: (values: Record<string, number | string>) => Promise<void>;
+}) {
+  const cfg = props.step.output || {};
+  const title = (cfg.prompt_title as string) || 'Auditor Input Required';
+  const description = (cfg.prompt_description as string) || '';
+  const prompts = (cfg.prompts as PromptFieldDef[]) || [];
+
+  const [values, setValues] = useState<Record<string, string>>(() => {
+    const init: Record<string, string> = {};
+    for (const p of prompts) init[p.code] = p.default_value != null ? String(p.default_value) : '';
+    return init;
+  });
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  function isNumericType(t: PromptFieldDef['value_type']) {
+    return t === 'number' || t === 'percentage' || t === 'currency';
+  }
+
+  function validate(): { ok: true; out: Record<string, number | string> } | { ok: false; reason: string } {
+    const out: Record<string, number | string> = {};
+    for (const p of prompts) {
+      const raw = (values[p.code] ?? '').trim();
+      if (raw === '') return { ok: false, reason: `${p.label}: please enter a value.` };
+      if (isNumericType(p.value_type)) {
+        const n = parseFloat(raw);
+        if (!Number.isFinite(n)) return { ok: false, reason: `${p.label}: please enter a valid number.` };
+        if (typeof p.min_value === 'number' && n < p.min_value) return { ok: false, reason: `${p.label}: must be at least ${p.min_value}.` };
+        if (typeof p.max_value === 'number' && n > p.max_value) return { ok: false, reason: `${p.label}: must be at most ${p.max_value}.` };
+        out[p.code] = n;
+      } else {
+        out[p.code] = raw;
+      }
+    }
+    return { ok: true, out };
+  }
+
+  async function handleSubmit() {
+    const v = validate();
+    if (!v.ok) { setError(v.reason); return; }
+    setError(null);
+    setSubmitting(true);
+    try { await props.onSubmit(v.out); } finally { setSubmitting(false); }
+  }
+
+  return (
+    <div className="border border-indigo-200 rounded-lg overflow-hidden bg-indigo-50/30">
+      <div className="px-3 py-2 bg-indigo-50 border-b border-indigo-200 flex items-center gap-2">
+        <span className="text-[10px] font-bold text-indigo-700 uppercase">{title}</span>
+      </div>
+      <div className="p-3 space-y-3">
+        {description && <p className="text-[11px] text-slate-500">{description}</p>}
+        {prompts.map(p => {
+          const numeric = isNumericType(p.value_type);
+          const inputType = p.value_type === 'date' ? 'date' : numeric ? 'number' : 'text';
+          return (
+            <div key={p.code}>
+              <label className="text-xs font-medium text-slate-700 block mb-1">{p.label}</label>
+              {p.description && <p className="text-[11px] text-slate-500 mb-1.5">{p.description}</p>}
+              <div className="flex items-center gap-1.5">
+                {p.value_type === 'currency' && <span className="text-xs text-slate-500">£</span>}
+                <input
+                  type={inputType}
+                  value={values[p.code] ?? ''}
+                  onChange={e => setValues(prev => ({ ...prev, [p.code]: e.target.value }))}
+                  placeholder={p.default_value != null ? String(p.default_value) : ''}
+                  className="flex-1 px-2 py-1.5 text-sm border border-slate-200 rounded bg-white focus:outline-none focus:border-indigo-400"
+                  step={numeric ? 'any' : undefined}
+                />
+                {p.value_type === 'percentage' && <span className="text-xs text-slate-500">%</span>}
+              </div>
+            </div>
+          );
+        })}
+        {error && <div className="text-[11px] text-red-600">{error}</div>}
+        <div className="flex justify-end pt-1">
+          <button
+            onClick={handleSubmit}
+            disabled={submitting}
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-md bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-40"
+          >
+            {submitting ? <Loader2 className="h-3 w-3 animate-spin" /> : null}
+            Submit
           </button>
         </div>
       </div>

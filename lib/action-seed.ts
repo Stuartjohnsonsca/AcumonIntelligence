@@ -1040,7 +1040,7 @@ export const SYSTEM_ACTIONS: ActionDefinitionData[] = [
   {
     code: 'cut_off_date_range',
     name: 'Cut-Off Date Range',
-    description: 'Computes a date window around the engagement period end. Takes Period.End as the base date and two day-counts — Days Before (subtracted) and Days After (added) — and emits the resulting Start.Date and End.Date for downstream actions (Request Cut-Off Listing, Extract Post-YE Bank Payments, Analyse Cut-Off Transactions, etc.). The base date and both day-counts can be set in the editor as fixed values, OR bound to upstream outputs (e.g. `$prev.value` from a Prompt User for a Value step) so the auditor enters the windows at runtime.',
+    description: 'Asks the auditor for a Days Before and Days After window in a single popup, then computes Start.Date and End.Date around the engagement period end for downstream cut-off / post-YE actions. The Default Days Before / Default Days After fields below pre-fill the runtime prompt; the auditor can accept or override.',
     category: 'general',
     handlerName: 'cutOffDateRange',
     icon: 'CalendarRange',
@@ -1048,8 +1048,10 @@ export const SYSTEM_ACTIONS: ActionDefinitionData[] = [
     isSystem: true,
     inputSchema: [
       { code: 'period_end', label: 'Base Date (Period End)', type: 'date', required: true, source: 'auto', autoMapFrom: '$ctx.engagement.periodEnd', group: 'Base', description: 'Defaults to the engagement period end. Manual-input to override (e.g. another date in the period or an upstream date output).' },
-      { code: 'days_before', label: 'Days Before', type: 'number', required: true, source: 'user', defaultValue: 0, group: 'Window', description: 'Days subtracted from Base Date to give Start.Date. Bind to `$prev.value` (or `$step.N.value`) when an upstream Prompt User for a Value step asks the auditor for the window at runtime.' },
-      { code: 'days_after', label: 'Days After', type: 'number', required: true, source: 'user', defaultValue: 60, group: 'Window', description: 'Days added to Base Date to give End.Date. Bind to an upstream prompt step’s `value` for runtime entry.' },
+      { code: 'prompt_title', label: 'Prompt Title', type: 'text', required: false, source: 'user', defaultValue: 'Cut-Off Window', group: 'Prompt', description: 'Heading shown on the runtime popup.' },
+      { code: 'prompt_description', label: 'Prompt Description', type: 'textarea', required: false, source: 'user', group: 'Prompt', description: 'Help text shown beneath the heading on the runtime popup.' },
+      { code: 'default_days_before', label: 'Default Days Before', type: 'number', required: false, source: 'user', defaultValue: 0, group: 'Window', description: 'Pre-fills the Days Before field on the runtime popup. Auditor can accept or override.' },
+      { code: 'default_days_after', label: 'Default Days After', type: 'number', required: false, source: 'user', defaultValue: 60, group: 'Window', description: 'Pre-fills the Days After field on the runtime popup. Auditor can accept or override.' },
     ],
     outputSchema: [
       // Dates emitted as ISO strings (YYYY-MM-DD). OutputFieldType
