@@ -453,8 +453,11 @@ export default function PortalSetupPage({ params }: { params: Promise<{ engageme
           )}
         </div>
 
-        {/* Collapsible: Work Allocation */}
-        <div className="bg-white border border-slate-200 rounded-lg">
+        {/* Collapsible: Work Allocation. id="work-allocation" lets
+            the Portal Principal Dashboard's "Work Allocation" button
+            hash-link straight to this section via scroll-margin-top
+            so the section header lands below any sticky chrome. */}
+        <div id="work-allocation" className="bg-white border border-slate-200 rounded-lg scroll-mt-20">
           <button
             onClick={() => setOpenAlloc(o => !o)}
             className="w-full flex items-center justify-between px-5 py-4 text-left hover:bg-slate-50"

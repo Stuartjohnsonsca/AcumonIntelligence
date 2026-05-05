@@ -22,7 +22,7 @@
 import { use, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 import { useSearchParams } from 'next/navigation';
-import { AlertTriangle, Clock, CheckCircle2, TrendingUp, RefreshCw, Settings, Loader2, Filter, ChevronDown, ChevronRight, X } from 'lucide-react';
+import { AlertTriangle, Clock, CheckCircle2, TrendingUp, RefreshCw, Settings, Loader2, Filter, ChevronDown, ChevronRight, X, Users } from 'lucide-react';
 
 interface PrincipalDashboardData {
   engagementId: string;
@@ -337,6 +337,18 @@ export default function PortalPrincipalDashboardPage({ params }: { params: Promi
                 </p>
               </div>
               <div className="flex items-center gap-2">
+                {/* Direct shortcut to the FS-line × staff allocation
+                    grid. The setup page already opens that section
+                    by default; the #work-allocation hash scrolls it
+                    into view so the Principal lands on the grid
+                    rather than the staff list at the top. */}
+                <Link
+                  href={`/portal/setup/${engagementId}?token=${token}#work-allocation`}
+                  className="inline-flex items-center gap-1 px-3 py-1.5 rounded-md bg-indigo-50 border border-indigo-200 text-indigo-700 text-sm hover:bg-indigo-100"
+                  title="Open the FS-line × staff Work Allocation grid"
+                >
+                  <Users className="w-4 h-4" />Work Allocation
+                </Link>
                 <Link href={`/portal/setup/${engagementId}?token=${token}`} className="inline-flex items-center gap-1 px-3 py-1.5 rounded-md border border-slate-300 text-sm hover:bg-slate-50">
                   <Settings className="w-4 h-4" />Setup
                 </Link>
