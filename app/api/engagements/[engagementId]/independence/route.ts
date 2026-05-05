@@ -20,9 +20,11 @@ import { sendIndependenceDeclinedEmail } from '@/lib/audit-email';
  *        user has an outstanding row — the client gate keys off this.
  *
  * POST — submit answers. Auto-evaluates isIndependent from the answers:
- *        any hardFail question answered No, or any explicit "overall not
- *        independent" flag from the client, sets isIndependent=false and
- *        triggers the RI + Ethics Partner email.
+ *        any hardFail (Critical) question answered Yes, or any explicit
+ *        "overall not independent" flag from the client, sets
+ *        isIndependent=false and triggers the RI + Ethics Partner email.
+ *        Yes is the impairment answer because each question is framed as
+ *        "do you have <issue>?" — Yes signals a potential issue.
  */
 
 interface RouteCtx {
@@ -160,8 +162,10 @@ export async function POST(req: NextRequest, ctx: RouteCtx) {
   const overallDeclined: boolean = body.isIndependent === false;
   const notes: string = typeof body.notes === 'string' ? body.notes : '';
 
-  // Evaluate — any hardFail question answered No, or the explicit overall
-  // decline flag, flips us into `declined`.
+  // Evaluate — any hardFail question answered Yes, or the explicit overall
+  // decline flag, flips us into `declined`. Yes is the impairment answer
+  // (questions are framed as "do you have <issue>?"); a single Critical
+  // Yes is barring.
   const questions = await getFirmIndependenceQuestions(firmId);
   const byId: Record<string, IndependenceQuestion> = Object.fromEntries(questions.map(q => [q.id, q]));
   const flaggedQuestions: Array<{ text: string; notes?: string }> = [];
@@ -169,8 +173,9 @@ export async function POST(req: NextRequest, ctx: RouteCtx) {
   for (const a of submittedAnswers) {
     const q = byId[a.questionId];
     if (!q) continue;
-    if (q.answerType !== 'text' && a.answer === false) {
-      // "No" to a yes/no question — note the question text for the email.
+    if (q.answerType !== 'text' && a.answer === true) {
+      // "Yes" to a yes/no question — possible impairment. Critical questions
+      // (hardFail=true) bar access; the question text feeds the decline email.
       if (q.hardFail) { hardFail = true; flaggedQuestions.push({ text: q.text, notes: a.notes }); }
     }
   }

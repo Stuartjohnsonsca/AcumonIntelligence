@@ -20,14 +20,21 @@ function sanitise(list: unknown): IndependenceQuestion[] {
   if (!Array.isArray(list)) return [];
   return list
     .filter(q => q && typeof q === 'object')
-    .map((q: any): IndependenceQuestion => ({
-      id: String(q.id || '').trim() || `indep_${Math.random().toString(36).slice(2, 10)}`,
-      text: String(q.text || '').trim(),
-      helpText: q.helpText ? String(q.helpText) : undefined,
-      answerType: q.answerType === 'text' ? 'text' : 'boolean',
-      requiresNotesOnNo: Boolean(q.requiresNotesOnNo),
-      hardFail: Boolean(q.hardFail),
-    }))
+    .map((q: any): IndependenceQuestion => {
+      // Polarity flipped to "Yes is the impairment answer". Legacy data
+      // saved under requiresNotesOnNo is migrated forward to
+      // requiresNotesOnYes here so the question retains its
+      // explanation-required setting after the flip.
+      const requiresNotesOnYes = Boolean(q.requiresNotesOnYes ?? q.requiresNotesOnNo);
+      return {
+        id: String(q.id || '').trim() || `indep_${Math.random().toString(36).slice(2, 10)}`,
+        text: String(q.text || '').trim(),
+        helpText: q.helpText ? String(q.helpText) : undefined,
+        answerType: q.answerType === 'text' ? 'text' : 'boolean',
+        requiresNotesOnYes,
+        hardFail: Boolean(q.hardFail),
+      };
+    })
     .filter(q => q.text.length > 0);
 }
 

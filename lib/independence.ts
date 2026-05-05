@@ -12,6 +12,11 @@
  *       - isIndependent = true  → row moves to `confirmed` and the gate clears.
  *       - isIndependent = false → row moves to `declined`; the RI and Ethics
  *         Partner are emailed; the gate stays up (user locked out).
+ *   - Question polarity: each Yes/No question is framed as a potential
+ *     impairment (e.g. "Do you have a financial interest in the client?").
+ *     "Yes" therefore indicates a possible independence issue — questions
+ *     can require an explanation for any Yes, and `hardFail` questions
+ *     answered Yes immediately push the row to `declined`.
  *
  * Firm-wide question list is a `MethodologyTemplate` row with
  *   templateType = 'independence_questions', auditType = 'ALL'
@@ -33,10 +38,16 @@ export interface IndependenceQuestion {
   helpText?: string;
   /** 'boolean' (default) = Yes/No; 'text' = free-text response only. */
   answerType?: 'boolean' | 'text';
-  /** When true, user must provide supporting notes if they answer No. */
+  /** When true, the user must provide an explanation if they answer Yes
+   *  (Yes = possible independence issue per the standard question framing). */
+  requiresNotesOnYes?: boolean;
+  /** Legacy field name. Read for back-compat — old data was stored under
+   *  this key when "No" was treated as the impairment answer. New writes
+   *  use `requiresNotesOnYes`. */
   requiresNotesOnNo?: boolean;
-  /** When true, answering No for this question automatically marks the
-   *  user as NOT independent (the decline email fires). */
+  /** When true, answering Yes for this question automatically marks the
+   *  user as NOT independent (the decline email fires) — i.e. a single
+   *  Yes is barring. */
   hardFail?: boolean;
 }
 
@@ -221,12 +232,12 @@ export function isConfirmationStale(confirmedAt: Date | null | undefined, days: 
 /** A reasonable default set of questions seeded the first time the admin opens the section. */
 export function defaultIndependenceQuestions(): IndependenceQuestion[] {
   return [
-    { id: 'indep_financial_interest', text: 'Do you, or any immediate family member, have a financial interest (shares, loans, investments) in the client or any of its group entities?', answerType: 'boolean', requiresNotesOnNo: false, hardFail: true, helpText: 'Includes direct and indirect holdings — e.g. unit trusts and pension funds managed by a third party are generally excluded, but check before answering Yes.' },
-    { id: 'indep_family_role', text: 'Does any close family member hold a role at the client that could influence the financial statements (e.g. director, senior finance role, significant shareholder)?', answerType: 'boolean', requiresNotesOnNo: false, hardFail: true },
-    { id: 'indep_prior_employment', text: 'Have you been employed by the client, or in a significant service role, in the last two years?', answerType: 'boolean', requiresNotesOnNo: false, hardFail: true },
-    { id: 'indep_non_audit_services', text: 'Are you aware of any non-audit services provided by the firm to this client that could impair your independence?', answerType: 'boolean', requiresNotesOnNo: true, hardFail: false },
-    { id: 'indep_gifts_hospitality', text: 'Have you accepted gifts or hospitality from the client in the last 12 months beyond modest trivial amounts?', answerType: 'boolean', requiresNotesOnNo: true, hardFail: false },
-    { id: 'indep_relationships', text: 'Are there any close personal, business, or litigation relationships with the client that might reasonably be perceived as impairing your independence?', answerType: 'boolean', requiresNotesOnNo: true, hardFail: false },
-    { id: 'indep_conflict_other', text: 'Are you aware of any other matter (not covered above) that could compromise your independence on this engagement?', answerType: 'boolean', requiresNotesOnNo: true, hardFail: false },
+    { id: 'indep_financial_interest', text: 'Do you, or any immediate family member, have a financial interest (shares, loans, investments) in the client or any of its group entities?', answerType: 'boolean', requiresNotesOnYes: true, hardFail: true, helpText: 'Includes direct and indirect holdings — e.g. unit trusts and pension funds managed by a third party are generally excluded, but check before answering Yes.' },
+    { id: 'indep_family_role', text: 'Does any close family member hold a role at the client that could influence the financial statements (e.g. director, senior finance role, significant shareholder)?', answerType: 'boolean', requiresNotesOnYes: true, hardFail: true },
+    { id: 'indep_prior_employment', text: 'Have you been employed by the client, or in a significant service role, in the last two years?', answerType: 'boolean', requiresNotesOnYes: true, hardFail: true },
+    { id: 'indep_non_audit_services', text: 'Are you aware of any non-audit services provided by the firm to this client that could impair your independence?', answerType: 'boolean', requiresNotesOnYes: true, hardFail: false },
+    { id: 'indep_gifts_hospitality', text: 'Have you accepted gifts or hospitality from the client in the last 12 months beyond modest trivial amounts?', answerType: 'boolean', requiresNotesOnYes: true, hardFail: false },
+    { id: 'indep_relationships', text: 'Are there any close personal, business, or litigation relationships with the client that might reasonably be perceived as impairing your independence?', answerType: 'boolean', requiresNotesOnYes: true, hardFail: false },
+    { id: 'indep_conflict_other', text: 'Are you aware of any other matter (not covered above) that could compromise your independence on this engagement?', answerType: 'boolean', requiresNotesOnYes: true, hardFail: false },
   ];
 }

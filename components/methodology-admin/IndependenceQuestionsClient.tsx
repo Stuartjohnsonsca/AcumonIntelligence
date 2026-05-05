@@ -18,7 +18,7 @@ export function IndependenceQuestionsClient({ initialQuestions }: Props) {
     setQuestions(prev => prev.map(q => q.id === id ? { ...q, ...patch } : q));
   }
   function addQuestion() {
-    setQuestions(prev => [...prev, { id: newQuestionId(), text: '', answerType: 'boolean', requiresNotesOnNo: false, hardFail: false }]);
+    setQuestions(prev => [...prev, { id: newQuestionId(), text: '', answerType: 'boolean', requiresNotesOnYes: true, hardFail: false }]);
   }
   function removeQuestion(id: string) {
     if (!confirm('Delete this question? This cannot be undone.')) return;
@@ -121,21 +121,21 @@ export function IndependenceQuestionsClient({ initialQuestions }: Props) {
                     <label className="flex items-center gap-1.5 cursor-pointer">
                       <input
                         type="checkbox"
-                        checked={Boolean(q.requiresNotesOnNo)}
-                        onChange={e => update(q.id, { requiresNotesOnNo: e.target.checked })}
+                        checked={Boolean(q.requiresNotesOnYes ?? q.requiresNotesOnNo)}
+                        onChange={e => update(q.id, { requiresNotesOnYes: e.target.checked, requiresNotesOnNo: undefined })}
                       />
-                      Require notes when answered &ldquo;No&rdquo;
+                      Require explanation when answered &ldquo;Yes&rdquo;
                     </label>
                   )}
                   {q.answerType !== 'text' && (
-                    <label className="flex items-center gap-1.5 cursor-pointer" title="If checked, answering No auto-notifies RI + Ethics Partner and locks user out.">
+                    <label className="flex items-center gap-1.5 cursor-pointer" title="If checked, answering Yes auto-notifies RI + Ethics Partner and locks user out (a single Critical Yes is barring).">
                       <input
                         type="checkbox"
                         checked={Boolean(q.hardFail)}
                         onChange={e => update(q.id, { hardFail: e.target.checked })}
                       />
                       <span className="inline-flex items-center gap-1">
-                        <ShieldAlert className="h-3 w-3 text-red-500" /> Critical — &ldquo;No&rdquo; blocks access
+                        <ShieldAlert className="h-3 w-3 text-red-500" /> Critical — &ldquo;Yes&rdquo; blocks access
                       </span>
                     </label>
                   )}

@@ -22,6 +22,12 @@ interface IndependenceQuestion {
   text: string;
   helpText?: string;
   answerType?: 'boolean' | 'text';
+  /** When true, an explanation is required if the user answers Yes
+   *  (Yes = potential impairment). */
+  requiresNotesOnYes?: boolean;
+  /** Legacy field — old data was stored under this key; treated as
+   *  `requiresNotesOnYes` going forward (the polarity has flipped so the
+   *  "No is bad" assumption no longer applies). */
   requiresNotesOnNo?: boolean;
   hardFail?: boolean;
 }
@@ -138,8 +144,11 @@ export function IndependenceGate({ engagementId, children }: Props) {
     setSubmitError(null);
 
     // Validate — every question must have an answer (either Yes/No for
-    // boolean, or non-empty text for text). For any "No" on a question
-    // that requires notes, notes must be supplied.
+    // boolean, or non-empty text for text). "Yes" is the impairment
+    // answer; if the question asks for an explanation on Yes, notes must
+    // be supplied. Legacy `requiresNotesOnNo` data is treated as the new
+    // `requiresNotesOnYes` so flipped questions don't silently lose their
+    // notes requirement.
     const payload: Array<{ questionId: string; questionText: string; answer: boolean | string; notes?: string }> = [];
     if (!forceDecline) {
       for (const q of data.questions) {
@@ -150,8 +159,9 @@ export function IndependenceGate({ engagementId, children }: Props) {
           payload.push({ questionId: q.id, questionText: q.text, answer: a.answer.trim(), notes: a.notes || undefined });
         } else {
           if (typeof a.answer !== 'boolean') { setSubmitError(`Please answer Yes or No: "${q.text}"`); return; }
-          if (a.answer === false && q.requiresNotesOnNo && !(a.notes || '').trim()) {
-            setSubmitError(`Please add notes for: "${q.text}"`); return;
+          const needsNotesOnYes = Boolean(q.requiresNotesOnYes || q.requiresNotesOnNo);
+          if (a.answer === true && needsNotesOnYes && !(a.notes || '').trim()) {
+            setSubmitError(`Please add an explanation for: "${q.text}"`); return;
           }
           payload.push({ questionId: q.id, questionText: q.text, answer: a.answer, notes: a.notes || undefined });
         }
@@ -202,8 +212,9 @@ export function IndependenceGate({ engagementId, children }: Props) {
               <>Your last confirmation is more than {data.refreshDays} day{data.refreshDays === 1 ? '' : 's'} old. Please re-confirm before continuing. </>
             ) : null}
             You cannot view or interact with this engagement until you confirm your independence. Please answer every
-            question honestly. Answering &ldquo;No&rdquo; to a question marked as critical will automatically notify the
-            Responsible Individual and Ethics Partner.
+            question honestly. Answering &ldquo;Yes&rdquo; indicates a potential independence issue; a single
+            &ldquo;Yes&rdquo; on a question marked <strong>Critical</strong> will automatically notify the
+            Responsible Individual and Ethics Partner and lock you out of this engagement.
           </p>
         </div>
       </div>
@@ -258,18 +269,18 @@ export function IndependenceGate({ engagementId, children }: Props) {
                     />
                     No
                   </label>
-                  {a.answer === false && q.requiresNotesOnNo && (
-                    <span className="text-[11px] text-amber-700">Notes required below</span>
+                  {a.answer === true && (q.requiresNotesOnYes || q.requiresNotesOnNo) && (
+                    <span className="text-[11px] text-amber-700">Explanation required below</span>
                   )}
                 </div>
               )}
-              {q.answerType !== 'text' && (a.answer === false || q.requiresNotesOnNo) && (
+              {q.answerType !== 'text' && a.answer === true && (
                 <textarea
                   value={a.notes || ''}
                   onChange={e => setAnswers(prev => ({ ...prev, [q.id]: { answer: (prev[q.id] || {}).answer, notes: e.target.value } }))}
                   rows={2}
                   className="w-full mt-2 text-xs border border-slate-200 rounded px-2 py-1.5"
-                  placeholder={q.requiresNotesOnNo ? 'Required — please explain' : 'Optional notes'}
+                  placeholder={(q.requiresNotesOnYes || q.requiresNotesOnNo) ? 'Required — please explain' : 'Optional notes'}
                 />
               )}
             </div>
