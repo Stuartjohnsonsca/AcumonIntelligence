@@ -282,6 +282,25 @@ export async function POST(req: Request) {
       },
     });
 
+    // Auto-add the creator as an RI team member. Two reasons:
+    //   1. Independence gate uses team membership as its trigger;
+    //      without this the creator never sees the questionnaire on
+    //      first open of an engagement they just made.
+    //   2. RI is the engagement-leader role; the engagement creator
+    //      is overwhelmingly the right person for it. They can change
+    //      their role on the Opening tab, and the team-save endpoint
+    //      tolerates the override. Idempotent via upsert so a retry
+    //      never duplicates.
+    try {
+      await prisma.auditTeamMember.upsert({
+        where: { engagementId_userId: { engagementId: engagement.id, userId: session.user.id } },
+        update: {},
+        create: { engagementId: engagement.id, userId: session.user.id, role: 'RI', sortOrder: 0 },
+      });
+    } catch (err) {
+      console.error('[engagements/POST] auto-add creator to team failed:', err);
+    }
+
     return NextResponse.json({ engagement }, { status: 201 });
   } catch (err: any) {
     // Surface Prisma error detail so schema-drift issues (P2022,

@@ -98,15 +98,20 @@ export async function GET(_req: NextRequest, ctx: RouteCtx) {
 
   // Gate logic — only block when:
   //  - audit has started, AND
-  //  - user is an actual team member (not just an admin peeking), AND
+  //  - user is an actual team member, AND
   //  - their row is NOT a live confirmation (outstanding / declined / stale
   //    confirmation all keep them out).
+  //
+  // Admins on the team are NOT bypassed: super admins / methodology
+  // admins doing audit work confirm independence like everyone else.
+  // The team-membership check below handles the "admin peeking at an
+  // engagement they're not assigned to" case naturally — non-team
+  // members never hit the gate.
   const hasLiveConfirmation = row?.status === 'confirmed' && !stale;
   const required = Boolean(
     started
     && teamMembership
-    && !hasLiveConfirmation
-    && !isAdminViewer,
+    && !hasLiveConfirmation,
   );
 
   return NextResponse.json({
