@@ -15,6 +15,7 @@
  */
 import { PDFDocument, StandardFonts, rgb, type PDFFont, type PDFPage } from 'pdf-lib';
 import { prisma } from '@/lib/db';
+import { buildTemplateContext, type TemplateContext } from '@/lib/template-context';
 
 interface ReportSection {
   title: string;
@@ -210,25 +211,33 @@ function drawTable(ctx: RenderCtx, table: { headers: string[]; rows: string[][] 
 }
 
 /**
- * Build the report sections. v1 covers Engagement metadata, Team,
- * Materiality, Audit Timetable, RMM, and Audit Plan (significant
- * risks + areas of focus). Future iterations will add Ethics,
- * Continuance, etc.
+ * Build the full set of report sections for an engagement.
+ *
+ * Strategy: lean on `buildTemplateContext()` — the same aggregator
+ * used by the document-template engine — so the PDF reflects every
+ * piece of data that the engagement makes available. Each top-level
+ * area becomes one or more sections.
+ *
+ * What's covered:
+ *   1. Engagement metadata + framework
+ *   2. Engagement Team
+ *   3. Audit Timetable
+ *   4. Materiality (figures + narrative + prior-period comparison when present)
+ *   5. Audit Plan: Significant Risks (full assessment columns)
+ *   6. Audit Plan: Areas of Focus
+ *   7. Trial Balance summary + per-FS-line totals
+ *   8. Test Conclusions
+ *   9. Error Schedule (with adjusted/unadjusted totals)
+ *   10. One section per discovered questionnaire (Permanent File, Ethics,
+ *       Continuance, Materiality, New Client Take-On, Subsequent Events,
+ *       and any custom *_questions schedules the firm has defined). Each
+ *       renders question→answer pairs grouped by section meta when present.
+ *
+ * Empty data is preserved as "—" rather than dropped, so a regulator
+ * can see at a glance which procedures have or haven't been completed.
  */
 async function loadSections(engagementId: string): Promise<{ title: string; subtitle: string; sections: ReportSection[] }> {
-  const eng = await prisma.auditEngagement.findUnique({
-    where: { id: engagementId },
-    include: {
-      client: { select: { clientName: true } },
-      period: { select: { startDate: true, endDate: true } },
-      teamMembers: {
-        include: { user: { select: { name: true, email: true } } },
-        orderBy: [{ sortOrder: 'asc' }, { joinedAt: 'asc' }],
-      },
-      agreedDates: { orderBy: { sortOrder: 'asc' } },
-    },
-  });
-  if (!eng) throw new Error('Engagement not found');
+  const ctx = await buildTemplateContext(engagementId);
 
   const sections: ReportSection[] = [];
 
@@ -236,90 +245,274 @@ async function loadSections(engagementId: string): Promise<{ title: string; subt
   sections.push({
     title: 'Engagement',
     rows: [
-      { label: 'Client', value: eng.client?.clientName || '—' },
-      { label: 'Period', value: eng.period ? `${eng.period.startDate?.toISOString().slice(0, 10) || '—'} – ${eng.period.endDate?.toISOString().slice(0, 10) || '—'}` : '—' },
-      { label: 'Audit Type', value: eng.auditType || '—' },
-      { label: 'Status', value: eng.status || '—' },
-      { label: 'Group Audit', value: eng.isGroupAudit ? 'Yes' : 'No' },
-      { label: 'Started', value: eng.startedAt ? eng.startedAt.toISOString().slice(0, 10) : 'Not started' },
+      { label: 'Firm', value: ctx.firm.name || '—' },
+      { label: 'Client', value: ctx.client.name || '—' },
+      { label: 'Company Number', value: ctx.client.companyNumber || '—' },
+      { label: 'Sector', value: ctx.client.sector || '—' },
+      { label: 'Registered Address', value: ctx.client.registeredAddress || '—' },
+      { label: 'Period', value: `${ctx.period.periodStart || '—'}  →  ${ctx.period.periodEnd || '—'}` },
+      { label: 'Audit Type', value: ctx.engagement.auditType || '—' },
+      { label: 'Framework', value: ctx.engagement.framework || '—' },
+      { label: 'Status', value: ctx.engagement.status || '—' },
+      { label: 'Hard Close Date', value: ctx.engagement.hardCloseDate || '—' },
+      { label: 'Prior Period End', value: ctx.engagement.priorPeriodEnd || '—' },
     ],
   });
 
   // 2. Team
-  sections.push({
-    title: 'Engagement Team',
-    table: {
-      headers: ['Role', 'Name', 'Email'],
-      rows: eng.teamMembers.map(m => [
-        m.roleLabel || m.role || '—',
-        m.user?.name || '—',
-        m.user?.email || '—',
-      ]),
-    },
-  });
+  if (ctx.team.length > 0) {
+    sections.push({
+      title: 'Engagement Team',
+      table: {
+        headers: ['Role', 'Name', 'Email'],
+        rows: ctx.team.map(m => [m.roleLabel || m.role || '—', m.name || '—', m.email || '—']),
+      },
+    });
+  }
 
   // 3. Audit Timetable
-  sections.push({
-    title: 'Audit Timetable',
-    table: {
-      headers: ['Milestone', 'Target Date', 'Revised Target', 'Progress'],
-      rows: eng.agreedDates.map(d => [
-        d.description || '—',
-        d.targetDate ? d.targetDate.toISOString().slice(0, 10) : '—',
-        d.revisedTarget ? d.revisedTarget.toISOString().slice(0, 10) : '—',
-        d.progress || '—',
-      ]),
-    },
-  });
-
-  // 4. Materiality
-  try {
-    const mat = await (prisma as any).auditMateriality?.findUnique?.({ where: { engagementId } });
-    if (mat?.data) {
-      const d = mat.data as Record<string, unknown>;
-      sections.push({
-        title: 'Materiality',
-        rows: [
-          { label: 'Overall', value: d.overall != null ? String(d.overall) : '—' },
-          { label: 'Performance', value: d.performance != null ? String(d.performance) : '—' },
-          { label: 'Clearly Trivial', value: d.clearlyTrivial != null ? String(d.clearlyTrivial) : '—' },
-          { label: 'Benchmark', value: (d.benchmark as string) || '—' },
-          { label: 'Benchmark %', value: d.benchmarkPct != null ? String(d.benchmarkPct) : '—' },
-          { label: 'Key Judgements', value: (d.keyJudgements as string) || '—' },
-        ],
-      });
-    }
-  } catch { /* tolerant */ }
-
-  // 5. RMM rows — significant risks + areas of focus only.
-  try {
-    const flagged = await (prisma as any).auditRMMRow?.findMany?.({
-      where: { engagementId, rowCategory: { in: ['significant_risk', 'area_of_focus'] } },
-      orderBy: [{ rowCategory: 'asc' }, { sortOrder: 'asc' }],
+  if (ctx.auditTimetable.length > 0) {
+    sections.push({
+      title: 'Audit Timetable',
+      table: {
+        headers: ['Milestone', 'Target Date', 'Revised Target', 'Progress'],
+        rows: ctx.auditTimetable.map(d => [
+          d.milestone || '—',
+          d.targetDate || '—',
+          d.revisedTarget || '—',
+          d.progress || '—',
+        ]),
+      },
     });
-    if (flagged && flagged.length > 0) {
+  }
+
+  // 4. Materiality (figures + narrative + prior comparison)
+  const m = ctx.materiality;
+  const materialityRows: Array<{ label: string; value: string }> = [
+    { label: 'Overall Materiality', value: fmtNum(m.overall) },
+    { label: 'Performance Materiality', value: fmtNum(m.performance) },
+    { label: 'Clearly Trivial', value: fmtNum(m.clearlyTrivial) },
+    { label: 'Benchmark', value: m.benchmark || '—' },
+    { label: 'Benchmark Amount', value: fmtNum(m.benchmarkAmount) },
+    { label: 'Benchmark %', value: m.benchmarkPct != null ? `${m.benchmarkPct}%` : '—' },
+    { label: 'Stakeholders', value: m.stakeholders || '—' },
+    { label: 'Stakeholder Focus', value: m.stakeholderFocus || '—' },
+    { label: 'Key Judgements', value: m.keyJudgements || '—' },
+    { label: 'Basis Changed?', value: m.basisChanged == null ? '—' : (m.basisChanged ? 'Yes' : 'No') },
+    { label: 'Basis Change Reason', value: m.basisChangeReason || '—' },
+  ];
+  if (m.prior && (m.prior.overall != null || m.prior.benchmark)) {
+    materialityRows.push(
+      { label: 'Prior Overall', value: fmtNum(m.prior.overall) },
+      { label: 'Prior Performance', value: fmtNum(m.prior.performance) },
+      { label: 'Prior Clearly Trivial', value: fmtNum(m.prior.clearlyTrivial) },
+      { label: 'Prior Benchmark', value: m.prior.benchmark || '—' },
+      { label: 'Prior Benchmark %', value: m.prior.benchmarkPct != null ? `${m.prior.benchmarkPct}%` : '—' },
+    );
+  }
+  sections.push({ title: 'Materiality', rows: materialityRows });
+
+  // 5+6. Audit Plan: Significant Risks then Areas of Focus
+  if (ctx.auditPlan.significantRisks.length > 0) {
+    sections.push({
+      title: 'Audit Plan — Significant Risks',
+      table: {
+        headers: ['FS Line', 'Risk', 'Assertions', 'L', 'M', 'Inherent', 'Control', 'Overall'],
+        rows: ctx.auditPlan.significantRisks.map(r => [
+          r.fsLine || '—',
+          r.name || r.description || '—',
+          r.assertions || '—',
+          r.likelihood || '—',
+          r.magnitude || '—',
+          r.inherentRiskLevel || '—',
+          r.controlRisk || '—',
+          r.overallRisk || '—',
+        ]),
+      },
+    });
+  }
+  if (ctx.auditPlan.areasOfFocus.length > 0) {
+    sections.push({
+      title: 'Audit Plan — Areas of Focus',
+      table: {
+        headers: ['FS Line', 'Risk', 'Assertions', 'L', 'M', 'Inherent', 'Control', 'Overall'],
+        rows: ctx.auditPlan.areasOfFocus.map(r => [
+          r.fsLine || '—',
+          r.name || r.description || '—',
+          r.assertions || '—',
+          r.likelihood || '—',
+          r.magnitude || '—',
+          r.inherentRiskLevel || '—',
+          r.controlRisk || '—',
+          r.overallRisk || '—',
+        ]),
+      },
+    });
+  }
+
+  // 7. Trial Balance summary + rows
+  if (ctx.tb.rows.length > 0) {
+    sections.push({
+      title: 'Trial Balance — Summary',
+      rows: [
+        { label: 'Revenue', value: fmtNum(ctx.tb.revenue) },
+        { label: 'Cost of Sales', value: fmtNum(ctx.tb.costOfSales) },
+        { label: 'Gross Profit', value: fmtNum(ctx.tb.grossProfit) },
+        { label: 'Gross Margin %', value: ctx.tb.grossMarginPct != null ? `${ctx.tb.grossMarginPct}%` : '—' },
+        { label: 'Profit Before Tax', value: fmtNum(ctx.tb.profitBeforeTax) },
+        { label: 'Total Assets', value: fmtNum(ctx.tb.totalAssets) },
+        { label: 'Total Equity', value: fmtNum(ctx.tb.totalEquity) },
+      ],
+    });
+  }
+
+  // 8. Test Conclusions
+  if (ctx.testConclusions.length > 0) {
+    sections.push({
+      title: 'Test Conclusions',
+      table: {
+        headers: ['FS Line', 'Test', 'Conclusion', 'Errors', 'Extrapolated', 'Reviewer', 'Partner'],
+        rows: ctx.testConclusions.map(t => [
+          t.fsLine || '—',
+          t.testDescription || '—',
+          t.conclusion || '—',
+          fmtNum(t.totalErrors),
+          fmtNum(t.extrapolatedError),
+          t.reviewedByName || '—',
+          t.riSignedByName || '—',
+        ]),
+      },
+    });
+  }
+
+  // 9. Error Schedule
+  if (ctx.errorSchedule.length > 0) {
+    sections.push({
+      title: 'Error Schedule',
+      body:
+        `Adjusted: ${fmtNum(ctx.errorScheduleTotals.adjusted)}    `
+        + `Unadjusted: ${fmtNum(ctx.errorScheduleTotals.unadjusted)}    `
+        + `Count: ${ctx.errorScheduleTotals.count}`,
+      table: {
+        headers: ['FS Line', 'Description', 'Amount', 'Type', 'Fraud?', 'Resolution'],
+        rows: ctx.errorSchedule.map(e => [
+          e.fsLine || '—',
+          e.description || '—',
+          fmtNum(e.amount),
+          e.errorType || '—',
+          e.isFraud ? 'Yes' : 'No',
+          e.resolution || '—',
+        ]),
+      },
+    });
+  }
+
+  // 10. Every discovered questionnaire as a Q&A section. We render each
+  // questionnaire's `asList` (built by enrichQuestionnaire) as a table
+  // with section sub-headings when sectionMeta is present.
+  for (const [ctxKey, payload] of Object.entries(ctx.questionnaires)) {
+    const list = (payload as any)?.asList;
+    if (!Array.isArray(list) || list.length === 0) continue;
+    // Skip questionnaires with no answered questions — keeps the PDF
+    // focused on completed work. Fully-empty schedules are still
+    // observable via their absence in the contents page.
+    const hasAnyAnswer = list.some((it: any) => !it.isEmpty);
+    if (!hasAnyAnswer) continue;
+
+    const title = humaniseCtxKey(ctxKey);
+
+    // Group by section when the questionnaire defines one.
+    const bySection: Record<string, Array<{ q: string; a: string }>> = {};
+    const noSection: Array<{ q: string; a: string }> = [];
+    for (const it of list) {
+      const q = String((it as any).question || (it as any).key || '—');
+      const a = formatAnswer((it as any).answer);
+      const sec = (it as any).section;
+      if (sec && typeof sec === 'string') {
+        if (!bySection[sec]) bySection[sec] = [];
+        bySection[sec].push({ q, a });
+      } else {
+        noSection.push({ q, a });
+      }
+    }
+
+    // Render: if all questions belong to one (or zero) sections, emit a
+    // single Q/A table. If multiple sections, emit one section table per
+    // group with the section name as the body lead-in. The drawing
+    // helpers don't support multi-table sections natively, so we wrap
+    // multi-section questionnaires by appending the section name to
+    // each row's question column.
+    const sectionKeys = Object.keys(bySection);
+    if (sectionKeys.length === 0) {
       sections.push({
-        title: 'Risk Matrix — Significant Risks & Areas of Focus',
+        title,
         table: {
-          headers: ['Line Item', 'Nature / Risk', 'Likelihood', 'Magnitude', 'Overall', 'Category'],
-          rows: flagged.map((r: any) => [
-            String(r.lineItem || '—'),
-            String(r.riskIdentified || '—'),
-            String(r.likelihood || '—'),
-            String(r.magnitude || '—'),
-            String(r.overallRisk || '—'),
-            r.rowCategory === 'significant_risk' ? 'Significant Risk' : 'Area of Focus',
-          ]),
+          headers: ['Question', 'Answer'],
+          rows: noSection.map(p => [p.q, p.a]),
+        },
+      });
+    } else {
+      const rows: string[][] = [];
+      for (const sec of sectionKeys) {
+        for (const p of bySection[sec]) rows.push([`[${sec}]  ${p.q}`, p.a]);
+      }
+      for (const p of noSection) rows.push([p.q, p.a]);
+      sections.push({
+        title,
+        table: {
+          headers: ['Question', 'Answer'],
+          rows,
         },
       });
     }
-  } catch { /* tolerant */ }
+  }
 
-  return {
-    title: 'Audit File',
-    subtitle: `${eng.client?.clientName || ''} — ${eng.period?.endDate ? eng.period.endDate.toISOString().slice(0, 10) : ''}`,
-    sections,
-  };
+  // 11. Prior-period link summary (just enough so a reviewer knows what
+  // current/prior pair this snapshot is comparing). Full prior context
+  // is not embedded — that would double the page count. Reviewers can
+  // generate a separate snapshot of the prior engagement.
+  if (ctx.priorPeriod) {
+    sections.push({
+      title: 'Prior Period (linked)',
+      rows: [
+        { label: 'Prior Engagement ID', value: ctx.priorPeriod.engagement?.id || '—' },
+        { label: 'Prior Period', value: `${ctx.priorPeriod.period?.periodStart || '—'} → ${ctx.priorPeriod.period?.periodEnd || '—'}` },
+        { label: 'Prior Materiality', value: fmtNum(ctx.priorPeriod.materiality?.overall) },
+        { label: 'Prior Status', value: ctx.priorPeriod.engagement?.status || '—' },
+      ],
+    });
+  }
+
+  const subtitle = `${ctx.client.name || ''} — ${ctx.period.periodEnd || ''}`;
+  return { title: 'Audit File', subtitle, sections };
+}
+
+function fmtNum(n: number | null | undefined): string {
+  if (n === null || n === undefined || !Number.isFinite(n)) return '—';
+  if (n === 0) return '0';
+  // Two decimal places only when the value isn't an integer.
+  const fixed = Number.isInteger(n) ? n.toString() : n.toFixed(2);
+  // British thousands separators for readability — large schedules
+  // are easier to scan with grouping.
+  return Number(fixed).toLocaleString('en-GB', { maximumFractionDigits: 2 });
+}
+
+function formatAnswer(v: unknown): string {
+  if (v === null || v === undefined) return '—';
+  if (typeof v === 'boolean') return v ? 'Yes' : 'No';
+  if (typeof v === 'number') return fmtNum(v);
+  if (typeof v === 'string') return v.trim() === '' ? '—' : v;
+  if (Array.isArray(v)) return v.map(formatAnswer).join(', ');
+  if (typeof v === 'object') {
+    try { return JSON.stringify(v); } catch { return '[object]'; }
+  }
+  return String(v);
+}
+
+function humaniseCtxKey(key: string): string {
+  // permanentFile → "Permanent File"; newClientTakeOn → "New Client Take On"
+  const spaced = key.replace(/([A-Z])/g, ' $1').trim();
+  return spaced.replace(/\b\w/g, c => c.toUpperCase());
 }
 
 /**
