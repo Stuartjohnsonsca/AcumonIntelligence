@@ -1265,44 +1265,6 @@ export function AuditPlanPanel({ engagementId, clientId, periodId, onClose, peri
         </div>
       )}
 
-      {/*
-        Category / classification legend. Each classification renders as a
-        full background-colour pill badge matching the per-row badge in
-        the audit plan table below, so the visual link between legend and
-        table is immediate. Previously rendered as tiny colour swatches
-        next to coloured text, which the user found unclear.
-      */}
-      {!activeOtherTab && (
-        <div className="flex items-center flex-wrap gap-2 px-3 py-2 bg-slate-50 border border-slate-200 rounded text-[11px]">
-          <span className="font-semibold uppercase tracking-wide text-slate-500 text-[10px] mr-1">Classification:</span>
-          <span
-            className="inline-flex items-center px-2 py-0.5 rounded font-semibold bg-red-600 text-white border border-red-700 shadow-sm"
-            title="High or Very High overall RMM. Test pack: Significant Risk, Area of Focus, Normal, Mandatory. Analytical Review excluded."
-          >
-            Significant Risk
-          </span>
-          <span
-            className="inline-flex items-center px-2 py-0.5 rounded font-semibold bg-orange-500 text-white border border-orange-600 shadow-sm"
-            title="Medium overall RMM. Test pack: Area of Focus, Normal, Mandatory. Significant Risk and Analytical Review excluded."
-          >
-            Area of Focus
-          </span>
-          <span
-            className="inline-flex items-center px-2 py-0.5 rounded font-semibold bg-green-600 text-white border border-green-700 shadow-sm"
-            title="Balance above Performance Materiality with no RMM assigned. Test pack: Normal, Mandatory."
-          >
-            Normal
-          </span>
-          <span
-            className="inline-flex items-center px-2 py-0.5 rounded font-semibold bg-blue-600 text-white border border-blue-700 shadow-sm"
-            title="Balance at or below Performance Materiality with no RMM. Test pack: Analytical Review, Mandatory only — no substantive testing."
-          >
-            Analytical Review
-          </span>
-          <span className="text-[10px] text-slate-500 ml-2">Hover each pill for the full rule.</span>
-        </div>
-      )}
-
       {/* Tab-level error summary bar */}
       {!activeOtherTab && (() => {
         const levelConcs = dbConclusions.filter(c =>
