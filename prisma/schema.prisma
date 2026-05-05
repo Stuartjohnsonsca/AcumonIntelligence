@@ -1968,6 +1968,10 @@ model AuditEngagement {
   periodId                String    @map("period_id")
   firmId                  String    @map("firm_id")
   auditType               String    @map("audit_type") // SME | PIE | SME_CONTROLS | PIE_CONTROLS | GROUP
+  // Accounting framework the engagement reports under (FRS102 | IFRS | …).
+  // Combined with auditType to look up the firm's per-pair schedule
+  // configuration (Methodology Admin → Audit Type Configuration).
+  framework               String    @default("FRS102") @map("framework")
   status                  String    @default("pre_start") // pre_start | active | review | complete | archived
   methodologyVersionId    String?   @map("methodology_version_id")
   infoRequestType         String    @default("standard") @map("info_request_type") // preliminary | standard
@@ -2280,11 +2284,21 @@ model AuditMemberIndependenceHistory {
   memberIndependenceId String    @map("member_independence_id")
   engagementId         String    @map("engagement_id")
   userId               String    @map("user_id")
-  status               String // confirmed | declined
+  status               String // confirmed | declined | outstanding
   isIndependent        Boolean?  @map("is_independent")
   answers              Json?
   notes                String?   @db.Text
   notifiedAt           DateTime? @map("notified_at")
+  // What kind of event this row represents:
+  //   submission  — team member submitted the questionnaire (confirm or decline)
+  //   unbar       — Methodology Admin / Super User cleared a previous decline,
+  //                 returning the row to outstanding so the user re-confirms.
+  // Default 'submission' so existing rows keep their meaning after the
+  // column is added.
+  action               String    @default("submission")
+  // Who performed the action. Null for old rows (before the column existed)
+  // and for self-submissions where the actor is the same as `userId`.
+  actorUserId          String?   @map("actor_user_id")
   recordedAt           DateTime  @default(now()) @map("recorded_at")
 
   memberIndependence AuditMemberIndependence @relation(fields: [memberIndependenceId], references: [id], onDelete: Cascade)

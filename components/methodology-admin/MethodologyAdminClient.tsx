@@ -1,7 +1,7 @@
 'use client';
 
 import Link from 'next/link';
-import { BookOpen, Settings, FileText, ClipboardCheck, Users, FileStack, Mail, AlertTriangle, ShieldAlert, Brain, ShieldCheck, Search, Gauge } from 'lucide-react';
+import { BookOpen, Settings, FileText, ClipboardCheck, Users, FileStack, Mail, AlertTriangle, ShieldAlert, Brain, ShieldCheck, ShieldOff, Search, Gauge } from 'lucide-react';
 
 // Map href → registry howto-id so the global guide can point at any tile.
 // Keep these in sync with HOWTO_ELEMENTS in lib/howto/registry.ts.
@@ -9,6 +9,7 @@ const HOWTO_BY_HREF: Record<string, string> = {
   '/methodology-admin/firm-assumptions':       'tile.firm-assumptions',
   '/methodology-admin/validation-rules':       'tile.validation-rules',
   '/methodology-admin/independence-questions': 'tile.independence-questions',
+  '/methodology-admin/independence-bars':      'tile.independence-bars',
   '/methodology-admin/specialist-roles':       'tile.specialist-roles',
   '/methodology-admin/tb-ai-corpus':           'tile.tb-ai-corpus',
   '/methodology-admin/audit-methodology':      'tile.audit-methodology',
@@ -46,6 +47,14 @@ const tiles = [
     icon: ShieldCheck,
     color: 'bg-emerald-50 border-emerald-200 hover:bg-emerald-100',
     iconColor: 'text-emerald-600',
+  },
+  {
+    title: 'Independence Bars',
+    description: 'Review and clear Independence-related lockouts (per User × Client/Period). Every unbar is recorded in the audit trail.',
+    href: '/methodology-admin/independence-bars',
+    icon: ShieldOff,
+    color: 'bg-red-50 border-red-200 hover:bg-red-100',
+    iconColor: 'text-red-600',
   },
   {
     title: 'Specialist Roles',
