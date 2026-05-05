@@ -1,7 +1,8 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { FileText, Loader2, Eye, Download, X } from 'lucide-react';
+import { FileText, Loader2, Eye, Download, X, MessageSquare } from 'lucide-react';
+import { InterrogateBotModal } from './InterrogateBotModal';
 
 interface ReportRow {
   id: string;
@@ -39,6 +40,7 @@ export function PdfReportPanel({ engagementId }: { engagementId: string }) {
   const [generating, setGenerating] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [viewing, setViewing] = useState<ReportRow | null>(null);
+  const [interrogating, setInterrogating] = useState(false);
 
   async function refresh() {
     try {
@@ -84,20 +86,32 @@ export function PdfReportPanel({ engagementId }: { engagementId: string }) {
 
   return (
     <div className="bg-white border border-slate-200 rounded-lg p-4">
-      <div className="flex items-center justify-between mb-3">
+      <div className="flex items-center justify-between mb-3 gap-2">
         <h3 className="text-sm font-semibold text-slate-800 flex items-center gap-2">
           <FileText className="h-4 w-4 text-blue-600" /> Audit File — PDF Snapshots
         </h3>
-        {list?.canGenerate && (
+        <div className="flex items-center gap-2">
+          {/* InterrogateBot — Q&A surface over the engagement's content.
+              Available to anyone with read access (the bot itself is
+              bounded to AUDIT_FILE so it can't expose new data). */}
           <button
-            onClick={generate}
-            disabled={generating}
-            className="inline-flex items-center gap-1 text-xs px-3 py-1 bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50"
+            onClick={() => setInterrogating(true)}
+            className="inline-flex items-center gap-1 text-xs px-3 py-1 bg-indigo-600 text-white rounded hover:bg-indigo-700"
+            title="Ask questions about this audit file — answers are strictly from the file content"
           >
-            {generating ? <Loader2 className="h-3 w-3 animate-spin" /> : <FileText className="h-3 w-3" />}
-            {generating ? 'Generating…' : 'Generate PDF Report'}
+            <MessageSquare className="h-3 w-3" /> InterrogateBot
           </button>
-        )}
+          {list?.canGenerate && (
+            <button
+              onClick={generate}
+              disabled={generating}
+              className="inline-flex items-center gap-1 text-xs px-3 py-1 bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50"
+            >
+              {generating ? <Loader2 className="h-3 w-3 animate-spin" /> : <FileText className="h-3 w-3" />}
+              {generating ? 'Generating…' : 'Generate PDF Report'}
+            </button>
+          )}
+        </div>
       </div>
 
       {error && (
@@ -170,6 +184,10 @@ export function PdfReportPanel({ engagementId }: { engagementId: string }) {
             onClick={e => e.stopPropagation()}
           />
         </div>
+      )}
+
+      {interrogating && (
+        <InterrogateBotModal engagementId={engagementId} onClose={() => setInterrogating(false)} />
       )}
     </div>
   );
