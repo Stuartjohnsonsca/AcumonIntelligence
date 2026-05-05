@@ -28,6 +28,8 @@ import { ReviewPointsPanel } from './panels/ReviewPointsPanel';
 import { ManagementPointPanel } from './panels/ManagementPointPanel';
 import { RIMattersPanel } from './panels/RIMattersPanel';
 import { CompletionPanel } from './panels/CompletionPanel';
+import { TabDocumentsFooter } from './panels/TabDocumentsFooter';
+import { SpecialistRequestsPanel } from './panels/SpecialistRequestsPanel';
 import {
   buildVisibilityChecker,
   collectQAScheduleKeys,
@@ -930,6 +932,10 @@ export function EngagementTabs({ engagement, auditType, clientName, periodEndDat
             </span>
           )}
         </button>
+        {/* Specialist review hub — sibling to RI Matters. Self-hides when
+            no specialist requests have ever been sent, so engagements
+            without specialists keep the action bar clean. */}
+        <SpecialistRequestsPanel engagementId={engagement.id} />
         <div className="flex-1" />
         {!isPreStart && lastCompletionTab && !showCompletion && (
           <button
@@ -1404,6 +1410,19 @@ export function EngagementTabs({ engagement, auditType, clientName, periodEndDat
             </SignOffHeader>
           ) : (
             <TabErrorBoundary tabName={activeTab} engagementId={engagement.id}>{renderTabContent()}</TabErrorBoundary>
+          )}
+
+          {/* Per-tab document attachments — every tab except Documents
+              itself gets a footer that lists, uploads, allocates, and
+              copies-from-prior-period documents associated with the tab.
+              Documents tab is the master list, so showing the footer
+              there would duplicate UI. */}
+          {activeTab !== 'documents' && (
+            <TabDocumentsFooter
+              engagementId={engagement.id}
+              tab={activeTab}
+              tabLabel={TABS.find(t => t.key === activeTab)?.label}
+            />
           )}
 
           {/* Start Audit button — only shown on Opening tab when engagement is pre_start */}

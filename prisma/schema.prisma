@@ -2925,6 +2925,20 @@ model ScheduleSpecialistReview {
   assigneeEmail String    @map("assignee_email")
   status        String    @default("pending") // pending | accepted | rejected
   comments      String?
+  // Files the specialist attached when responding. JSON array of
+  // { id, fileName, storagePath, containerName, fileSize, mimeType, uploadedAt }.
+  // Null when the specialist hasn't attached anything yet — treated as
+  // an empty array on read.
+  attachments   Json?
+  // True once an auditor has acted on the response (e.g. raised an RI
+  // Matter / Error / Review Point from it). Drives the green-vs-red
+  // count dot on the engagement-level Specialist Requests button: red
+  // for unactioned responses, green once the auditor has acknowledged
+  // by spawning a follow-up.
+  actioned      Boolean   @default(false)
+  actionedAt    DateTime? @map("actioned_at")
+  actionedById  String?   @map("actioned_by_id")
+  actionedByName String?  @map("actioned_by_name")
   token         String    @unique
   sentById      String?   @map("sent_by_id")
   sentByName    String?   @map("sent_by_name")
