@@ -3,6 +3,12 @@ import { auth } from '@/lib/auth';
 import { prisma } from '@/lib/db';
 import { AuditTypeSchedulesClient } from '@/components/methodology-admin/AuditTypeSchedulesClient';
 import { BackButton } from '@/components/methodology-admin/BackButton';
+import {
+  parsePairKey,
+  isFrameworkOptionsKey,
+  DEFAULT_FRAMEWORK,
+  pairKey,
+} from '@/lib/audit-type-framework-key';
 
 const DEFAULT_MASTER_SCHEDULES = [
   { key: 'permanent_file_questions', label: 'Permanent File', defaultStage: 'planning' },
@@ -34,6 +40,19 @@ const DEFAULT_MASTER_SCHEDULES = [
   { key: 'eqr_review', label: 'EQR Review', defaultStage: 'completion' },
 ];
 
+/**
+ * Resolve a stored audit_type value into the (auditType, framework) pair
+ * the UI groups by. Bare legacy rows (no `::`) are surfaced under the
+ * default framework so the admin sees their previous config in that
+ * slot until they re-save.
+ */
+function resolveStoredKey(rawAuditType: string): { auditType: string; framework: string } | null {
+  if (isFrameworkOptionsKey(rawAuditType)) return null;
+  const parsed = parsePairKey(rawAuditType);
+  if (parsed) return parsed;
+  return { auditType: rawAuditType, framework: DEFAULT_FRAMEWORK };
+}
+
 export default async function AuditTypesPage() {
   const session = await auth();
   if (!session?.user?.twoFactorVerified) redirect('/login');
@@ -53,27 +72,40 @@ export default async function AuditTypesPage() {
     }).catch(() => null),
   ]);
 
+  // Mappings keyed by composite `<auditType>::<framework>` so the
+  // client can switch the schedule list per pair.
   const mappings: Record<string, string[]> = {};
   const stageKeyedMappings: Record<string, any> = {};
   let frameworkOptions: string[] = [];
 
   for (const t of templates) {
-    if (t.auditType === '__framework_options') {
+    if (isFrameworkOptionsKey(t.auditType)) {
       frameworkOptions = t.items as string[];
-    } else {
-      const raw = t.items as any;
-      if (raw && typeof raw === 'object' && !Array.isArray(raw) && Array.isArray(raw.planning)) {
-        stageKeyedMappings[t.auditType] = raw;
-        mappings[t.auditType] = [...raw.planning, ...raw.fieldwork, ...raw.completion];
-      } else if (Array.isArray(raw)) {
-        mappings[t.auditType] = raw as string[];
-      }
+      continue;
+    }
+    const resolved = resolveStoredKey(t.auditType);
+    if (!resolved) continue;
+    const composite = pairKey(resolved.auditType, resolved.framework);
+
+    const raw = t.items as any;
+    if (raw && typeof raw === 'object' && !Array.isArray(raw) && Array.isArray(raw.planning)) {
+      stageKeyedMappings[composite] = raw;
+      mappings[composite] = [...raw.planning, ...raw.fieldwork, ...raw.completion];
+    } else if (Array.isArray(raw)) {
+      mappings[composite] = raw as string[];
     }
   }
 
-  const frameworks: Record<string, string> = {};
+  // Surface the most recently saved framework per audit type as the
+  // "primary" framework label — only used as the initial highlight in
+  // the editor so the admin lands on a populated tab.
+  const primaryFrameworkByAuditType: Record<string, string> = {};
   for (const t of fwTemplates) {
-    frameworks[t.auditType] = (t.items as unknown as { framework: string })?.framework || '';
+    const resolved = resolveStoredKey(t.auditType);
+    if (!resolved) continue;
+    if (!primaryFrameworkByAuditType[resolved.auditType]) {
+      primaryFrameworkByAuditType[resolved.auditType] = resolved.framework;
+    }
   }
 
   const masterSchedules = (masterRow?.data as any)?.schedules || DEFAULT_MASTER_SCHEDULES;
@@ -83,13 +115,16 @@ export default async function AuditTypesPage() {
       <BackButton href="/methodology-admin/audit-methodology" label="Back to Audit Methodology" />
       <div className="mb-6">
         <h1 className="text-2xl font-bold text-slate-900">Audit Type Configuration</h1>
-        <p className="text-slate-600 mt-1">Configure accounting frameworks, master schedule list, and schedule selection per audit type</p>
+        <p className="text-slate-600 mt-1">
+          Configure schedule selection per <strong>(Audit Type × Framework)</strong> pair. Each pair can carry its
+          own list of schedules and triggers. Frameworks (FRS102, IFRS, etc.) are firm-wide and configured below.
+        </p>
       </div>
       <AuditTypeSchedulesClient
         firmId={firmId}
         initialMappings={mappings}
         initialStageKeyedMappings={stageKeyedMappings}
-        initialFrameworks={frameworks}
+        initialFrameworkByAuditType={primaryFrameworkByAuditType}
         initialFrameworkOptions={frameworkOptions.length > 0 ? frameworkOptions : undefined}
         initialMasterSchedules={masterSchedules}
       />

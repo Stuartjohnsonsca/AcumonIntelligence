@@ -565,7 +565,12 @@ export function EngagementTabs({ engagement, auditType, clientName, periodEndDat
     }));
   }, []);
 
-  // Fetch audit type → schedule mapping (order + stage-keyed shape + triggers)
+  // Fetch (audit type, framework) → schedule mapping (order + stage-keyed
+  // shape + triggers). The composite key `<auditType>::<framework>` is
+  // tried first so each pair can carry its own list. If the firm hasn't
+  // configured the engagement's framework, we fall back to the bare
+  // auditType key so legacy data still resolves during the migration
+  // window.
   useEffect(() => {
     let cancelled = false;
     (async () => {
@@ -575,22 +580,26 @@ export function EngagementTabs({ engagement, auditType, clientName, periodEndDat
         const data = await res.json();
         if (cancelled) return;
 
-        if (data?.mappings?.[auditType]) {
-          const orderedKeys = data.mappings[auditType] as string[];
+        const fw = engagement.framework || 'FRS102';
+        const compositeKey = `${auditType}::${fw}`;
+        const lookupKeys = [compositeKey, auditType];
+        const orderedKeys = lookupKeys
+          .map(k => (data?.mappings as Record<string, string[]> | undefined)?.[k])
+          .find(v => Array.isArray(v) && v.length > 0) as string[] | undefined;
+
+        if (orderedKeys) {
           setEnabledSchedules(new Set(orderedKeys));
           setScheduleOrder(orderedKeys);
-          // Dump to DevTools so the tab order is always diagnosable
-          // without needing the visible overlay. Filter noise in prod
-          // consoles by using `debug` level (hidden by default unless
-          // the user enables verbose logging).
           // eslint-disable-next-line no-console
-          console.debug('[EngagementTabs] scheduleOrder for', auditType, ':', orderedKeys);
+          console.debug('[EngagementTabs] scheduleOrder for', compositeKey, ':', orderedKeys);
         } else {
           // eslint-disable-next-line no-console
-          console.debug('[EngagementTabs] no scheduleOrder mapping for', auditType, '— full response:', data);
+          console.debug('[EngagementTabs] no scheduleOrder mapping for', compositeKey, '— full response:', data);
         }
 
-        const sk = data?.stageKeyedMappings?.[auditType];
+        const sk = lookupKeys
+          .map(k => (data?.stageKeyedMappings as Record<string, any> | undefined)?.[k])
+          .find(v => v);
         if (sk) {
           setStageKeyedMapping({ planning: sk.planning || [], fieldwork: sk.fieldwork || [], completion: sk.completion || [] });
           const triggers: Trigger[] = Array.isArray(sk.triggers) ? sk.triggers : [];
@@ -665,7 +674,7 @@ export function EngagementTabs({ engagement, auditType, clientName, periodEndDat
       }
     })();
     return () => { cancelled = true; };
-  }, [auditType, engagement.id]);
+  }, [auditType, engagement.id, engagement.framework]);
 
   // ── Trigger-based visibility evaluation ──
   // Build the engagement context once per render, then compile a visibility checker

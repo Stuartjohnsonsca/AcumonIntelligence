@@ -28,6 +28,12 @@ import {
   type StageKeyedMapping as LibStageKeyedMapping,
   type OldCondition,
 } from '@/lib/schedule-triggers';
+import {
+  pairKey,
+  parsePairKey,
+  DEFAULT_FRAMEWORK,
+  FRAMEWORK_OPTIONS_KEY,
+} from '@/lib/audit-type-framework-key';
 
 // ═════ Types ═════
 
@@ -46,9 +52,15 @@ type StageKeyedMapping = LibStageKeyedMapping;
 
 interface Props {
   firmId: string;
+  /** Mappings keyed by composite `<auditType>::<framework>` so each
+   *  pair can carry its own schedule list. Pre-migration data (legacy
+   *  bare `<auditType>` rows) is normalised to `<auditType>::FRS102`
+   *  on the server before the page renders. */
   initialMappings: Record<string, string[]>;
   initialStageKeyedMappings?: Record<string, StageKeyedMapping>;
-  initialFrameworks?: Record<string, string>;
+  /** Helper: per-audit-type "primary" framework — used only to choose
+   *  which framework slot the editor should land on first. */
+  initialFrameworkByAuditType?: Record<string, string>;
   initialFrameworkOptions?: string[];
   initialMasterSchedules?: MasterSchedule[];
 }
@@ -106,16 +118,23 @@ function newTriggerId(): string {
   return `trig-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`;
 }
 
-/** Normalise incoming server data into a StageKeyedMapping with a triggers array. */
+/** Normalise incoming server data into a StageKeyedMapping with a triggers array.
+ *  Lookup key is the composite `<auditType>::<framework>` value. When no
+ *  mapping exists for the given composite key we return an empty mapping
+ *  rather than seeding with master defaults — empty signals "this pair
+ *  hasn't been configured yet" so the admin sees a blank editor and
+ *  composes the list themselves. (Previously seeding from master defaults
+ *  was helpful for the legacy 5 audit types; with framework pairs there
+ *  are many more slots and the master-default seed obscured which pairs
+ *  the admin has actually configured.) */
 function normaliseToStageKeyed(
-  auditType: string,
+  composite: string,
   stageKeyedIn: Record<string, StageKeyedMapping> | undefined,
   flatIn: Record<string, string[]>,
   master: MasterSchedule[],
 ): StageKeyedMapping {
-  const incoming = stageKeyedIn?.[auditType];
+  const incoming = stageKeyedIn?.[composite];
   if (incoming) {
-    // Server sends triggers + maybe conditions. Migrate any legacy conditions on the fly.
     const migrated = migrateOldToTriggers({
       planning: incoming.planning || [],
       fieldwork: incoming.fieldwork || [],
@@ -125,8 +144,7 @@ function normaliseToStageKeyed(
     });
     return { ...migrated, conditions: undefined };
   }
-  // Fall back to flat list (very old shape) or master defaults
-  const flat = flatIn[auditType];
+  const flat = flatIn[composite];
   if (flat && flat.length > 0) {
     const out = emptyMapping();
     for (const k of flat) {
@@ -136,12 +154,7 @@ function normaliseToStageKeyed(
     }
     return out;
   }
-  const out = emptyMapping();
-  for (const s of master) {
-    const stage = (s.defaultStage || s.stage || 'planning') as Stage;
-    out[stage].push(s.key);
-  }
-  return out;
+  return emptyMapping();
 }
 
 // ═════ Sortable schedule card ═════
@@ -748,17 +761,11 @@ export function AuditTypeSchedulesClient({
   firmId,
   initialMappings,
   initialStageKeyedMappings,
-  initialFrameworks = {},
+  initialFrameworkByAuditType = {},
   initialFrameworkOptions,
   initialMasterSchedules,
 }: Props) {
-  // Pull the firm's configurable audit-type catalogue. Falls back to
-  // the historic 5-value list during the initial render before the
-  // hook resolves, so the page never flashes empty. Only ACTIVE types
-  // are presented in the editor; built-ins that the firm has hidden
-  // are excluded so the admin's Tab strip reflects what they've
-  // configured. Renamed labels (e.g. "Statutory Audit" → "Stat
-  // Audit") flow through automatically.
+  // Pull the firm's configurable audit-type catalogue.
   const dynamicAuditTypes = useAuditTypes();
   const AUDIT_TYPES = useMemo(() => {
     const active = dynamicAuditTypes.filter(a => a.isActive);
@@ -770,51 +777,79 @@ export function AuditTypeSchedulesClient({
     Array.isArray(initialMasterSchedules) && initialMasterSchedules.length > 0 ? initialMasterSchedules : []
   );
 
+  const [frameworkOptions, setFrameworkOptions] = useState<string[]>(initialFrameworkOptions || DEFAULT_FRAMEWORKS);
+  const [newFramework, setNewFramework] = useState('');
+
+  // Mappings are keyed internally by composite `<auditType>::<framework>`
+  // so each pair can carry an independent schedule list. Initial state
+  // is whatever the server returned — pairs the admin hasn't configured
+  // simply don't have an entry, and lazily get an empty mapping when
+  // the user navigates to them (see ensurePair below).
   const [stageMappings, setStageMappings] = useState<Record<string, StageKeyedMapping>>(() => {
     const m: Record<string, StageKeyedMapping> = {};
-    for (const at of FALLBACK_AUDIT_TYPES) {
-      m[at.key] = normaliseToStageKeyed(at.key, initialStageKeyedMappings, initialMappings, masterSchedules);
+    if (initialStageKeyedMappings) {
+      for (const composite of Object.keys(initialStageKeyedMappings)) {
+        m[composite] = normaliseToStageKeyed(composite, initialStageKeyedMappings, initialMappings, masterSchedules);
+      }
+    }
+    for (const composite of Object.keys(initialMappings)) {
+      if (!m[composite]) {
+        m[composite] = normaliseToStageKeyed(composite, initialStageKeyedMappings, initialMappings, masterSchedules);
+      }
     }
     return m;
   });
 
-  // Once the dynamic list resolves, ensure stageMappings has an
-  // entry for every active audit type — including any custom ones
-  // the admin added. Defaults to an empty stage-keyed mapping (no
-  // schedules assigned to that audit type yet).
-  useEffect(() => {
-    setStageMappings(prev => {
-      const next = { ...prev };
-      let changed = false;
-      for (const at of AUDIT_TYPES) {
-        if (!(at.key in next)) {
-          next[at.key] = normaliseToStageKeyed(at.key, initialStageKeyedMappings, initialMappings, masterSchedules);
-          changed = true;
-        }
-      }
-      return changed ? next : prev;
-    });
-  }, [AUDIT_TYPES, initialStageKeyedMappings, initialMappings, masterSchedules]);
-
+  // Active selection is two dimensions: audit type (top-level tabs) and
+  // framework (sub-tabs within an audit type). The composite key is
+  // derived for storage / lookup.
   const [activeAuditType, setActiveAuditType] = useState(AUDIT_TYPES[0]?.key || FALLBACK_AUDIT_TYPES[0].key);
+  const [activeFramework, setActiveFramework] = useState<string>(() => {
+    const at = AUDIT_TYPES[0]?.key || FALLBACK_AUDIT_TYPES[0].key;
+    return initialFrameworkByAuditType[at] || frameworkOptions[0] || DEFAULT_FRAMEWORK;
+  });
 
-  // If the active tab references a code that no longer exists (admin
-  // removed a custom type), fall back to the first available one.
+  const activeKey = pairKey(activeAuditType, activeFramework);
+
+  // If the active audit type references a code that no longer exists
+  // (admin removed a custom type), fall back to the first available one.
   useEffect(() => {
     if (!AUDIT_TYPES.some(a => a.key === activeAuditType) && AUDIT_TYPES.length > 0) {
       setActiveAuditType(AUDIT_TYPES[0].key);
     }
   }, [AUDIT_TYPES, activeAuditType]);
-  const [copyFrom, setCopyFrom] = useState<string>('');
 
-  // Frameworks
-  const [frameworks, setFrameworks] = useState<Record<string, string>>(() => {
-    const f: Record<string, string> = {};
-    for (const at of AUDIT_TYPES) f[at.key] = initialFrameworks[at.key] || '';
-    return f;
-  });
-  const [frameworkOptions, setFrameworkOptions] = useState<string[]>(initialFrameworkOptions || DEFAULT_FRAMEWORKS);
-  const [newFramework, setNewFramework] = useState('');
+  // If the active framework was removed from the firm's framework list,
+  // fall back to the first available one.
+  useEffect(() => {
+    if (frameworkOptions.length > 0 && !frameworkOptions.includes(activeFramework)) {
+      setActiveFramework(frameworkOptions[0]);
+    }
+  }, [frameworkOptions, activeFramework]);
+
+  // When the admin switches audit type, jump to that audit type's
+  // primary framework if it has one configured — saves a click.
+  useEffect(() => {
+    const primary = initialFrameworkByAuditType[activeAuditType];
+    if (primary && frameworkOptions.includes(primary) && primary !== activeFramework) {
+      setActiveFramework(primary);
+    }
+    // intentionally not depending on activeFramework — we only want to
+    // re-snap when the audit type changes
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeAuditType]);
+
+  // Lazily initialise an empty mapping for the active pair when the
+  // admin navigates to a slot that has never been configured.
+  useEffect(() => {
+    setStageMappings(prev => {
+      if (prev[activeKey]) return prev;
+      return { ...prev, [activeKey]: emptyMapping() };
+    });
+  }, [activeKey]);
+
+  // Source pair for "Copy from" — composite key string.
+  const [copyFrom, setCopyFrom] = useState<string>('');
 
   // Master editor
   const [showMasterEditor, setShowMasterEditor] = useState(false);
@@ -840,17 +875,19 @@ export function AuditTypeSchedulesClient({
   // for plain move/reorder.
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 5 } }));
 
-  const activeMapping = stageMappings[activeAuditType] || emptyMapping();
+  const activeMapping = stageMappings[activeKey] || emptyMapping();
 
-  // Collect usage info across ALL audit types (for orphan recovery + used-in badges)
+  // Collect usage info across ALL configured (auditType, framework) pairs
+  // (for orphan recovery + "used in" badges). Each entry maps schedule
+  // key → Set of composite keys it's currently in.
   const usageByKey = new Map<string, Set<string>>();
-  for (const at of AUDIT_TYPES) {
-    const mapping = stageMappings[at.key];
+  for (const composite of Object.keys(stageMappings)) {
+    const mapping = stageMappings[composite];
     if (!mapping) continue;
     const allKeys = [...mapping.planning, ...mapping.fieldwork, ...mapping.completion];
     for (const k of allKeys) {
       if (!usageByKey.has(k)) usageByKey.set(k, new Set());
-      usageByKey.get(k)!.add(at.key);
+      usageByKey.get(k)!.add(composite);
     }
   }
 
@@ -871,7 +908,8 @@ export function AuditTypeSchedulesClient({
     .filter(k => !assignedSet.has(k))
     .map(k => {
       const master = masterSchedules.find(s => s.key === k);
-      const usedIn = Array.from(usageByKey.get(k) || []).filter(at => at !== activeAuditType);
+      // "Used in" labels are pair labels — e.g. "Statutory Audit · FRS102".
+      const usedIn = Array.from(usageByKey.get(k) || []).filter(c => c !== activeKey);
       return {
         key: k,
         label: master?.label || deriveLabel(k),
@@ -930,7 +968,7 @@ export function AuditTypeSchedulesClient({
 
     setStageMappings(prev => {
       const next = { ...prev };
-      const am = { ...next[activeAuditType] };
+      const am = { ...(next[activeKey] || emptyMapping()) };
       const lookup: Record<Stage, string[]> = {
         planning: [...am.planning],
         fieldwork: [...am.fieldwork],
@@ -941,7 +979,6 @@ export function AuditTypeSchedulesClient({
       const targetList = lookup[targetStage!];
 
       if (sourceStage === targetStage) {
-        // Same-stage drop — pure reorder within the one list.
         const oldIdx = sourceList.indexOf(sourceKey);
         if (oldIdx === -1) return prev;
         if (appendToEnd) {
@@ -952,11 +989,9 @@ export function AuditTypeSchedulesClient({
           lookup[sourceStage] = arrayMove(sourceList, oldIdx, newIdx);
         }
       } else {
-        // Cross-stage drop. Move by default, or persist-across if Shift held.
         const alreadyInTarget = targetList.includes(sourceKey);
 
         if (persistAcross) {
-          // Leave source row in place; add to target (if not already there).
           if (!alreadyInTarget) {
             if (appendToEnd || !targetKey) {
               targetList.push(sourceKey);
@@ -966,7 +1001,6 @@ export function AuditTypeSchedulesClient({
             }
           }
         } else {
-          // Plain move: remove from source, insert into target.
           const srcIdx = sourceList.indexOf(sourceKey);
           if (srcIdx !== -1) sourceList.splice(srcIdx, 1);
           if (!alreadyInTarget) {
@@ -983,7 +1017,7 @@ export function AuditTypeSchedulesClient({
       am.planning = lookup.planning;
       am.fieldwork = lookup.fieldwork;
       am.completion = lookup.completion;
-      next[activeAuditType] = am;
+      next[activeKey] = am;
       return next;
     });
     setSaved(false);
@@ -994,7 +1028,7 @@ export function AuditTypeSchedulesClient({
   function addTrigger() {
     setStageMappings(prev => {
       const next = { ...prev };
-      const am = { ...next[activeAuditType] };
+      const am = { ...(next[activeKey] || emptyMapping()) };
       const newT: Trigger = {
         id: newTriggerId(),
         name: `Trigger ${am.triggers.length + 1}`,
@@ -1002,7 +1036,7 @@ export function AuditTypeSchedulesClient({
         members: [],
       };
       am.triggers = [...am.triggers, newT];
-      next[activeAuditType] = am;
+      next[activeKey] = am;
       return next;
     });
     setSaved(false);
@@ -1011,9 +1045,9 @@ export function AuditTypeSchedulesClient({
   function updateTrigger(id: string, patch: Partial<Trigger>) {
     setStageMappings(prev => {
       const next = { ...prev };
-      const am = { ...next[activeAuditType] };
+      const am = { ...(next[activeKey] || emptyMapping()) };
       am.triggers = am.triggers.map(t => t.id === id ? { ...t, ...patch } : t);
-      next[activeAuditType] = am;
+      next[activeKey] = am;
       return next;
     });
     setSaved(false);
@@ -1022,9 +1056,9 @@ export function AuditTypeSchedulesClient({
   function deleteTrigger(id: string) {
     setStageMappings(prev => {
       const next = { ...prev };
-      const am = { ...next[activeAuditType] };
+      const am = { ...(next[activeKey] || emptyMapping()) };
       am.triggers = am.triggers.filter(t => t.id !== id);
-      next[activeAuditType] = am;
+      next[activeKey] = am;
       return next;
     });
     setSaved(false);
@@ -1033,13 +1067,13 @@ export function AuditTypeSchedulesClient({
   function addKeyToTrigger(scheduleKey: string, triggerId: string) {
     setStageMappings(prev => {
       const next = { ...prev };
-      const am = { ...next[activeAuditType] };
+      const am = { ...(next[activeKey] || emptyMapping()) };
       am.triggers = am.triggers.map(t => {
         if (t.id !== triggerId) return t;
         if (t.members.includes(scheduleKey)) return t;
         return { ...t, members: [...t.members, scheduleKey] };
       });
-      next[activeAuditType] = am;
+      next[activeKey] = am;
       return next;
     });
     setSaved(false);
@@ -1048,12 +1082,12 @@ export function AuditTypeSchedulesClient({
   function removeKeyFromTrigger(scheduleKey: string, triggerId: string) {
     setStageMappings(prev => {
       const next = { ...prev };
-      const am = { ...next[activeAuditType] };
+      const am = { ...(next[activeKey] || emptyMapping()) };
       am.triggers = am.triggers.map(t => {
         if (t.id !== triggerId) return t;
         return { ...t, members: t.members.filter(m => m !== scheduleKey) };
       });
-      next[activeAuditType] = am;
+      next[activeKey] = am;
       return next;
     });
     setSaved(false);
@@ -1069,7 +1103,7 @@ export function AuditTypeSchedulesClient({
   function toggleQuickCondition(scheduleKey: string, kind: QuickKind) {
     setStageMappings(prev => {
       const next = { ...prev };
-      const am = { ...next[activeAuditType] };
+      const am = { ...(next[activeKey] || emptyMapping()) };
       let triggers = [...am.triggers];
 
       // Find triggers with the matching kind that contain this schedule
@@ -1112,7 +1146,7 @@ export function AuditTypeSchedulesClient({
       }
 
       am.triggers = triggers;
-      next[activeAuditType] = am;
+      next[activeKey] = am;
       return next;
     });
     setSaved(false);
@@ -1157,13 +1191,13 @@ export function AuditTypeSchedulesClient({
   function removeKey(key: string) {
     setStageMappings(prev => {
       const next = { ...prev };
-      const am = { ...next[activeAuditType] };
+      const am = { ...(next[activeKey] || emptyMapping()) };
       am.planning = am.planning.filter(k => k !== key);
       am.fieldwork = am.fieldwork.filter(k => k !== key);
       am.completion = am.completion.filter(k => k !== key);
       // Also remove from any triggers in this audit type
       am.triggers = am.triggers.map(t => ({ ...t, members: t.members.filter(m => m !== key) }));
-      next[activeAuditType] = am;
+      next[activeKey] = am;
       return next;
     });
     setSaved(false);
@@ -1179,11 +1213,11 @@ export function AuditTypeSchedulesClient({
   function addKeyToStage(key: string, stage: Stage) {
     setStageMappings(prev => {
       const next = { ...prev };
-      const am = { ...next[activeAuditType] };
+      const am = { ...(next[activeKey] || emptyMapping()) };
       if (!am[stage].includes(key)) {
         am[stage] = [...am[stage], key];
       }
-      next[activeAuditType] = am;
+      next[activeKey] = am;
       return next;
     });
     setSaved(false);
@@ -1200,7 +1234,7 @@ export function AuditTypeSchedulesClient({
   function togglePresenceInStage(key: string, stage: Stage) {
     setStageMappings(prev => {
       const next = { ...prev };
-      const am = { ...next[activeAuditType] };
+      const am = { ...(next[activeKey] || emptyMapping()) };
       const currentlyIn = am[stage].includes(key);
       const totalPresence =
         (am.planning.includes(key) ? 1 : 0) +
@@ -1214,18 +1248,19 @@ export function AuditTypeSchedulesClient({
       } else {
         am[stage] = [...am[stage], key];
       }
-      next[activeAuditType] = am;
+      next[activeKey] = am;
       return next;
     });
     setSaved(false);
   }
 
   async function copyFromAuditType() {
-    if (!copyFrom || copyFrom === activeAuditType) return;
+    // copyFrom is a composite key — `<auditType>::<framework>`.
+    if (!copyFrom || copyFrom === activeKey) return;
     setStageMappings(prev => {
       const source = prev[copyFrom];
       if (!source) return prev;
-      // Deep copy triggers with new ids so they don't collide across audit types
+      // Deep copy triggers with new ids so they don't collide across pairs.
       const copiedTriggers: Trigger[] = (source.triggers || []).map(t => ({
         id: newTriggerId(),
         name: t.name,
@@ -1238,7 +1273,7 @@ export function AuditTypeSchedulesClient({
         completion: [...source.completion],
         triggers: copiedTriggers,
       };
-      return { ...prev, [activeAuditType]: copied };
+      return { ...prev, [activeKey]: copied };
     });
     setSaved(false);
     setCopyFrom('');
@@ -1259,13 +1294,15 @@ export function AuditTypeSchedulesClient({
     setMasterSchedules(prev => prev.filter(s => s.key !== key));
     setStageMappings(prev => {
       const next = { ...prev };
-      for (const at of AUDIT_TYPES) {
-        const am = { ...next[at.key] };
+      // Strip the schedule from every (auditType, framework) pair we have configured.
+      for (const composite of Object.keys(next)) {
+        const am = { ...next[composite] };
+        if (!am.planning) continue; // skip undefined entries
         am.planning = am.planning.filter(k => k !== key);
         am.fieldwork = am.fieldwork.filter(k => k !== key);
         am.completion = am.completion.filter(k => k !== key);
-        am.triggers = am.triggers.map(t => ({ ...t, members: t.members.filter(m => m !== key) }));
-        next[at.key] = am;
+        am.triggers = (am.triggers || []).map(t => ({ ...t, members: t.members.filter(m => m !== key) }));
+        next[composite] = am;
       }
       return next;
     });
@@ -1306,13 +1343,11 @@ export function AuditTypeSchedulesClient({
 
   function removeFramework(fw: string) {
     setFrameworkOptions(prev => prev.filter(f => f !== fw));
-    setFrameworks(prev => {
-      const next = { ...prev };
-      for (const key of Object.keys(next)) {
-        if (next[key] === fw) next[key] = '';
-      }
-      return next;
-    });
+    // If the active framework just disappeared, jump to whatever's left.
+    if (fw === activeFramework) {
+      const remaining = frameworkOptions.filter(f => f !== fw);
+      if (remaining.length > 0) setActiveFramework(remaining[0]);
+    }
     setSaved(false);
   }
 
@@ -1340,14 +1375,18 @@ export function AuditTypeSchedulesClient({
 
     try {
       await doPut('Master Schedule List', { action: 'save_master', schedules: masterSchedules });
-      for (const at of AUDIT_TYPES) {
-        await doPut(at.label, {
-          auditType: at.key,
-          stageKeyed: stageMappings[at.key] || emptyMapping(),
-          framework: frameworks[at.key] || null,
+      // One PUT per configured (auditType, framework) pair.
+      for (const composite of Object.keys(stageMappings)) {
+        const parsed = parsePairKey(composite);
+        if (!parsed) continue; // defensive — should always parse
+        const auditTypeLabel = AUDIT_TYPES.find(a => a.key === parsed.auditType)?.label || parsed.auditType;
+        await doPut(`${auditTypeLabel} · ${parsed.framework}`, {
+          auditType: parsed.auditType,
+          framework: parsed.framework,
+          stageKeyed: stageMappings[composite] || emptyMapping(),
         });
       }
-      await doPut('Framework Options', { auditType: '__framework_options', schedules: frameworkOptions });
+      await doPut('Framework Options', { auditType: FRAMEWORK_OPTIONS_KEY, schedules: frameworkOptions });
 
       if (failures.length === 0) {
         setSaved(true);
@@ -1368,7 +1407,7 @@ export function AuditTypeSchedulesClient({
       }
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeAuditType, activeMapping.triggers]);
+  }, [activeKey, activeMapping.triggers]);
 
   // ── Render ──
 
@@ -1461,7 +1500,7 @@ export function AuditTypeSchedulesClient({
         )}
       </div>
 
-      {/* ═══ Audit type selector ═══ */}
+      {/* ═══ Audit type selector (top-level tabs) ═══ */}
       <div className="flex items-center gap-2 overflow-x-auto">
         {AUDIT_TYPES.map(at => (
           <button
@@ -1479,16 +1518,24 @@ export function AuditTypeSchedulesClient({
 
         <div className="flex-1" />
 
+        {/* Copy from another (auditType, framework) pair */}
         <div className="flex items-center gap-1">
           <select
             value={copyFrom}
             onChange={e => setCopyFrom(e.target.value)}
             className="text-xs border border-slate-300 rounded px-2 py-1 focus:outline-none"
           >
-            <option value="">Copy from…</option>
-            {AUDIT_TYPES.filter(at => at.key !== activeAuditType).map(at => (
-              <option key={at.key} value={at.key}>{at.label}</option>
-            ))}
+            <option value="">Copy from pair…</option>
+            {Object.keys(stageMappings)
+              .filter(c => c !== activeKey)
+              .sort()
+              .map(c => {
+                const parsed = parsePairKey(c);
+                if (!parsed) return null;
+                const at = AUDIT_TYPES.find(a => a.key === parsed.auditType);
+                const label = `${at?.label || parsed.auditType} · ${parsed.framework}`;
+                return <option key={c} value={c}>{label}</option>;
+              })}
           </select>
           <button
             onClick={copyFromAuditType}
@@ -1500,43 +1547,71 @@ export function AuditTypeSchedulesClient({
         </div>
       </div>
 
-      {/* ═══ Framework + Save All ═══ */}
-      <div className="flex items-center gap-2 p-3 bg-slate-50 rounded-lg">
-        <label className="text-xs text-slate-600">Framework:</label>
-        <select
-          value={frameworks[activeAuditType] || ''}
-          onChange={e => { setFrameworks(prev => ({ ...prev, [activeAuditType]: e.target.value })); setSaved(false); }}
-          className="text-xs border border-slate-300 rounded px-2 py-1 focus:outline-none"
-        >
-          <option value="">— None —</option>
-          {frameworkOptions.map(fw => <option key={fw} value={fw}>{fw}</option>)}
-        </select>
-
-        <div className="flex-1" />
-
-        <input
-          type="text"
-          value={newFramework}
-          onChange={e => setNewFramework(e.target.value)}
-          placeholder="New framework"
-          className="text-xs border border-slate-300 rounded px-2 py-1 focus:outline-none w-32"
-        />
-        <button onClick={addFramework} className="text-xs px-2 py-1 bg-slate-200 rounded hover:bg-slate-300">Add</button>
-        {frameworkOptions.map(fw => (
-          <button key={fw} onClick={() => removeFramework(fw)} className="text-[10px] text-slate-400 hover:text-red-500">
-            {fw} ×
+      {/* ═══ Framework sub-tabs (within the active audit type) ═══ */}
+      <div className="p-3 bg-slate-50 rounded-lg space-y-2">
+        <div className="flex items-center gap-2 flex-wrap">
+          <span className="text-xs text-slate-600 font-medium">Framework:</span>
+          {frameworkOptions.map(fw => {
+            const composite = pairKey(activeAuditType, fw);
+            const hasMapping = !!stageMappings[composite] && (
+              stageMappings[composite].planning.length +
+              stageMappings[composite].fieldwork.length +
+              stageMappings[composite].completion.length > 0
+            );
+            return (
+              <button
+                key={fw}
+                onClick={() => setActiveFramework(fw)}
+                className={`px-2.5 py-1 text-xs font-medium rounded border transition-colors ${
+                  activeFramework === fw
+                    ? 'bg-emerald-600 text-white border-emerald-700'
+                    : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50'
+                }`}
+                title={hasMapping ? 'Configured for this pair' : 'Not yet configured — click to start'}
+              >
+                {fw}
+                {hasMapping && <span className="ml-1 text-[9px] opacity-80">●</span>}
+              </button>
+            );
+          })}
+          <button
+            onClick={() => removeFramework(activeFramework)}
+            disabled={frameworkOptions.length <= 1}
+            title={`Remove framework "${activeFramework}" from the firm-wide list (configurations under it will become inaccessible until re-added).`}
+            className="text-[10px] text-slate-400 hover:text-red-500 disabled:opacity-30 px-1"
+          >
+            Remove {activeFramework}
           </button>
-        ))}
+        </div>
 
-        <button
-          onClick={saveAll}
-          disabled={saving}
-          className="inline-flex items-center gap-1 px-3 py-1.5 text-xs font-medium bg-green-600 text-white rounded hover:bg-green-700 disabled:opacity-50"
-        >
-          {saving ? <Loader2 className="h-3 w-3 animate-spin" /> : <Save className="h-3 w-3" />}
-          Save All
-        </button>
-        {saved && <span className="text-xs text-green-600 font-medium">Saved ✓</span>}
+        <div className="flex items-center gap-2">
+          <input
+            type="text"
+            value={newFramework}
+            onChange={e => setNewFramework(e.target.value)}
+            placeholder="Add framework (e.g. IFRS)"
+            className="text-xs border border-slate-300 rounded px-2 py-1 focus:outline-none w-40"
+          />
+          <button onClick={addFramework} className="text-xs px-2 py-1 bg-slate-200 rounded hover:bg-slate-300">Add framework</button>
+
+          <div className="flex-1" />
+
+          <button
+            onClick={saveAll}
+            disabled={saving}
+            className="inline-flex items-center gap-1 px-3 py-1.5 text-xs font-medium bg-green-600 text-white rounded hover:bg-green-700 disabled:opacity-50"
+          >
+            {saving ? <Loader2 className="h-3 w-3 animate-spin" /> : <Save className="h-3 w-3" />}
+            Save All
+          </button>
+          {saved && <span className="text-xs text-green-600 font-medium">Saved ✓</span>}
+        </div>
+
+        <p className="text-[10px] text-slate-500">
+          Editing <strong>{AUDIT_TYPES.find(a => a.key === activeAuditType)?.label}</strong> · <strong>{activeFramework}</strong>.
+          Each (Audit Type × Framework) pair has its own list of schedules, triggers, and order. Switch frameworks
+          above to configure another pair. The dot (●) marks pairs that have at least one schedule configured.
+        </p>
       </div>
 
       {/* ═══ Triggers panel ═══ */}
@@ -1620,7 +1695,7 @@ export function AuditTypeSchedulesClient({
           <div className="flex items-center gap-2 mb-2">
             <Eye className="h-3 w-3 text-slate-400" />
             <h3 className="text-xs font-semibold text-slate-600">
-              Available Schedules (not yet assigned to {AUDIT_TYPES.find(a => a.key === activeAuditType)?.label})
+              Available Schedules (not yet assigned to {AUDIT_TYPES.find(a => a.key === activeAuditType)?.label} · {activeFramework})
             </h3>
             <span className="text-[10px] text-slate-400">{availableSchedules.length}</span>
           </div>
@@ -1632,7 +1707,12 @@ export function AuditTypeSchedulesClient({
           <div className="space-y-1">
             {availableSchedules.map(s => {
               const usedInLabels = s.usedIn
-                .map(at => AUDIT_TYPES.find(a => a.key === at)?.label.replace(/ Audit$/, '') || at)
+                .map(c => {
+                  const parsed = parsePairKey(c);
+                  if (!parsed) return c;
+                  const at = AUDIT_TYPES.find(a => a.key === parsed.auditType);
+                  return `${(at?.label || parsed.auditType).replace(/ Audit$/, '')} · ${parsed.framework}`;
+                })
                 .join(', ');
               return (
                 <div

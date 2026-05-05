@@ -11,6 +11,9 @@ export interface EngagementData {
   periodId: string;
   firmId: string;
   auditType: AuditType;
+  /** Accounting framework (FRS102, IFRS, …). Combined with auditType to
+   *  look up the firm's per-pair schedule configuration. */
+  framework?: string;
   status: EngagementStatus;
   infoRequestType: InfoRequestType;
   hardCloseDate: string | null;
