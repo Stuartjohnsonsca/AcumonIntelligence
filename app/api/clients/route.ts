@@ -50,6 +50,24 @@ export async function POST(req: Request) {
   const body = await req.json();
   const targetFirmId = session.user.isSuperAdmin && body.firmId ? body.firmId : session.user.firmId;
 
+  // Auto-assign the creator to every client they create so they
+  // can immediately manage the client's contacts / portal access /
+  // engagements without a separate "assign me to this client" step.
+  // Skipped for super-admins acting cross-firm (where firmId is
+  // overridden) since they don't need an assignment to access
+  // anything anyway. Idempotent: if a row already exists we skip.
+  async function ensureAssignment(userId: string, clientId: string) {
+    try {
+      await prisma.userClientAssignment.upsert({
+        where: { userId_clientId: { userId, clientId } },
+        update: {},
+        create: { userId, clientId },
+      });
+    } catch (err) {
+      console.error('[clients] auto-assign creator failed:', err);
+    }
+  }
+
   // Bulk CSV import: body.clients = array of client objects
   if (Array.isArray(body.clients)) {
     const created = await prisma.$transaction(
@@ -66,6 +84,12 @@ export async function POST(req: Request) {
         })
       )
     );
+    // Assign the creator to every newly imported client. Done after
+    // the transaction so a single auto-assign hiccup can't roll back
+    // the whole import.
+    if (targetFirmId === session.user.firmId) {
+      for (const c of created) await ensureAssignment(session.user.id, c.id);
+    }
     return NextResponse.json({ created: created.length });
   }
 
@@ -85,6 +109,10 @@ export async function POST(req: Request) {
       firmId: targetFirmId,
     },
   });
+
+  if (targetFirmId === session.user.firmId) {
+    await ensureAssignment(session.user.id, client.id);
+  }
 
   return NextResponse.json({ id: client.id });
 }

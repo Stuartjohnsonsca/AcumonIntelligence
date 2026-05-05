@@ -9,8 +9,14 @@ interface SessionUser {
 
 /**
  * Verifies the authenticated user has access to a specific client.
- * SuperAdmins can access any client. Other users must be in the same firm
- * AND have a UserClientAssignment for the client.
+ *
+ *   • SuperAdmins  — any client in any firm.
+ *   • FirmAdmins   — any client in the same firm. They manage the
+ *                    firm's roster centrally and shouldn't need an
+ *                    explicit per-client assignment.
+ *   • Other users  — same firm AND a UserClientAssignment row for the
+ *                    client (i.e. they've been assigned to the client
+ *                    explicitly, or auto-assigned by creating it).
  */
 export async function verifyClientAccess(
   user: SessionUser,
@@ -25,6 +31,10 @@ export async function verifyClientAccess(
 
   if (!client) return { allowed: false, reason: 'Client not found' };
   if (client.firmId !== user.firmId) return { allowed: false, reason: 'Client belongs to a different firm' };
+
+  // Firm-wide admin bypass: a Firm Admin manages every client in
+  // their firm and shouldn't need a per-client assignment row.
+  if (user.isFirmAdmin) return { allowed: true };
 
   const assignment = await prisma.userClientAssignment.findUnique({
     where: { userId_clientId: { userId: user.id, clientId } },
