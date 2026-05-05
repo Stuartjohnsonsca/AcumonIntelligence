@@ -107,9 +107,25 @@ export function hasAuditStarted(engagement: { status?: string | null; startedAt?
   return false;
 }
 
-/** Fetch the firm's question set, returning an empty list if none is configured. */
+/**
+ * Fetch the firm's question set.
+ *
+ *   1. Prefer the auditType='ALL' row written by the methodology
+ *      admin UI.
+ *   2. If that row is missing or empty, accept ANY non-empty
+ *      independence_questions row for the firm — defends against
+ *      cases where the row was saved under a specific auditType
+ *      (e.g. 'PIE') by an earlier migration or by hand.
+ *   3. If still nothing, fall back to the built-in defaults so the
+ *      gate never tells the auditor "no questions configured" while
+ *      the firm waits on Methodology Admin to seed the row. The
+ *      admin UI itself seeds defaults on first open, so the only
+ *      time this fallback hits at runtime is for a firm that
+ *      hasn't visited the admin page yet.
+ */
 export async function getFirmIndependenceQuestions(firmId: string): Promise<IndependenceQuestion[]> {
-  const row = await prisma.methodologyTemplate.findUnique({
+  // Step 1 — preferred row.
+  const allRow = await prisma.methodologyTemplate.findUnique({
     where: {
       firmId_templateType_auditType: {
         firmId,
@@ -118,9 +134,23 @@ export async function getFirmIndependenceQuestions(firmId: string): Promise<Inde
       },
     },
   }).catch(() => null);
-  if (!row) return [];
-  const items = row.items as unknown;
-  return Array.isArray(items) ? (items as IndependenceQuestion[]) : [];
+  const allItems = Array.isArray(allRow?.items) ? (allRow!.items as unknown as IndependenceQuestion[]) : [];
+  if (allItems.length > 0) return allItems;
+
+  // Step 2 — any other audit-type row for this firm. Picks the most
+  // recently updated row that has questions.
+  const anyRows = await prisma.methodologyTemplate.findMany({
+    where: { firmId, templateType: 'independence_questions' },
+    orderBy: { updatedAt: 'desc' },
+  }).catch(() => [] as Array<{ items: unknown }>);
+  for (const r of anyRows) {
+    const items = Array.isArray(r.items) ? (r.items as unknown as IndependenceQuestion[]) : [];
+    if (items.length > 0) return items;
+  }
+
+  // Step 3 — built-in defaults. Same set the admin UI seeds on first
+  // visit, so the runtime fallback matches what the admin would see.
+  return defaultIndependenceQuestions();
 }
 
 // ─── Refresh cadence (re-confirm after N days) ─────────────────────────────
