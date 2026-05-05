@@ -3,7 +3,6 @@ import { auth } from '@/lib/auth';
 import { prisma } from '@/lib/db';
 import { FirmAssumptionsClient } from '@/components/methodology-admin/FirmAssumptionsClient';
 import { BackButton } from '@/components/methodology-admin/BackButton';
-import { getFirmIndependenceQuestions, defaultIndependenceQuestions, getFirmIndependenceRefreshRules } from '@/lib/independence';
 import { getFirmAuditTypes } from '@/lib/firm-audit-types';
 
 export default async function FirmAssumptionsPage() {
@@ -54,13 +53,6 @@ export default async function FirmAssumptionsPage() {
   // editor + the per-type Min Fee per Hour grid.
   const auditTypes = await getFirmAuditTypes(firmId);
 
-  // Independence Questions — firm-wide questionnaire each team member must
-  // confirm before they can access an engagement. Seeded with a sensible
-  // default set if the firm hasn't configured anything yet.
-  const existingIndependence = await getFirmIndependenceQuestions(firmId);
-  const initialIndependenceQuestions = existingIndependence.length > 0 ? existingIndependence : defaultIndependenceQuestions();
-  const initialIndependenceRefreshRules = await getFirmIndependenceRefreshRules(firmId);
-
   return (
     <div data-howto-id="page.firm-assumptions.body" className="container mx-auto px-4 py-10 max-w-6xl">
       <BackButton href="/methodology-admin" label="Back to Methodology Admin" />
@@ -85,8 +77,6 @@ export default async function FirmAssumptionsPage() {
         initialFirmVariables={firmVariables}
         initialMinAvgFeePerHour={minAvgFeePerHour}
         initialAuditTypes={auditTypes}
-        initialIndependenceQuestions={initialIndependenceQuestions}
-        initialIndependenceRefreshRules={initialIndependenceRefreshRules}
         initialCarryForward={(tablesMap.carryForward?.matrix as Record<string, Record<string, boolean>>) || null}
       />
     </div>
