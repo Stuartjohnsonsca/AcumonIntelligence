@@ -24,6 +24,8 @@ import {
   formatRateLabel,
   isRevenueFsLevel,
   readFirmVatConfig,
+  readPerformanceMateriality,
+  readVatAnchor,
   readVatRegistration,
   VAT_PERMANENT_QUESTION_LABEL,
   type FirmVatConfig,
@@ -32,6 +34,7 @@ import {
   type VatRegistration,
   type VatRevenueMapping,
 } from '@/lib/vat-reconciliation';
+import { VatReconciliationGrid } from './VatReconciliationGrid';
 
 interface TBRow {
   id: string;
@@ -44,6 +47,8 @@ interface TBRow {
 
 interface Props {
   engagementId: string;
+  periodStartDate?: string | null;
+  periodEndDate?: string | null;
   onClose: () => void;
 }
 
@@ -53,33 +58,43 @@ type Gate =
   | { kind: 'not_registered' }
   | { kind: 'ready' };
 
-export function VatReconciliationPanel({ engagementId, onClose }: Props) {
+export function VatReconciliationPanel({ engagementId, periodStartDate, periodEndDate, onClose }: Props) {
   const [gate, setGate] = useState<Gate>({ kind: 'loading' });
   const [registration, setRegistration] = useState<VatRegistration | null>(null);
   const [clientName, setClientName] = useState('');
   const [data, setData] = useState<VatRecData>(EMPTY_VAT_REC);
   const [firmVat, setFirmVat] = useState<FirmVatConfig>({ rates: [], thresholds: [] });
+  const [allTbRows, setAllTbRows] = useState<TBRow[]>([]);
   const [revenueRows, setRevenueRows] = useState<TBRow[]>([]);
   const [mappingRow, setMappingRow] = useState<TBRow | null>(null);
   const [showSetup, setShowSetup] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [perfMateriality, setPerfMateriality] = useState(0);
+  const [anchor, setAnchor] = useState<{ anchorIso: string; isPlaceholder: boolean }>(
+    { anchorIso: periodEndDate || '', isPlaceholder: true }
+  );
 
   // ── Load everything once on open ────────────────────────────────────
   const load = useCallback(async () => {
-    const [recRes, reg, firmCfg, tbRes] = await Promise.all([
+    const [recRes, reg, firmCfg, tbRes, pm, anc] = await Promise.all([
       fetch(`/api/engagements/${engagementId}/vat-reconciliation`).then(r => r.ok ? r.json() : { data: {}, clientName: '' }),
       readVatRegistration(engagementId),
       readFirmVatConfig(),
       fetch(`/api/engagements/${engagementId}/trial-balance`).then(r => r.ok ? r.json() : { rows: [] }),
+      readPerformanceMateriality(engagementId),
+      readVatAnchor(engagementId, periodEndDate || ''),
     ]);
 
     setRegistration(reg);
     setClientName(recRes.clientName || '');
     setFirmVat(firmCfg);
+    setPerfMateriality(pm);
+    setAnchor(anc);
     const merged: VatRecData = { ...EMPTY_VAT_REC, ...(recRes.data || {}) };
     setData(merged);
 
     const allRows: TBRow[] = tbRes.rows || [];
+    setAllTbRows(allRows);
     const revenue = allRows.filter(r => isRevenueFsLevel(r.fsLevel));
     setRevenueRows(revenue);
 
@@ -93,7 +108,7 @@ export function VatReconciliationPanel({ engagementId, onClose }: Props) {
         setShowSetup(true);
       }
     }
-  }, [engagementId]);
+  }, [engagementId, periodEndDate]);
 
   useEffect(() => { load(); }, [load]);
 
@@ -217,13 +232,26 @@ export function VatReconciliationPanel({ engagementId, onClose }: Props) {
             onPick={setMappingRow}
           />
 
-          {/* Future-grid placeholder so reviewers know what's coming */}
-          <div className="px-3 py-3 bg-slate-50 border border-dashed border-slate-300 rounded text-xs text-slate-500">
-            <div className="font-semibold text-slate-600 mb-1">Reconciliation grid — coming next</div>
-            Once every revenue code is mapped, this section will build the period-by-period VAT reconciliation
-            spreadsheet (Net Revenue / Net Purchases / Sales VAT / Purchase VAT, time-adjusted, plus Verified-to-Bank,
-            VAT Balance per TB and the Net Revenue cross-check).
-          </div>
+          {/* Reconciliation grid */}
+          {periodStartDate && periodEndDate ? (
+            <VatReconciliationGrid
+              data={data}
+              firmRates={firmVat.rates}
+              periodicity={registration?.periodicity}
+              anchorIso={anchor.anchorIso}
+              anchorIsPlaceholder={anchor.isPlaceholder}
+              periodStartIso={periodStartDate}
+              periodEndIso={periodEndDate}
+              jurisdiction={firmVat.rates[0]?.jurisdiction || 'UK'}
+              performanceMateriality={perfMateriality}
+              tbRows={allTbRows.map(r => ({ accountCode: r.accountCode, description: r.description, currentYear: r.currentYear }))}
+              onPatch={persist}
+            />
+          ) : (
+            <div className="px-3 py-3 bg-amber-50 border border-amber-200 rounded text-xs text-amber-800">
+              Engagement period start / end not available — open this calculator from a fully configured engagement.
+            </div>
+          )}
         </div>
       )}
 

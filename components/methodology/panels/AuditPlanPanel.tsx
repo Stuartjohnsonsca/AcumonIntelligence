@@ -2037,6 +2037,8 @@ export function AuditPlanPanel({ engagementId, clientId, periodId, onClose, peri
       {vatReconcOpen && (
         <VatReconciliationPanel
           engagementId={engagementId}
+          periodStartDate={periodStartDate}
+          periodEndDate={periodEndDate}
           onClose={() => setVatReconcOpen(false)}
         />
       )}
