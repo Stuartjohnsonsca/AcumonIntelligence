@@ -534,7 +534,19 @@ export function DynamicAppendixForm({
   // Comparison is string-coerced + trimmed so a formula returning
   // the number 2 still matches a triggerValue saved as the string
   // "2" (or "2 " from a copy/paste).
-  const prevTriggerSnapshotRef = useRef<Record<string, string> | null>(null);
+  // Schedule-action firing.
+  //
+  // Initialise prev to {} (NOT null) so the very first render with a
+  // matching value still counts as a transition `'' → want` and fires.
+  // Without this, opening an engagement where the formula already
+  // evaluates to the trigger value (because data was entered last
+  // session, OR because a code fix changed how the formula resolves)
+  // would silently swallow the fire — the snapshot would capture the
+  // already-matching value and `before !== want` would never be true
+  // again. The server endpoint is idempotent on
+  // (engagement, action, questionId) for OPEN chats, so refiring on
+  // reload is a safe no-op when a chat is already in flight.
+  const prevTriggerSnapshotRef = useRef<Record<string, string>>({});
   useEffect(() => {
     // Build current effective-value snapshot for every question with
     // a configured action. Formula cells: prefer computedValues.
@@ -555,13 +567,6 @@ export function DynamicAppendixForm({
         if (col1 !== undefined && col1 !== null && col1 !== '') effective = col1;
       }
       current[q.id] = effective === null || effective === undefined ? '' : String(effective).trim();
-    }
-
-    // First render: stash and bail. We don't want to refire actions
-    // that had already triggered in a prior session.
-    if (prevTriggerSnapshotRef.current === null) {
-      prevTriggerSnapshotRef.current = current;
-      return;
     }
 
     for (const q of questions) {
