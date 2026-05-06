@@ -15,6 +15,7 @@ import type {
 import type { FirmAuditType } from '@/lib/firm-audit-types';
 import { defaultAuditTypes } from '@/lib/firm-audit-types';
 import type { FirmVatRate, FirmVatThreshold } from '@/lib/vat-reconciliation';
+import type { FirmTaxOnProfitsRate } from '@/lib/tax-on-profits';
 
 interface Props {
   firmId: string;
@@ -52,6 +53,9 @@ interface Props {
   /** Firm-wide VAT config — rates + registration / deregistration thresholds.
    *  Consumed by the VAT Reconciliation calculator on each engagement. */
   initialVatConfig?: { rates?: FirmVatRate[]; thresholds?: FirmVatThreshold[] } | null;
+  /** Firm-wide Tax on Profits rates — Label, Jurisdiction, From, To, Rate %.
+   *  Consumed by the Corporation Tax / Tax on Profits engagement tool. */
+  initialTaxOnProfits?: { rates?: FirmTaxOnProfitsRate[] } | null;
 }
 
 // The catalogue of items the carry-forward matrix offers. Each row in
@@ -158,6 +162,7 @@ export function FirmAssumptionsClient({
   initialAuditTypes,
   initialCarryForward,
   initialVatConfig,
+  initialTaxOnProfits,
 }: Props) {
   const [inherentRisk, setInherentRisk] = useState<InherentRiskTable>(() => {
     const t = initialInherentRisk;
@@ -249,6 +254,13 @@ export function FirmAssumptionsClient({
   );
   const [vatThresholds, setVatThresholds] = useState<FirmVatThreshold[]>(
     Array.isArray(initialVatConfig?.thresholds) ? initialVatConfig!.thresholds! : []
+  );
+
+  // Firm-wide Tax on Profits rates — Label, Jurisdiction, From, To, Rate %.
+  // Consumed by the Corporation Tax / Tax on Profits engagement tool when
+  // the auditor selects jurisdictions for the period under audit.
+  const [taxOnProfitsRates, setTaxOnProfitsRates] = useState<FirmTaxOnProfitsRate[]>(
+    Array.isArray(initialTaxOnProfits?.rates) ? initialTaxOnProfits!.rates! : []
   );
 
   /** Toggle whether `itemKey` is brought forward for `auditTypeCode`.
@@ -403,6 +415,7 @@ export function FirmAssumptionsClient({
         ['riskClassification', riskClassification ?? {}],
         ['carryForward', { matrix: carryForward }],
         ['firm_vat_config', { rates: vatRates, thresholds: vatThresholds }],
+        ['firm_tax_on_profits', { rates: taxOnProfitsRates }],
         ['large_unusual_scoring', {
           descriptionPatterns: luPatterns,
           thresholds: luThresholds,
@@ -1278,6 +1291,144 @@ export function FirmAssumptionsClient({
                 <Plus className="h-3 w-3" /> Add Threshold
               </button>
             </div>
+          </div>
+        )}
+      </div>
+
+      {/* Tax on Profits — firm-wide corporation-tax / tax-on-profits
+          rate table. Each row is a label + jurisdiction + applicability
+          date range + numeric rate. Consumed by the engagement-side
+          Corporation Tax tool when the auditor picks jurisdictions for
+          the period. Multiple rows per jurisdiction (history of rate
+          changes) is fine — the tool picks the row whose date range
+          covers the period end. */}
+      <div className="border rounded-lg">
+        <button
+          onClick={() => toggleSection('taxOnProfits')}
+          className="w-full flex items-center justify-between px-4 py-3 bg-slate-50 rounded-t-lg"
+        >
+          <h2 className="text-lg font-semibold text-slate-900">Tax on Profits</h2>
+          {expandedSections.taxOnProfits ? <ChevronUp className="h-5 w-5" /> : <ChevronDown className="h-5 w-5" />}
+        </button>
+        {expandedSections.taxOnProfits && (
+          <div className="p-4 space-y-3">
+            <p className="text-xs text-slate-500">
+              Label, jurisdiction, applicability date range, and numeric rate. The Corporation Tax tool
+              on each engagement reads these rows to populate the jurisdiction dropdown and to look
+              up the rate that applies at the engagement&apos;s period end. Add multiple rows per
+              jurisdiction to capture rate changes over time (leave Date To blank for the current rate).
+            </p>
+            <div className="border border-slate-200 rounded-lg overflow-hidden">
+              <table className="w-full text-sm">
+                <thead className="bg-slate-50">
+                  <tr className="text-left text-xs text-slate-500 uppercase">
+                    <th className="px-3 py-2 font-semibold">Label</th>
+                    <th className="px-3 py-2 font-semibold w-40">Jurisdiction</th>
+                    <th className="px-3 py-2 font-semibold w-40">Date From</th>
+                    <th className="px-3 py-2 font-semibold w-40">Date To</th>
+                    <th className="px-3 py-2 font-semibold w-28 text-right">Rate %</th>
+                    <th className="px-3 py-2 w-8"></th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100">
+                  {taxOnProfitsRates.length === 0 && (
+                    <tr>
+                      <td colSpan={6} className="px-3 py-4 text-center text-xs text-slate-400 italic">
+                        No Tax on Profits rates yet. Click &quot;Add Rate&quot; to create one (e.g. UK Main Rate, UK Small Profits Rate).
+                      </td>
+                    </tr>
+                  )}
+                  {taxOnProfitsRates.map((r, idx) => (
+                    <tr key={r.id || idx} className="hover:bg-slate-50">
+                      <td className="px-3 py-2">
+                        <input
+                          type="text"
+                          value={r.label}
+                          onChange={(e) => {
+                            setTaxOnProfitsRates(prev => prev.map((x, i) => i === idx ? { ...x, label: e.target.value } : x));
+                            setSaved(false);
+                          }}
+                          placeholder="Main rate"
+                          className="w-full border border-slate-300 rounded px-2 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                        />
+                      </td>
+                      <td className="px-3 py-2">
+                        <input
+                          type="text"
+                          value={r.jurisdiction}
+                          onChange={(e) => {
+                            setTaxOnProfitsRates(prev => prev.map((x, i) => i === idx ? { ...x, jurisdiction: e.target.value } : x));
+                            setSaved(false);
+                          }}
+                          placeholder="UK"
+                          className="w-full border border-slate-300 rounded px-2 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                        />
+                      </td>
+                      <td className="px-3 py-2">
+                        <input
+                          type="date"
+                          value={r.dateFrom || ''}
+                          onChange={(e) => {
+                            setTaxOnProfitsRates(prev => prev.map((x, i) => i === idx ? { ...x, dateFrom: e.target.value || null } : x));
+                            setSaved(false);
+                          }}
+                          className="w-full border border-slate-300 rounded px-2 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                        />
+                      </td>
+                      <td className="px-3 py-2">
+                        <input
+                          type="date"
+                          value={r.dateTo || ''}
+                          onChange={(e) => {
+                            setTaxOnProfitsRates(prev => prev.map((x, i) => i === idx ? { ...x, dateTo: e.target.value || null } : x));
+                            setSaved(false);
+                          }}
+                          placeholder="(current)"
+                          className="w-full border border-slate-300 rounded px-2 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                        />
+                      </td>
+                      <td className="px-3 py-2">
+                        <input
+                          type="number"
+                          step="0.01"
+                          value={r.ratePercent}
+                          onChange={(e) => {
+                            setTaxOnProfitsRates(prev => prev.map((x, i) => i === idx ? { ...x, ratePercent: Number(e.target.value) || 0 } : x));
+                            setSaved(false);
+                          }}
+                          className="w-full border border-slate-300 rounded px-2 py-1 text-sm text-right focus:outline-none focus:ring-2 focus:ring-blue-500"
+                        />
+                      </td>
+                      <td className="px-3 py-2 text-center">
+                        <button
+                          onClick={() => {
+                            setTaxOnProfitsRates(prev => prev.filter((_, i) => i !== idx));
+                            setSaved(false);
+                          }}
+                          className="text-slate-400 hover:text-red-500"
+                          aria-label="Remove rate"
+                          title="Remove rate"
+                        >
+                          <X className="h-4 w-4" />
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            <button
+              onClick={() => {
+                setTaxOnProfitsRates(prev => [
+                  ...prev,
+                  { id: `tp-${Date.now()}`, label: '', jurisdiction: 'UK', dateFrom: null, dateTo: null, ratePercent: 0 },
+                ]);
+                setSaved(false);
+              }}
+              className="inline-flex items-center gap-1 px-3 py-1.5 text-xs font-medium bg-blue-600 text-white rounded hover:bg-blue-700"
+            >
+              <Plus className="h-3 w-3" /> Add Rate
+            </button>
           </div>
         )}
       </div>

@@ -2049,6 +2049,7 @@ model AuditEngagement {
   meetings              AuditMeeting[]
   actionLogs            EngagementActionLog[]
   vatReconciliation     AuditVatReconciliation?
+  taxOnProfits          AuditTaxOnProfits?
 
   @@unique([clientId, periodId, auditType])
   @@index([firmId])
@@ -2352,6 +2353,22 @@ model AuditVatReconciliation {
   engagement AuditEngagement @relation(fields: [engagementId], references: [id], onDelete: Cascade)
 
   @@map("audit_vat_reconciliations")
+}
+
+/// Per-engagement Tax on Profits / Corporation Tax computation.
+/// Stored as a JSON blob — selected jurisdictions, the jurisdiction
+/// percentage split, the tax adjustments grid, audit-test selections
+/// against each adjustment, and the conclusion + sign-offs. Schema
+/// kept loose because the panel evolves quickly; the lib types in
+/// lib/tax-on-profits-data.ts are the source of truth for shape.
+model AuditTaxOnProfits {
+  id           String @id @default(uuid())
+  engagementId String @unique @map("engagement_id")
+  data         Json   @default("{}")
+
+  engagement AuditEngagement @relation(fields: [engagementId], references: [id], onDelete: Cascade)
+
+  @@map("audit_tax_on_profits")
 }
 
 model AuditPARRow {

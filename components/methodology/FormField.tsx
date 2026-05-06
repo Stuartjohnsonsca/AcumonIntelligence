@@ -186,6 +186,47 @@ export function FormField({
         </select>
       );
 
+    case 'multiselect': {
+      // Value is a JSON-encoded array of strings. Empty / non-JSON
+      // legacy values fall back to []; this keeps formula/text consumers
+      // that read it raw seeing a printable representation.
+      const selected = (() => {
+        if (!value || typeof value !== 'string') return [] as string[];
+        try {
+          const parsed = JSON.parse(value);
+          return Array.isArray(parsed) ? parsed.filter(s => typeof s === 'string') : [];
+        } catch {
+          return [];
+        }
+      })();
+      const toggle = (opt: string) => {
+        const next = selected.includes(opt)
+          ? selected.filter(s => s !== opt)
+          : [...selected, opt];
+        onChange(next.length === 0 ? '' : JSON.stringify(next));
+      };
+      return (
+        <div id={questionId} className={`${baseClass} flex flex-wrap gap-x-3 gap-y-1 min-h-[36px] ${className}`}>
+          {(dropdownOptions || []).length === 0 ? (
+            <span className="text-slate-300 italic text-xs">No options configured</span>
+          ) : (
+            (dropdownOptions || []).map(opt => (
+              <label key={opt} className={`inline-flex items-center gap-1.5 cursor-pointer text-sm ${disabled ? 'opacity-60 cursor-not-allowed' : ''}`}>
+                <input
+                  type="checkbox"
+                  checked={selected.includes(opt)}
+                  onChange={() => !disabled && toggle(opt)}
+                  disabled={disabled}
+                  className="w-3.5 h-3.5 rounded border-slate-300"
+                />
+                <span className="text-slate-700">{opt}</span>
+              </label>
+            ))
+          )}
+        </div>
+      );
+    }
+
     case 'number':
       return (
         <input

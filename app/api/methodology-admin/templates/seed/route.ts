@@ -5,8 +5,9 @@ import { prisma } from '@/lib/db';
 // Seed the methodology templates with the Excel template questions
 // This runs once to populate the Methodology Admin Schedules
 
-function q(sectionKey: string, questionText: string, inputType: string, sortOrder: number, opts?: { dropdownOptions?: string[] }) {
-  return { id: `seed_${sortOrder}`, sectionKey, questionText, inputType, sortOrder, ...opts };
+function q(sectionKey: string, questionText: string, inputType: string, sortOrder: number, opts?: { dropdownOptions?: string[]; id?: string }) {
+  const { id, ...rest } = opts || {};
+  return { id: id || `seed_${sortOrder}`, sectionKey, questionText, inputType, sortOrder, ...rest };
 }
 
 const PERMANENT_FILE_QUESTIONS = (() => {
@@ -60,6 +61,14 @@ const PERMANENT_FILE_QUESTIONS = (() => {
     q('Service Organisation', 'Did the audit team obtain a copy of the engagement letter signed by the entity with the service organisation?', 'textarea', i++),
     q('Service Organisation', 'Document your understanding of the effect on user entity internal control, nature and materiality of transactions processed, degree of interaction between activities of SO and entity.', 'textarea', i++),
     q('Service Organisation', 'Document your understanding of the control framework at the service organisation including those applied to the transactions processed.', 'textarea', i++),
+    // Taxation — read by the Corporation Tax / Tax on Profits engagement
+    // tool to decide which entry-flow popup to show. The "subject to tax
+    // on its profits" question uses a stable id so the tool can locate
+    // the answer even if admins reorder the section.
+    q('Taxation', 'Is the entity subject to tax on its profits?', 'yesno', i++, { id: 'pf_taxation_subject_to_tax_on_profits' }),
+    q('Taxation', 'If yes, in which jurisdiction(s) are profits taxed?', 'textarea', i++, { id: 'pf_taxation_jurisdictions_note' }),
+    q('Taxation', 'Tax registration / reference numbers (e.g. UTR for UK Corporation Tax)', 'textarea', i++, { id: 'pf_taxation_reference_numbers' }),
+    q('Taxation', 'Tax adviser contact details', 'textarea', i++, { id: 'pf_taxation_adviser_contact' }),
   ];
 })();
 

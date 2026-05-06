@@ -317,7 +317,7 @@ export const MATERIALITY_BENCHMARKS = [
 
 // ─── Template Question Types (for dynamic form rendering) ──────────────────
 
-export type QuestionInputType = 'text' | 'textarea' | 'yesno' | 'yes_only' | 'dropdown' | 'number' | 'currency' | 'date' | 'formula' | 'checkbox' | 'yna' | 'table_row' | 'subheader';
+export type QuestionInputType = 'text' | 'textarea' | 'yesno' | 'yes_only' | 'dropdown' | 'multiselect' | 'number' | 'currency' | 'date' | 'formula' | 'checkbox' | 'yna' | 'table_row' | 'subheader';
 
 export interface TemplateQuestion {
   id: string;

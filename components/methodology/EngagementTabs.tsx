@@ -1479,6 +1479,8 @@ export function EngagementTabs({ engagement, auditType, clientName, periodEndDat
               aiFuzzyCache={aiFuzzyCache}
               clientIsListed={clientIsListed}
               hasPriorPeriodEngagement={hasPriorPeriodEngagement}
+              periodStartDate={periodStartDate}
+              periodEndDate={periodEndDate}
               initialActiveTab={lastCompletionTab?.key}
               onActiveTabChange={(key, label) => setLastCompletionTab({ key, label })}
               onNavigateMainTab={(key, params) => {

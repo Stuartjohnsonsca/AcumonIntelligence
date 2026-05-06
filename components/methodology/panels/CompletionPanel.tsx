@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { FileText, CheckSquare, ClipboardList, BarChart3, Eye, AlertTriangle, ChevronDown, ChevronUp, ChevronRight, CheckCircle2, Loader2, Sparkles, ShieldAlert, ShieldCheck, ExternalLink, Plus, Trash2, UserCheck } from 'lucide-react';
+import { FileText, CheckSquare, ClipboardList, BarChart3, Eye, AlertTriangle, ChevronDown, ChevronUp, ChevronRight, CheckCircle2, Loader2, Sparkles, ShieldAlert, ShieldCheck, ExternalLink, Plus, Trash2, UserCheck, Calculator } from 'lucide-react';
 import { findScheduleAction } from '@/lib/schedule-actions';
 import { buildVisibilityChecker, type Trigger, type TriggerContext } from '@/lib/schedule-triggers';
 import { AuditTestSummaryPanel } from './AuditTestSummaryPanel';
@@ -10,6 +10,7 @@ import { FSReviewPanel } from './FSReviewPanel';
 import { AdjustedTBPanel } from './AdjustedTBPanel';
 import { SignificantRiskPanel } from './SignificantRiskPanel';
 import { EQRReviewPanel } from './EQRReviewPanel';
+import { TaxationPanel } from './TaxationPanel';
 import type { TemplateQuestion, TemplateSectionMeta, SectionLayout, CompletionTemplateData } from '@/types/methodology';
 
 type TeamMember = { userId: string; userName?: string; role: string };
@@ -53,6 +54,11 @@ interface Props {
   userId?: string;
   userName?: string;
   teamMembers?: TeamMember[];
+  /** Engagement period dates — needed by the Taxation sub-tab
+   *  (Tax on Profits picks rates by period end; VAT Reconciliation
+   *  needs period start/end for its grid). */
+  periodStartDate?: string | null;
+  periodEndDate?: string | null;
   /** Ordered list of schedule keys for the Completion stage (from Part E config) */
   completionScheduleOrder?: string[];
   /** Triggers for the active audit type (new trigger-based visibility model) */
@@ -88,6 +94,7 @@ const COMPLETION_TABS = [
   { key: 'completion-checklist', label: 'Completion Checklist', icon: CheckSquare, templateType: 'completion_checklist_questions', scheduleKey: 'completion_checklist' },
   { key: 'test-summary', label: 'Test Summary Results', icon: BarChart3, templateType: null, scheduleKey: 'test_summary_results' },
   { key: 'overall-review', label: 'Overall Review of FS', icon: Eye, templateType: 'overall_review_fs_questions', scheduleKey: 'overall_review_fs' },
+  { key: 'taxation', label: 'Taxation', icon: Calculator, templateType: null, scheduleKey: 'taxation_completion' },
   { key: 'fs-review', label: 'FS Review', icon: FileText, templateType: null, scheduleKey: 'fs_review' },
   { key: 'adj-tb', label: 'Adj TB', icon: FileText, templateType: null, scheduleKey: 'adj_tb' },
   { key: 'error-schedule', label: 'Error Schedule', icon: AlertTriangle, templateType: null, scheduleKey: 'error_schedule' },
@@ -122,6 +129,7 @@ export function CompletionPanel({
   engagementId, clientId, userRole, userId, userName, teamMembers,
   completionScheduleOrder, scheduleTriggers, qaAnswers, aiFuzzyCache,
   clientIsListed, hasPriorPeriodEngagement,
+  periodStartDate, periodEndDate,
   onNavigateMainTab, onClose,
   initialActiveTab, onActiveTabChange,
 }: Props) {
@@ -235,6 +243,16 @@ export function CompletionPanel({
         {activeTab === 'adj-tb' && <AdjustedTBPanel engagementId={engagementId} />}
         {activeTab === 'significant-risk' && <SignificantRiskPanel engagementId={engagementId} userId={userId} userName={userName} teamMembers={teamMembers} />}
         {activeTab === 'eqr-review' && <EQRReviewPanel engagementId={engagementId} userId={userId} userName={userName} teamMembers={teamMembers} />}
+        {activeTab === 'taxation' && (
+          <TaxationPanel
+            engagementId={engagementId}
+            periodStartDate={periodStartDate}
+            periodEndDate={periodEndDate}
+            userId={userId}
+            userName={userName}
+            userRole={userRole}
+          />
+        )}
         {['summary-memo', 'update-procedures', 'completion-checklist', 'overall-review'].includes(activeTab) && (
           <StructuredScheduleTab
             engagementId={engagementId}

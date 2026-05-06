@@ -66,6 +66,7 @@ const INPUT_TYPE_OPTIONS: { value: QuestionInputType; label: string }[] = [
   { value: 'yes_only', label: 'Y only' },
   { value: 'yna', label: 'Y/N/N/A' },
   { value: 'dropdown', label: 'Bespoke Dropdown' },
+  { value: 'multiselect', label: 'Multi-select Checkboxes' },
   { value: 'number', label: 'Number' },
   { value: 'currency', label: 'Currency' },
   { value: 'date', label: 'Date picker' },
@@ -82,6 +83,7 @@ function generateId(): string {
 function inputTypeBadge(inputType: string) {
   const cls = inputType === 'formula' ? 'bg-purple-100 text-purple-600' :
     inputType === 'dropdown' ? 'bg-blue-100 text-blue-600' :
+    inputType === 'multiselect' ? 'bg-cyan-100 text-cyan-700' :
     inputType === 'yesno' || inputType === 'yna' || inputType === 'yes_only' ? 'bg-green-100 text-green-600' :
     inputType === 'number' || inputType === 'currency' ? 'bg-amber-100 text-amber-600' :
     inputType === 'date' ? 'bg-indigo-100 text-indigo-600' :
@@ -897,7 +899,7 @@ export function AppendixTemplateEditor({ firmId, templateType, auditType, initia
                                 row is NOT in a table layout (table cells
                                 configure their own dropdown options
                                 per-cell in the per-row column block). */}
-                            {q.inputType === 'dropdown' && !(sectionMeta[q.sectionKey]?.layout && sectionMeta[q.sectionKey].layout !== 'standard') && (
+                            {(q.inputType === 'dropdown' || q.inputType === 'multiselect') && !(sectionMeta[q.sectionKey]?.layout && sectionMeta[q.sectionKey].layout !== 'standard') && (
                               <DropdownOptionsEditor
                                 key={q.id + '-dropdown'}
                                 options={q.dropdownOptions || []}
@@ -1219,7 +1221,7 @@ export function AppendixTemplateEditor({ firmId, templateType, auditType, initia
                                                   .filter(o => o.value !== 'subheader' && o.value !== 'table_row' && o.value !== 'yes_only')
                                                   .map(opt => <option key={opt.value} value={opt.value}>{opt.label}</option>)}
                                               </select>
-                                              {cfg?.inputType === 'dropdown' && (
+                                              {(cfg?.inputType === 'dropdown' || cfg?.inputType === 'multiselect') && (
                                                 <input
                                                   type="text"
                                                   value={(cfg?.dropdownOptions || []).join(', ')}

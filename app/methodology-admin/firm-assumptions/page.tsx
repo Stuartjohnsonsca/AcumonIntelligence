@@ -63,6 +63,7 @@ export default async function FirmAssumptionsPage() {
       <FirmAssumptionsClient
         firmId={firmId}
         initialVatConfig={(tablesMap.firm_vat_config as { rates?: any[]; thresholds?: any[] }) || null}
+        initialTaxOnProfits={(tablesMap.firm_tax_on_profits as { rates?: any[] }) || null}
         initialInherentRisk={tablesMap.inherent || null}
         initialControlRisk={tablesMap.control || null}
         initialAssertions={tablesMap.assertions || null}

@@ -50,6 +50,11 @@ interface Props {
   periodStartDate?: string | null;
   periodEndDate?: string | null;
   onClose: () => void;
+  /** When true, render the body without the modal chrome (no overlay,
+   *  no centered card, no close-X). Used when the panel is embedded as
+   *  a Completion sub-tab. Default false preserves the historic
+   *  modal-launcher behaviour from AuditPlanPanel. */
+  inline?: boolean;
 }
 
 type Gate =
@@ -58,7 +63,7 @@ type Gate =
   | { kind: 'not_registered' }
   | { kind: 'ready' };
 
-export function VatReconciliationPanel({ engagementId, periodStartDate, periodEndDate, onClose }: Props) {
+export function VatReconciliationPanel({ engagementId, periodStartDate, periodEndDate, onClose, inline }: Props) {
   const [gate, setGate] = useState<Gate>({ kind: 'loading' });
   const [registration, setRegistration] = useState<VatRegistration | null>(null);
   const [clientName, setClientName] = useState('');
@@ -156,8 +161,11 @@ export function VatReconciliationPanel({ engagementId, periodStartDate, periodEn
   const allMapped = revenueRows.length > 0 && mappedCount === revenueRows.length;
 
   // ── Render ──────────────────────────────────────────────────────────
+  const Wrapper: React.FC<{ children: React.ReactNode }> = inline
+    ? ({ children }) => <div className="space-y-4">{children}</div>
+    : ({ children }) => <Modal onClose={onClose} title="VAT Reconciliation">{children}</Modal>;
   return (
-    <Modal onClose={onClose} title="VAT Reconciliation">
+    <Wrapper>
       {gate.kind === 'loading' && (
         <div className="py-12 text-center text-sm text-slate-500">
           <Loader2 className="h-5 w-5 animate-spin mx-auto mb-2" />
@@ -289,7 +297,7 @@ export function VatReconciliationPanel({ engagementId, periodStartDate, periodEn
           saving={saving}
         />
       )}
-    </Modal>
+    </Wrapper>
   );
 }
 

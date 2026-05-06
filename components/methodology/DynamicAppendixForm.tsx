@@ -922,7 +922,30 @@ export function DynamicAppendixForm({
                                     <option value="">Select...</option>
                                     {cellOptions.map(opt => <option key={opt} value={opt}>{opt}</option>)}
                                   </select>
-                                ) : cellInputType === 'yesno' ? (
+                                ) : cellInputType === 'multiselect' && cellOptions ? (() => {
+                                  const raw = values[cellKey];
+                                  const selected: string[] = (() => {
+                                    if (!raw || typeof raw !== 'string') return [];
+                                    try {
+                                      const parsed = JSON.parse(raw);
+                                      return Array.isArray(parsed) ? parsed.filter((s: unknown) => typeof s === 'string') : [];
+                                    } catch { return []; }
+                                  })();
+                                  const toggle = (opt: string) => {
+                                    const next = selected.includes(opt) ? selected.filter(s => s !== opt) : [...selected, opt];
+                                    handleChange(cellKey, next.length === 0 ? '' : JSON.stringify(next));
+                                  };
+                                  return (
+                                    <div className={`w-full flex flex-wrap gap-x-2 gap-y-0.5 ${refClass}`}>
+                                      {cellOptions.map(opt => (
+                                        <label key={opt} className="inline-flex items-center gap-1 text-[11px] cursor-pointer">
+                                          <input type="checkbox" checked={selected.includes(opt)} onChange={() => toggle(opt)} className="w-3 h-3 rounded border-slate-300" />
+                                          <span>{opt}</span>
+                                        </label>
+                                      ))}
+                                    </div>
+                                  );
+                                })() : cellInputType === 'yesno' ? (
                                   <select
                                     value={(values[cellKey] as string) || ''}
                                     onChange={e => handleChange(cellKey, e.target.value)}
