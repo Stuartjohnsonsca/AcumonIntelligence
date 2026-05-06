@@ -13,6 +13,8 @@ import { assertionShortLabel } from '@/types/methodology';
 import { JournalRiskPanel } from './JournalRiskPanel';
 import { SRMMPanel } from './SRMMPanel';
 import { PlanCustomiserModal } from './PlanCustomiserModal';
+import { VatReconciliationPanel } from './VatReconciliationPanel';
+import { isRevenueFsLevel } from '@/lib/vat-reconciliation';
 
 interface TBRow {
   id: string;
@@ -400,6 +402,7 @@ export function AuditPlanPanel({ engagementId, clientId, periodId, onClose, peri
   const [merging, setMerging] = useState(false);
   const [flowViewerExec, setFlowViewerExec] = useState<{ id: string; testDescription: string } | null>(null);
   const [showErrorSchedule, setShowErrorSchedule] = useState(false);
+  const [vatReconcOpen, setVatReconcOpen] = useState(false);
 
   function toggleMergeSelect(rowId: string) {
     setSelectedForMerge(prev => {
@@ -1224,6 +1227,23 @@ export function AuditPlanPanel({ engagementId, clientId, periodId, onClose, peri
               <span className="ml-2 text-[10px] text-slate-500 italic">(select an FS Level for more precise customisation)</span>
             )}
           </div>
+          <div className="flex items-center gap-2">
+            {/* VAT Reconciliation — only on the Revenue level. Opens the
+                calculator modal which gates on the Permanent-tab VAT
+                registration question, runs through the consistent-rates
+                setup once, then lets the team map each revenue code to
+                a VAT rate. The grid + Verified-to-Bank + TB compare
+                land in subsequent commits. */}
+            {isRevenueFsLevel(activeLevel) && (
+              <button
+                onClick={() => setVatReconcOpen(true)}
+                className="inline-flex items-center gap-1.5 text-xs font-semibold px-3 py-1.5 rounded bg-emerald-600 text-white border border-emerald-700 hover:bg-emerald-700 shadow-sm whitespace-nowrap"
+                title="Open VAT Reconciliation calculator for the Revenue section"
+              >
+                <Calculator className="h-3.5 w-3.5" />
+                VAT Reconciliation
+              </button>
+            )}
           <button
             onClick={() => {
               const scopeName = activeOtherTab || activeLevel || activeStatement;
@@ -1263,6 +1283,7 @@ export function AuditPlanPanel({ engagementId, clientId, periodId, onClose, peri
             <ClipboardList className="h-3.5 w-3.5" />
             Plan Customiser
           </button>
+          </div>
         </div>
       )}
 
@@ -2012,6 +2033,13 @@ export function AuditPlanPanel({ engagementId, clientId, periodId, onClose, peri
           />
         );
       })()}
+
+      {vatReconcOpen && (
+        <VatReconciliationPanel
+          engagementId={engagementId}
+          onClose={() => setVatReconcOpen(false)}
+        />
+      )}
     </div>
   );
 }

@@ -2048,6 +2048,7 @@ model AuditEngagement {
   journalRiskRuns       JournalRiskRun[]
   meetings              AuditMeeting[]
   actionLogs            EngagementActionLog[]
+  vatReconciliation     AuditVatReconciliation?
 
   @@unique([clientId, periodId, auditType])
   @@index([firmId])
@@ -2329,6 +2330,28 @@ model AuditMateriality {
   engagement AuditEngagement @relation(fields: [engagementId], references: [id], onDelete: Cascade)
 
   @@map("audit_materiality")
+}
+
+// ─── VAT Reconciliation calculator ─────────────────────────────────────
+// Per-engagement state for the VAT Reconciliation calculator launched
+// from the Revenue section of the Audit Plan. Single JSON blob holds
+// everything reviewers need to re-open and re-edit:
+//   - ratesConsistent toggle (asked once, editable)
+//   - revenueMappings: account-code → VAT rate selection (+ snapshot Dr/Cr)
+//   - periodRows: spreadsheet rows with VAT-return data + cut-off rows
+//   - bankVerifications: Verified-to-Bank (manual or connector-sourced)
+//   - tbVatRows: TB account codes whose balance should reconcile to HMRC
+//   - vatReturnsRequest: one portal request bundling all period returns
+//   - conclusion + sign-off (Reviewer / RI) — same shape as test conclusions
+// See lib/vat-reconciliation.ts for the full Type definition.
+model AuditVatReconciliation {
+  id           String @id @default(uuid())
+  engagementId String @unique @map("engagement_id")
+  data         Json   @default("{}")
+
+  engagement AuditEngagement @relation(fields: [engagementId], references: [id], onDelete: Cascade)
+
+  @@map("audit_vat_reconciliations")
 }
 
 model AuditPARRow {
