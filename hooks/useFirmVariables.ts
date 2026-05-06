@@ -93,6 +93,42 @@ async function fetchOnce(): Promise<{ list: FirmVariable[]; map: VariableMap }> 
         }
       }
 
+      // ── VAT registration / deregistration thresholds ────────────────
+      // Pick the threshold row currently in force for each kind:
+      // dateFrom <= today AND (dateTo IS NULL OR dateTo >= today).
+      // If multiple rows match (overlapping ranges), the one with the
+      // latest dateFrom wins. Exposed as `vat_registration_threshold`
+      // and `vat_deregistration_threshold` so admins can write
+      // `=revenue > vat_registration_threshold` in any schedule
+      // formula. Note: this is firm-scoped (no engagement period
+      // context) — see the comment in lib/vat-reconciliation.ts if
+      // engagement-period-end-accurate resolution is needed.
+      const vatThresholds = tables.firm_vat_config?.thresholds;
+      if (Array.isArray(vatThresholds)) {
+        const today = new Date().toISOString().slice(0, 10);
+        const isCurrent = (t: { dateFrom?: string | null; dateTo?: string | null }) => {
+          const fromOk = !t.dateFrom || t.dateFrom <= today;
+          const toOk = !t.dateTo || t.dateTo >= today;
+          return fromOk && toOk;
+        };
+        const pickLatest = (kind: 'registration' | 'deregistration') => {
+          const candidates = vatThresholds
+            .filter((t: any) => t && t.kind === kind && Number.isFinite(Number(t.amount)) && isCurrent(t));
+          if (candidates.length === 0) return null;
+          // Latest dateFrom wins (treat null/empty as the earliest).
+          candidates.sort((a: any, b: any) => (b.dateFrom || '').localeCompare(a.dateFrom || ''));
+          return Number(candidates[0].amount);
+        };
+        const reg = pickLatest('registration');
+        if (reg !== null) {
+          list.push({ name: 'vat_registration_threshold', label: 'VAT Registration Threshold (current)', value: reg });
+        }
+        const dereg = pickLatest('deregistration');
+        if (dereg !== null) {
+          list.push({ name: 'vat_deregistration_threshold', label: 'VAT Deregistration Threshold (current)', value: dereg });
+        }
+      }
+
       const map: VariableMap = {};
       for (const v of list) map[v.name] = v.value;
 
