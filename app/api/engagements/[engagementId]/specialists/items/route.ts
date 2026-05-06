@@ -5,6 +5,7 @@ import { assertEngagementWriteAccess } from '@/lib/auth/engagement-auth';
 import { findScheduleAction, renderOpeningMessage } from '@/lib/schedule-actions';
 import { buildPortalUrl } from '@/lib/specialist-portal-token';
 import { sendEmail } from '@/lib/email';
+import { logEngagementAction } from '@/lib/engagement-action-log';
 
 /**
  * Specialists items — server-side helper for creating items in
@@ -123,6 +124,18 @@ export async function POST(
     // member). Best-effort: an email failure logs but doesn't roll
     // back the chat creation, because the auditor can resend or
     // share the URL by hand if the provider is briefly down.
+    //
+    // Logging mirrors the schedule-reviews route so `[specialists/items]`
+    // is greppable in Vercel logs for both success and failure, and
+    // every fire writes a row to engagement_action_logs (action key
+    // 'specialist.fire' / 'specialist.fire-failed') so the audit trail
+    // captures who triggered what without depending on the email
+    // provider's UI.
+    let recipientEmail: string | null = null;
+    let recipientName: string | null = null;
+    let messageId: string | undefined;
+    let emailStatus: 'sent' | 'failed' | 'no_recipient' | 'no_engagement' = 'no_engagement';
+    let emailError: string | null = null;
     try {
       const engagement = await prisma.auditEngagement.findUnique({
         where: { id: engagementId },
@@ -150,6 +163,8 @@ export async function POST(
           : null;
         const recipient = lead || (firstMember ? { name: firstMember.name || '', email: String(firstMember.email).toLowerCase() } : null);
         if (recipient?.email) {
+          recipientEmail = recipient.email;
+          recipientName = recipient.name || null;
           const baseUrl = (process.env.NEXTAUTH_URL || 'https://acumon-website.vercel.app').replace(/\/+$/, '');
           const portalUrl = buildPortalUrl(baseUrl, {
             engagementId,
@@ -180,16 +195,58 @@ export async function POST(
                 This link is private — it gives you access to this engagement and this role only. Do not forward it.
               </p>
             </div>`;
-          await sendEmail(recipient.email, subject, html, { displayName: recipient.name });
+          console.log(`[specialists/items] Sending portal email — engagement=${engagementId} action=${action.key} role=${action.specialistRoleKey} to=${recipient.email}`);
+          try {
+            const result = await sendEmail(recipient.email, subject, html, { displayName: recipient.name });
+            messageId = result?.messageId;
+            emailStatus = 'sent';
+            console.log(`[specialists/items] Portal email accepted by provider — messageId=${messageId || '(none)'} to=${recipient.email}`);
+          } catch (sendErr: any) {
+            emailStatus = 'failed';
+            emailError = sendErr?.message || String(sendErr);
+            console.error(`[specialists/items] Portal email FAILED — to=${recipient.email} — ${emailError}`);
+          }
+        } else {
+          emailStatus = 'no_recipient';
+          console.warn(`[specialists/items] No recipient configured for role=${action.specialistRoleKey} — chat created but no email sent. Add a Lead email or active member under Methodology Admin → Specialist Roles.`);
         }
+
+        // Engagement action log — single row per fire, success OR
+        // failure, so the audit trail tells the auditor "the chat for
+        // this trigger went out at 10:42 to alice@firm.com" even if
+        // they don't have access to Vercel logs.
+        await logEngagementAction({
+          engagementId,
+          firmId: engagement.firmId,
+          actorUserId: session?.user?.id || null,
+          actorName: session?.user?.name || session?.user?.email || 'system',
+          action: emailStatus === 'sent' ? 'specialist.fire' : `specialist.fire-${emailStatus}`,
+          summary: emailStatus === 'sent'
+            ? `Schedule action "${action.label}" fired — chat opened with ${action.specialistRoleKey.replace(/_/g, ' ')} (${recipientEmail})`
+            : emailStatus === 'failed'
+              ? `Schedule action "${action.label}" fired — chat created but email to ${recipientEmail} FAILED: ${emailError}`
+              : `Schedule action "${action.label}" fired — chat created but no email sent (${emailStatus === 'no_recipient' ? 'no recipient configured' : 'engagement lookup failed'})`,
+          targetType: 'specialist_chat',
+          targetId: item.id,
+          metadata: {
+            actionKey: action.key,
+            roleKey: action.specialistRoleKey,
+            sourceQuestionId: questionId || null,
+            recipientEmail,
+            recipientName,
+            messageId: messageId || null,
+            emailStatus,
+            emailError,
+          },
+        });
       }
     } catch (emailErr: any) {
-      console.error('[specialists/items] portal email failed:', emailErr?.message || emailErr);
+      console.error('[specialists/items] portal email block threw:', emailErr?.message || emailErr);
       // Swallow — the chat is created and the auditor can still
       // share the URL manually or trigger again.
     }
 
-    return NextResponse.json({ created: true, item });
+    return NextResponse.json({ created: true, item, messageId, emailStatus });
   }
 
   // Direct shape: caller supplies the full item. Used by the
