@@ -177,9 +177,21 @@ export function VatReconciliationPanel({ engagementId, periodStartDate, periodEn
 
       {gate.kind === 'not_registered' && (
         <GatePopup
+          tone={registration?.shouldRegister === 'aboveThreshold' ? 'red' : 'amber'}
           message={
-            <><strong>{clientName || 'The client'}</strong> is not registered for VAT.
-            Please seek specialist tax advice if you believe <strong>{clientName || 'the client'}</strong> should be VAT registered.</>
+            registration?.shouldRegister === 'aboveThreshold' ? (
+              <>
+                <strong>{clientName || 'The client'}</strong> is <strong>not registered</strong> for VAT but the
+                Permanent tab indicates revenue is <strong>above the registration threshold</strong>.{' '}
+                This is a potential compliance breach — refer to a tax specialist <strong>before</strong> signing off
+                the audit.
+              </>
+            ) : (
+              <>
+                <strong>{clientName || 'The client'}</strong> is not registered for VAT.
+                Please seek specialist tax advice if you believe <strong>{clientName || 'the client'}</strong> should be VAT registered.
+              </>
+            )
           }
           onClose={onClose}
         />
@@ -299,11 +311,13 @@ function Modal({ children, onClose, title }: { children: React.ReactNode; onClos
   );
 }
 
-function GatePopup({ message, onClose }: { message: React.ReactNode; onClose: () => void }) {
+function GatePopup({ message, onClose, tone = 'amber' }: { message: React.ReactNode; onClose: () => void; tone?: 'amber' | 'red' }) {
+  const iconClass = tone === 'red' ? 'text-red-500' : 'text-amber-500';
+  const wrapClass = tone === 'red' ? 'py-6 px-4 bg-red-50/40 border border-red-200 rounded-lg' : 'py-6 px-4';
   return (
-    <div className="py-6 px-4">
+    <div className={wrapClass}>
       <div className="flex items-start gap-3 mb-4">
-        <AlertCircle className="h-5 w-5 text-amber-500 flex-shrink-0 mt-0.5" />
+        <AlertCircle className={`h-5 w-5 flex-shrink-0 mt-0.5 ${iconClass}`} />
         <p className="text-sm text-slate-700 leading-relaxed">{message}</p>
       </div>
       <div className="flex justify-end">

@@ -24,11 +24,27 @@
  * just edit the constant keys below if naming has shifted.
  */
 
-// ── Permanent-file question keys (placeholder) ───────────────────────
+// ── Permanent-file question keys ─────────────────────────────────────
 //
-// These are the keys the panel will read from the engagement's
-// permanent file. Update if Phase 0 lands them under different names.
-export const VAT_REGISTERED_KEY = 'vat_registered';        // 'Yes' | 'No' | undefined
+// These are the keys this panel reads from the engagement's permanent
+// file. They match the slugs the methodology admin set up in the
+// Permanent Schedule. Renaming any question text in the Schedule
+// Designer would change its slug and break this wiring — the
+// AppendixTemplateEditor pops a warning before that happens, driven
+// by VAT_RECONCILIATION_PROTECTED_QUESTIONS below.
+//
+// "Is the client VAT registered?" sits in a multi-column row, so the
+// answer for col1 is stored under `<slug>_col1`. Accepted values are
+// 'Y' / 'N' (Y/N input type).
+export const VAT_REGISTERED_KEY = 'is_the_client_vat_registered_col1';
+// "Should the client be VAT registered?" — bespoke dropdown (single-
+// column row, so no `_col1` suffix). Accepted values include
+// "Yes - Above registration threshold" / "No" / variants.
+export const SHOULD_BE_VAT_REGISTERED_KEY = 'should_the_client_be_vat_registered';
+// Periodicity + anchor questions are not yet defined in the Permanent
+// Schedule. The reads below tolerate them being missing — when they
+// land, give the questions matching slugs (admin can rename anything,
+// but these defaults match this code without further edits).
 export const VAT_PERIODICITY_KEY = 'vat_periodicity';      // 'Monthly' | 'Quarterly' | 'Annual' | undefined
 // Anchor date for the VAT period schedule. From this single ISO date
 // + the periodicity, every VAT period end in any year can be derived
@@ -37,7 +53,88 @@ export const VAT_PERIODICITY_KEY = 'vat_periodicity';      // 'Monthly' | 'Quart
 // Use any one VAT period end the client has filed in the past (or
 // the next one due) — the schedule is symmetric.
 export const VAT_PERIOD_END_ANCHOR_KEY = 'vat_period_end_anchor';
-export const VAT_PERMANENT_QUESTION_LABEL = 'Is the entity registered for VAT?';
+export const VAT_PERMANENT_QUESTION_LABEL = 'Is the client VAT registered?';
+
+// ── Protected-question registry ──────────────────────────────────────
+//
+// Listed here so AppendixTemplateEditor can warn the methodology admin
+// before they delete (or rename, or change the input type of) a
+// question this calculator depends on. Editor matches by slug —
+// derived from the question text via slugifyQuestionText() — within
+// the named templateType.
+export interface ProtectedQuestion {
+  /** The slug the tool reads. Derived from question text via
+   *  slugifyQuestionText. The tool also tolerates a `_col<N>` suffix
+   *  when `column` is set. */
+  slug: string;
+  /** When set, the tool reads this column on a multi-column row,
+   *  i.e. `<slug>_col<column>` rather than the bare slug. */
+  column?: number;
+  /** Which template the question lives in. */
+  templateType: string;
+  /** Tool that depends on this question. */
+  toolName: string;
+  /** Plain-English description of what the tool does with the answer
+   *  — surfaced verbatim in the deletion / edit warning popup. */
+  description: string;
+  /** Allowed input types. Empty / undefined = any. The editor warns
+   *  if the admin tries to switch to an input type outside this set. */
+  allowedInputTypes?: Array<'text' | 'textarea' | 'yesno' | 'yna' | 'yes_only' | 'dropdown' | 'number' | 'currency' | 'date' | 'formula' | 'checkbox'>;
+  /** Optional set of expected answer values (for dropdowns). Editor
+   *  surfaces these in the warning so the admin knows the tool will
+   *  silently no-op if they remove one. */
+  expectedValues?: string[];
+}
+
+export const VAT_RECONCILIATION_PROTECTED_QUESTIONS: ProtectedQuestion[] = [
+  {
+    slug: 'is_the_client_vat_registered',
+    column: 1,
+    templateType: 'permanent_file_questions',
+    toolName: 'VAT Reconciliation',
+    description:
+      'Drives the calculator\'s gate. Answer Y → reconciliation grid opens. Answer N → "seek tax advice" pop-up. Unanswered → prompt to complete the Permanent tab.',
+    allowedInputTypes: ['yesno', 'yna', 'yes_only', 'dropdown'],
+    expectedValues: ['Y', 'N'],
+  },
+  {
+    slug: 'should_the_client_be_vat_registered',
+    templateType: 'permanent_file_questions',
+    toolName: 'VAT Reconciliation',
+    description:
+      'When the client is NOT VAT registered, this drives the strength of the "seek tax specialist" warning. "Yes - Above registration threshold" → strong red banner; otherwise → standard amber reminder.',
+    allowedInputTypes: ['dropdown', 'text', 'textarea'],
+    expectedValues: [
+      'Yes - Above registration threshold',
+      'No',
+    ],
+  },
+];
+
+/** Find any protected-question entry that matches a given question slug
+ *  + templateType + optional column. Returns the first match (entries
+ *  are unique on slug+column). */
+export function findProtectedQuestion(
+  slug: string,
+  templateType: string,
+  column?: number,
+): ProtectedQuestion | null {
+  if (!slug) return null;
+  for (const p of VAT_RECONCILIATION_PROTECTED_QUESTIONS) {
+    if (p.templateType !== templateType) continue;
+    if (p.slug !== slug) continue;
+    if ((p.column ?? undefined) !== (column ?? undefined)) continue;
+    return p;
+  }
+  return null;
+}
+
+/** All protected-question entries for a given templateType. The editor
+ *  uses this to know which slugs in a section to flag with a small
+ *  "wired to <tool>" badge. */
+export function protectedQuestionsForTemplate(templateType: string): ProtectedQuestion[] {
+  return VAT_RECONCILIATION_PROTECTED_QUESTIONS.filter(p => p.templateType === templateType);
+}
 
 // ── Firm-Wide VAT config — risk-tables tableType (placeholder) ───────
 //
@@ -178,11 +275,22 @@ export type VatRegistration = {
   status: 'Yes' | 'No' | 'unanswered';
   /** Periodicity from the same Permanent tab — undefined if unanswered. */
   periodicity?: VatPeriodicity;
+  /** Companion answer from the "Should the client be VAT registered?"
+   *  dropdown. Only meaningful when status === 'No' — in that case
+   *  'aboveThreshold' upgrades the gate pop-up to a strong red
+   *  warning. Undefined when the question hasn't been answered or
+   *  doesn't exist on the schedule yet. */
+  shouldRegister?: 'aboveThreshold' | 'no' | 'other';
 };
 
 /**
  * Read VAT-registration status from the engagement's Permanent file.
- * Returns 'unanswered' until Phase 0 wires the question.
+ * Reads two questions:
+ *   • is_the_client_vat_registered_col1 — 'Y' / 'N' (from col1 of
+ *     a multi-column row in the Permanent Schedule).
+ *   • should_the_client_be_vat_registered — bespoke dropdown,
+ *     companion answer used to upgrade the not-registered warning.
+ * Returns 'unanswered' if the registration question isn't filled.
  */
 export async function readVatRegistration(engagementId: string): Promise<VatRegistration> {
   try {
@@ -199,13 +307,31 @@ export async function readVatRegistration(engagementId: string): Promise<VatRegi
     }
     const raw = flat[VAT_REGISTERED_KEY];
     const periodicityRaw = flat[VAT_PERIODICITY_KEY];
+    const shouldRaw = flat[SHOULD_BE_VAT_REGISTERED_KEY];
     const periodicity: VatPeriodicity | undefined =
       periodicityRaw === 'Monthly' || periodicityRaw === 'Quarterly' || periodicityRaw === 'Annual'
         ? periodicityRaw
         : undefined;
-    if (raw === 'Yes' || raw === true) return { status: 'Yes', periodicity };
-    if (raw === 'No' || raw === false) return { status: 'No', periodicity };
-    return { status: 'unanswered' };
+    // Companion "Should the client be VAT registered?" dropdown.
+    // Recognise the conventional answer strings; anything else maps
+    // to 'other' (so the panel still surfaces the response without
+    // upgrading the warning level).
+    let shouldRegister: VatRegistration['shouldRegister'];
+    if (typeof shouldRaw === 'string') {
+      const s = shouldRaw.trim().toLowerCase();
+      if (s === '' ) shouldRegister = undefined;
+      else if (s === 'no') shouldRegister = 'no';
+      else if (s.startsWith('yes') && s.includes('above')) shouldRegister = 'aboveThreshold';
+      else shouldRegister = 'other';
+    }
+    // Registration: accept either the new 'Y'/'N' (Y/N input type
+    // from the multi-column Permanent Schedule row) or the legacy
+    // 'Yes'/'No'/boolean shapes for forward-compat.
+    const yes = raw === 'Y' || raw === 'Yes' || raw === true;
+    const no  = raw === 'N' || raw === 'No'  || raw === false;
+    if (yes) return { status: 'Yes', periodicity, shouldRegister };
+    if (no)  return { status: 'No',  periodicity, shouldRegister };
+    return { status: 'unanswered', shouldRegister };
   } catch {
     return { status: 'unanswered' };
   }

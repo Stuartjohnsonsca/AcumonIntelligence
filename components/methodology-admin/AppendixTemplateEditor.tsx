@@ -1,14 +1,18 @@
 'use client';
 
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useMemo } from 'react';
 import { Button } from '@/components/ui/button';
-import { Save, Loader2, Plus, X, ChevronDown, ChevronRight, GripVertical, Pencil, Trash2, ArrowUp, ArrowDown, Copy, Check, Sparkles } from 'lucide-react';
+import { Save, Loader2, Plus, X, ChevronDown, ChevronRight, GripVertical, Pencil, Trash2, ArrowUp, ArrowDown, Copy, Check, Sparkles, Lock, AlertTriangle } from 'lucide-react';
 import { useFirmVariables } from '@/hooks/useFirmVariables';
 import { slugifyQuestionText } from '@/lib/formula-engine';
 import { DISPLAY_FORMAT_OPTIONS } from '@/lib/format-display';
 import { PlaceholderBadge } from '@/components/methodology/PlaceholderBadge';
 import type { TemplateQuestion, QuestionInputType, TemplateSectionMeta, SectionLayout } from '@/types/methodology';
 import { SCHEDULE_ACTIONS } from '@/lib/schedule-actions';
+import {
+  protectedQuestionsForTemplate,
+  type ProtectedQuestion,
+} from '@/lib/vat-reconciliation';
 
 /**
  * Convert a methodology template's `templateType` to the
@@ -162,7 +166,58 @@ export function AppendixTemplateEditor({ firmId, templateType, auditType, initia
   const [editingSectionName, setEditingSectionName] = useState<string | null>(null);
   const [sectionNameDraft, setSectionNameDraft] = useState('');
 
-  // Group by section
+  // ── Tool-wired (protected) question registry ──────────────────────
+  // Cross-checked against `templateType` so e.g. permanent_file_questions
+  // only sees its own protected entries. Empty list when no tool wires
+  // anything to this template.
+  const protectedForTemplate = useMemo(
+    () => protectedQuestionsForTemplate(templateType),
+    [templateType]
+  );
+
+  /** All ProtectedQuestion entries that this question matches. A row
+   *  can match multiple entries when several tools / columns reference
+   *  the same slug. */
+  function protectionsForQuestion(q: TemplateQuestion): ProtectedQuestion[] {
+    if (protectedForTemplate.length === 0) return [];
+    const slug = slugifyQuestionText(q.questionText);
+    if (!slug) return [];
+    return protectedForTemplate.filter(p => p.slug === slug);
+  }
+
+  /** Subset of protections that target a specific column on the row.
+   *  Used by the per-cell input-type guard. `column` is 1-based to
+   *  mirror how admins refer to cells. */
+  function protectionsForColumn(q: TemplateQuestion, column: number): ProtectedQuestion[] {
+    return protectionsForQuestion(q).filter(p => p.column === column);
+  }
+
+  // ── Warning modal state ────────────────────────────────────────────
+  // Single shared modal for all "this would break a wired tool"
+  // confirmations. Body text + entry list are tailored per call site,
+  // but the chrome (red icon, Cancel / Continue anyway buttons) is
+  // shared.
+  type WarningPayload = {
+    title: string;
+    body: React.ReactNode;
+    entries: ProtectedQuestion[];
+    onConfirm: () => void;
+    /** Optional handler for the Cancel button. When set, runs in
+     *  addition to closing the modal — useful for the rename path
+     *  where Cancel needs to restore the original text. */
+    onCancel?: () => void;
+  };
+  const [warning, setWarning] = useState<WarningPayload | null>(null);
+  // Tracks the questionText (and its slug) at the moment editing started
+  // for whichever row is currently being edited in the expanded panel.
+  // Used by the questionText onBlur to detect "you renamed a wired
+  // question" so we only warn if the slug actually changed; the
+  // captured text is also what we restore if the admin clicks Cancel
+  // on the warning modal.
+  const editStartSlugRef = useRef<Record<string, { text: string; slug: string }>>({});
+
+  // Group questions by section. Re-built every render so it tracks
+  // questions[] as it changes; cheap given typical schedule sizes.
   const sections = new Map<string, TemplateQuestion[]>();
   for (const q of questions) {
     if (!sections.has(q.sectionKey)) sections.set(q.sectionKey, []);
@@ -209,10 +264,40 @@ export function AppendixTemplateEditor({ firmId, templateType, auditType, initia
   }
 
   function removeQuestion(id: string) {
+    const q = questions.find(qq => qq.id === id);
+    if (!q) return;
+    const doRemove = () => {
+      setQuestions(prev => prev.filter(qq => qq.id !== id));
+      if (expandedId === id) setExpandedId(null);
+      setSaved(false);
+    };
+    const protections = protectionsForQuestion(q);
+    if (protections.length > 0) {
+      setWarning({
+        title: 'Delete a tool-wired question?',
+        body: (
+          <>
+            <p>
+              <strong>“{q.questionText || '(untitled)'}”</strong> is wired to one or more
+              calculators in the platform. Deleting it will <strong>break</strong> the
+              wiring — the affected tool(s) will fall back to a "not configured" state
+              and stop producing useful results until the question is restored or a new
+              one with the same slug is added.
+            </p>
+            <p className="mt-2">If you really need to remove this question, consider one of these alternatives instead:</p>
+            <ul className="list-disc pl-5 mt-1 space-y-0.5 text-[11px]">
+              <li>Set <em>Conditional on → Never show</em> to retire the row without changing the slug.</li>
+              <li>Replace it with a renamed question that slugifies to <strong>the same identifier</strong>.</li>
+            </ul>
+          </>
+        ),
+        entries: protections,
+        onConfirm: doRemove,
+      });
+      return;
+    }
     if (!confirm('Delete this question?')) return;
-    setQuestions(prev => prev.filter(q => q.id !== id));
-    if (expandedId === id) setExpandedId(null);
-    setSaved(false);
+    doRemove();
   }
 
   /** Move an entire section (and all its questions) up or down.
@@ -299,10 +384,37 @@ export function AppendixTemplateEditor({ firmId, templateType, auditType, initia
   }
 
   function deleteSection(sectionKey: string) {
-    const count = questions.filter(q => q.sectionKey === sectionKey).length;
+    const inSection = questions.filter(q => q.sectionKey === sectionKey);
+    const count = inSection.length;
+    const protectedInSection = inSection.flatMap(q => protectionsForQuestion(q));
+    const doDelete = () => {
+      setQuestions(prev => prev.filter(q => q.sectionKey !== sectionKey));
+      setSaved(false);
+    };
+    if (protectedInSection.length > 0) {
+      setWarning({
+        title: 'Delete a section containing tool-wired questions?',
+        body: (
+          <>
+            <p>
+              Section <strong>“{sectionKey}”</strong> contains {protectedInSection.length}{' '}
+              question{protectedInSection.length === 1 ? '' : 's'} wired to one or more calculators.
+              Deleting the section will <strong>delete those questions too</strong> and break the
+              wiring — affected tools will revert to a "not configured" state.
+            </p>
+            <p className="mt-2 text-[11px]">
+              The full section delete will also remove {count - protectedInSection.length} other
+              question{count - protectedInSection.length === 1 ? '' : 's'} not listed below.
+            </p>
+          </>
+        ),
+        entries: protectedInSection,
+        onConfirm: doDelete,
+      });
+      return;
+    }
     if (!confirm(`Delete section "${sectionKey}" and all ${count} question${count !== 1 ? 's' : ''}?`)) return;
-    setQuestions(prev => prev.filter(q => q.sectionKey !== sectionKey));
-    setSaved(false);
+    doDelete();
   }
 
   function toggleSection(sectionKey: string) {
@@ -554,6 +666,25 @@ export function AppendixTemplateEditor({ firmId, templateType, auditType, initia
                             title={`Merge-field placeholder — click to copy\n{{${rowPath}}}`}
                           />
                         )}
+                        {/* Tool-wired badge — visible whenever any
+                            calculator reads this question. Hover for the
+                            list of tools; the actual block-on-delete /
+                            block-on-rename logic lives in removeQuestion
+                            + the questionText / inputType handlers. */}
+                        {(() => {
+                          const ps = protectionsForQuestion(q);
+                          if (ps.length === 0) return null;
+                          const tools = Array.from(new Set(ps.map(p => p.toolName))).join(', ');
+                          return (
+                            <span
+                              title={`Wired to: ${tools}\nDeleting, renaming, or changing the response type of this question will break the wiring.`}
+                              className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded bg-amber-100 text-amber-700 border border-amber-300 whitespace-nowrap"
+                            >
+                              <Lock className="h-3 w-3" />
+                              Wired
+                            </span>
+                          );
+                        })()}
                         {inputTypeBadge(q.inputType)}
                         {/* Action buttons - always visible */}
                         <div className="flex items-center gap-0.5 ml-1 flex-shrink-0">
@@ -592,12 +723,90 @@ export function AppendixTemplateEditor({ firmId, templateType, auditType, initia
                       {/* Expanded edit form */}
                       {isExpanded && (
                         <div className="px-4 pb-4 pt-2 bg-blue-50/30 border-t border-blue-100">
+                          {/* Tool-wired warning banner — only shown when this
+                              question is read by at least one calculator.
+                              Lists the tools and what each reads so the
+                              admin understands the cost of changing
+                              questionText / inputType / deleting the row. */}
+                          {(() => {
+                            const ps = protectionsForQuestion(q);
+                            if (ps.length === 0) return null;
+                            return (
+                              <div className="mb-3 px-3 py-2 bg-amber-50 border border-amber-300 rounded text-[11px] text-amber-900 flex items-start gap-2">
+                                <AlertTriangle className="h-3.5 w-3.5 flex-shrink-0 mt-0.5 text-amber-600" />
+                                <div className="space-y-1">
+                                  <p>
+                                    <strong>This question is wired to a calculator.</strong>{' '}
+                                    Renaming it (which changes the slug),
+                                    changing its response type, or deleting it
+                                    will break the wiring. A confirmation pop-up
+                                    will appear if you try one of those actions.
+                                  </p>
+                                  <ul className="list-disc pl-4 space-y-0.5">
+                                    {ps.map((p, idx) => (
+                                      <li key={idx}>
+                                        <strong>{p.toolName}</strong>
+                                        {p.column ? <> reads <code className="bg-amber-100 px-1 rounded">col{p.column}</code></> : <> reads the row value</>}
+                                        {' — '}{p.description}
+                                      </li>
+                                    ))}
+                                  </ul>
+                                </div>
+                              </div>
+                            );
+                          })()}
                           <div className="grid grid-cols-2 gap-3">
                             <div className="col-span-2">
                               <label className="block text-xs text-slate-500 mb-1 font-medium">Question Text</label>
                               <textarea
                                 value={q.questionText}
+                                onFocus={() => {
+                                  // Snapshot the text + slug at the moment
+                                  // editing starts. The blur handler uses
+                                  // this so we only warn if the slug
+                                  // actually changed (typing then reverting
+                                  // is a no-op), and so the warning's
+                                  // Cancel button can restore the exact
+                                  // original text.
+                                  editStartSlugRef.current[q.id] = {
+                                    text: q.questionText,
+                                    slug: slugifyQuestionText(q.questionText),
+                                  };
+                                }}
                                 onChange={e => updateQuestion(q.id, { questionText: e.target.value })}
+                                onBlur={e => {
+                                  const start = editStartSlugRef.current[q.id];
+                                  delete editStartSlugRef.current[q.id];
+                                  if (!start) return;
+                                  const newSlug = slugifyQuestionText(e.target.value);
+                                  if (start.slug === newSlug) return;
+                                  const wasProtected = protectedForTemplate.filter(p => p.slug === start.slug);
+                                  if (wasProtected.length === 0) return;
+                                  setWarning({
+                                    title: 'Rename a tool-wired question?',
+                                    body: (
+                                      <>
+                                        <p>
+                                          You renamed a question that calculators read by its
+                                          slug (<code className="bg-slate-100 px-1 rounded">{start.slug}</code>).
+                                          The new text slugifies to{' '}
+                                          <code className="bg-slate-100 px-1 rounded">{newSlug || '(empty)'}</code>{' '}
+                                          which the tool won't recognise.
+                                        </p>
+                                        <p className="mt-2">
+                                          Click <strong>Cancel</strong> to revert the rename, or{' '}
+                                          <strong>Continue anyway</strong> if you intend to re-wire
+                                          the tool separately.
+                                        </p>
+                                      </>
+                                    ),
+                                    entries: wasProtected,
+                                    // Continue: keep the rename — already applied via onChange.
+                                    onConfirm: () => undefined,
+                                    // Cancel handler restores the captured text.
+                                    onCancel: () => updateQuestion(q.id, { questionText: start.text }),
+                                  });
+                                }}
                                 className="w-full border border-slate-200 rounded px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400 min-h-[60px] resize-y"
                                 placeholder="Enter the question text..."
                               />
@@ -622,7 +831,33 @@ export function AppendixTemplateEditor({ firmId, templateType, auditType, initia
                                     <label className="block text-xs text-slate-500 mb-1 font-medium">Response Type</label>
                                     <select
                                       value={q.inputType}
-                                      onChange={e => updateQuestion(q.id, { inputType: e.target.value as QuestionInputType })}
+                                      onChange={e => {
+                                        const next = e.target.value as QuestionInputType;
+                                        const protections = protectionsForQuestion(q).filter(p => p.column === undefined);
+                                        const breaking = protections.filter(p =>
+                                          p.allowedInputTypes && !p.allowedInputTypes.includes(next as any)
+                                        );
+                                        if (breaking.length > 0) {
+                                          setWarning({
+                                            title: 'Change response type on a tool-wired question?',
+                                            body: (
+                                              <>
+                                                <p>
+                                                  Switching the response type from{' '}
+                                                  <strong>{INPUT_TYPE_OPTIONS.find(o => o.value === q.inputType)?.label || q.inputType}</strong>{' '}
+                                                  to <strong>{INPUT_TYPE_OPTIONS.find(o => o.value === next)?.label || next}</strong>{' '}
+                                                  is likely to <strong>break</strong> the tool reading this answer — it
+                                                  expects a specific shape (Y/N, dropdown, etc.).
+                                                </p>
+                                              </>
+                                            ),
+                                            entries: breaking,
+                                            onConfirm: () => updateQuestion(q.id, { inputType: next }),
+                                          });
+                                          return;
+                                        }
+                                        updateQuestion(q.id, { inputType: next });
+                                      }}
                                       className="w-full border border-slate-200 rounded px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-blue-400"
                                     >
                                       {INPUT_TYPE_OPTIONS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
@@ -945,7 +1180,33 @@ export function AppendixTemplateEditor({ firmId, templateType, auditType, initia
                                               <PlaceholderBadge path={cellPath} title={cellTitle} />
                                               <select
                                                 value={cfg?.inputType || q.inputType}
-                                                onChange={e => updateRowCol(ci, { inputType: e.target.value as QuestionInputType })}
+                                                onChange={e => {
+                                                  const next = e.target.value as QuestionInputType;
+                                                  // Per-cell change is column-scoped — match
+                                                  // protections targeting this specific 1-based column.
+                                                  const colNum = ci + 1;
+                                                  const breaking = protectionsForColumn(q, colNum).filter(p =>
+                                                    p.allowedInputTypes && !p.allowedInputTypes.includes(next as any)
+                                                  );
+                                                  if (breaking.length > 0) {
+                                                    setWarning({
+                                                      title: `Change input type on Col ${colNum} of a tool-wired row?`,
+                                                      body: (
+                                                        <p>
+                                                          Col {colNum} of <strong>“{q.questionText || '(untitled)'}”</strong>{' '}
+                                                          is read by a calculator that expects a specific shape.
+                                                          Switching to{' '}
+                                                          <strong>{INPUT_TYPE_OPTIONS.find(o => o.value === next)?.label || next}</strong>{' '}
+                                                          will <strong>break</strong> the wiring.
+                                                        </p>
+                                                      ),
+                                                      entries: breaking,
+                                                      onConfirm: () => updateRowCol(ci, { inputType: next }),
+                                                    });
+                                                    return;
+                                                  }
+                                                  updateRowCol(ci, { inputType: next });
+                                                }}
                                                 className="text-[10px] border border-slate-200 rounded px-2 py-1 bg-white focus:outline-none focus:border-blue-400"
                                                 title="Input type for this cell only (this row's version of this column)"
                                               >
@@ -1428,6 +1689,84 @@ export function AppendixTemplateEditor({ firmId, templateType, auditType, initia
           No sections yet. Click &quot;Add Section&quot; to get started.
         </div>
       )}
+
+      {/* Tool-wired protection warning modal — shared across all
+          delete / rename / response-type-change paths above. The body
+          and entry list are tailored per call site; the chrome stays
+          consistent so admins recognise it. */}
+      {warning && (
+        <ProtectionWarningModal
+          payload={warning}
+          onClose={() => setWarning(null)}
+        />
+      )}
+    </div>
+  );
+}
+
+/** Modal shown before any delete / rename / response-type change that
+ *  would break a wired calculator. Lists the affected tool entries
+ *  with their description so the admin can make an informed call. */
+function ProtectionWarningModal({
+  payload,
+  onClose,
+}: {
+  payload: {
+    title: string;
+    body: React.ReactNode;
+    entries: ProtectedQuestion[];
+    onConfirm: () => void;
+    onCancel?: () => void;
+  };
+  onClose: () => void;
+}) {
+  return (
+    <div className="fixed inset-0 z-[70] flex items-center justify-center bg-slate-900/50 p-4">
+      <div className="bg-white rounded-lg shadow-xl border border-slate-200 w-full max-w-lg">
+        <div className="flex items-center gap-2 px-4 py-3 border-b border-slate-200 bg-red-50">
+          <AlertTriangle className="h-4 w-4 text-red-600" />
+          <h3 className="text-sm font-semibold text-red-800">{payload.title}</h3>
+        </div>
+        <div className="p-4 space-y-3 text-xs text-slate-700">
+          <div className="space-y-2">{payload.body}</div>
+          <div className="border border-slate-200 rounded p-2 bg-slate-50 space-y-1.5">
+            <div className="text-[10px] uppercase tracking-wide text-slate-500 font-semibold">Wired tool dependencies</div>
+            {payload.entries.map((p, idx) => (
+              <div key={idx} className="flex items-start gap-2">
+                <span className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded bg-amber-100 text-amber-700 border border-amber-300 whitespace-nowrap mt-0.5">
+                  <Lock className="h-3 w-3" />
+                  {p.toolName}
+                </span>
+                <p className="text-[11px] leading-snug">
+                  Reads <code className="bg-white border border-slate-200 px-1 rounded">{p.column ? `${p.slug}_col${p.column}` : p.slug}</code>
+                  {p.allowedInputTypes && p.allowedInputTypes.length > 0 && (
+                    <> — must be one of: {p.allowedInputTypes.join(', ')}</>
+                  )}
+                  {p.expectedValues && p.expectedValues.length > 0 && (
+                    <> — expected answers include: {p.expectedValues.map(v => `"${v}"`).join(', ')}</>
+                  )}
+                  <br />
+                  <span className="text-slate-500">{p.description}</span>
+                </p>
+              </div>
+            ))}
+          </div>
+        </div>
+        <div className="flex justify-end gap-2 px-4 py-3 border-t border-slate-200 bg-slate-50">
+          <button
+            onClick={() => { payload.onCancel?.(); onClose(); }}
+            className="px-3 py-1.5 text-xs font-medium border border-slate-300 rounded hover:bg-slate-100"
+          >
+            Cancel
+          </button>
+          <button
+            onClick={() => { payload.onConfirm(); onClose(); }}
+            className="px-3 py-1.5 text-xs font-medium bg-red-600 text-white rounded hover:bg-red-700"
+          >
+            Continue anyway
+          </button>
+        </div>
+      </div>
     </div>
   );
 }

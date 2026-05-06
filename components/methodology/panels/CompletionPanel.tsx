@@ -394,7 +394,14 @@ function StructuredScheduleTab({ engagementId, templateType, title, showAutoComp
     // a "specialist initiated" marker on this and every future
     // render (replaces the old triggered-status text field).
     const q = questions.find(qq => qq.id === questionId);
-    if (q?.scheduleAction?.key && value === q.scheduleAction.triggerValue) {
+    // String-coerce + trim both sides so the comparison still matches
+    // when the new value is a number (formula cells store as numeric)
+    // and the triggerValue was saved as a string — or vice versa.
+    const matchesTrigger =
+      !!q?.scheduleAction?.key
+      && !!q.scheduleAction.triggerValue
+      && String(value ?? '').trim() === String(q.scheduleAction.triggerValue).trim();
+    if (matchesTrigger && q?.scheduleAction?.key) {
       const actionKey = q.scheduleAction.key;
       fetch(`/api/engagements/${engagementId}/specialists/items`, {
         method: 'POST',

@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useRef } from 'react';
 import { useSession } from 'next-auth/react';
 import { AlertTriangle, AlertOctagon } from 'lucide-react';
 import { FormField } from './FormField';
@@ -431,6 +431,12 @@ export function DynamicAppendixForm({
   // question id is a GUID. The slug aliases are never saved.
   const computedValues = useMemo(() => {
     const merged: FormValues = { ...firmVariablesMap, ...(externalValues || {}), ...values };
+    // We MUTATE `withAliases` as we go — each formula's result is
+    // published back under every alias the next formula could use to
+    // reference it (raw id, slug from question text, explicit q.key,
+    // and `_col<N>` variants). Without this, chained formulas — e.g.
+    // col2 = "refer_to_tax_specialist_col1" reading col1's formula
+    // result — silently see undefined and never update.
     const withAliases = buildFormulaValues(questions, merged);
     // Merge cross-ref sources so formulas can reference either a
     // parent-component-supplied context (rare) OR the live data the
@@ -441,19 +447,38 @@ export function DynamicAppendixForm({
       ...(crossSchedules?.questionnaires || {}),
     };
     const computed: FormValues = {};
+
+    // Helper: write a freshly-computed value back into `withAliases`
+    // under every alias dependents might use. Mirrors the alias set
+    // produced by buildFormulaValues so referencing by raw id, by
+    // slug, by explicit key, or by `_col<N>` variant all resolve to
+    // the same live value.
+    function publish(qId: string, slug: string, explicitKey: string | undefined, colN: number | undefined, value: any) {
+      const suffix = colN ? `_col${colN}` : '';
+      withAliases[`${qId}${suffix}`] = value;
+      if (slug) withAliases[`${slug}${suffix}`] = value;
+      if (explicitKey) withAliases[`${explicitKey}${suffix}`] = value;
+    }
+
     for (const q of questions) {
+      const slug = slugifyQuestionText(q.questionText);
+      const explicitKey = (q as any).key as string | undefined;
       // crossRef questions: value comes from another schedule. Wins over
       // formula/raw — if the admin pointed this cell at another appendix,
       // the cell IS that other answer. Rendered read-only below.
       const qCrossRef = (q as any).crossRef as string | undefined;
       if (qCrossRef && qCrossRef.trim()) {
         const resolved = resolveCrossRef(qCrossRef);
-        computed[q.id] = resolved === null || resolved === undefined ? '' : resolved;
+        const v = resolved === null || resolved === undefined ? '' : resolved;
+        computed[q.id] = v;
+        publish(q.id, slug, explicitKey, undefined, v);
         continue;
       }
       // Formula-typed questions: always evaluate via the template's formulaExpression.
       if (q.inputType === 'formula' && q.formulaExpression) {
-        computed[q.id] = evaluateFormula(q.formulaExpression, withAliases, effectiveCrossRef);
+        const v = evaluateFormula(q.formulaExpression, withAliases, effectiveCrossRef);
+        computed[q.id] = v;
+        publish(q.id, slug, explicitKey, undefined, v);
         continue;
       }
       // Ad-hoc formulas: if the saved answer is a string starting with '='
@@ -462,7 +487,9 @@ export function DynamicAppendixForm({
       const raw = values[q.id];
       if (typeof raw === 'string' && raw.trim().startsWith('=')) {
         const expr = raw.trim().slice(1);
-        computed[q.id] = evaluateFormula(expr, withAliases, effectiveCrossRef);
+        const v = evaluateFormula(expr, withAliases, effectiveCrossRef);
+        computed[q.id] = v;
+        publish(q.id, slug, explicitKey, undefined, v);
       }
       // Per-cell formulas in multi-column rows. Each cell with
       // inputType='formula' has its own formulaExpression stored on
@@ -475,7 +502,9 @@ export function DynamicAppendixForm({
           const colCfg = q.columns[ci];
           if (colCfg?.inputType === 'formula' && colCfg.formulaExpression) {
             const cellKey = `${q.id}_col${ci + 1}`;
-            computed[cellKey] = evaluateFormula(colCfg.formulaExpression, withAliases, effectiveCrossRef);
+            const v = evaluateFormula(colCfg.formulaExpression, withAliases, effectiveCrossRef);
+            computed[cellKey] = v;
+            publish(q.id, slug, explicitKey, ci + 1, v);
           }
         }
       }
@@ -488,6 +517,78 @@ export function DynamicAppendixForm({
     setValues(prev => ({ ...prev, [questionId]: value }));
     trackFieldEdit(questionId);
   }
+
+  // ── Schedule-action firing ─────────────────────────────────────────
+  //
+  // When a question's effective value (computed if it's a formula
+  // cell, raw otherwise) transitions INTO its configured triggerValue,
+  // POST to the specialists endpoint to spin up a chat with the
+  // action's role. The server is idempotent on (engagement, action,
+  // questionId) so repeat fires are no-ops, but we also track the
+  // prior value here to avoid even making the request on every render.
+  //
+  // First render captures the initial snapshot WITHOUT firing —
+  // otherwise opening an existing engagement would refire every
+  // already-triggered action on page load.
+  //
+  // Comparison is string-coerced + trimmed so a formula returning
+  // the number 2 still matches a triggerValue saved as the string
+  // "2" (or "2 " from a copy/paste).
+  const prevTriggerSnapshotRef = useRef<Record<string, string> | null>(null);
+  useEffect(() => {
+    // Build current effective-value snapshot for every question with
+    // a configured action. Formula cells: prefer computedValues.
+    // Multi-column rows can have a formula on col1 → check col1's
+    // computed value too (covers the "Refer to Tax Specialist"
+    // pattern where the action sits on the row but the value lives
+    // on col1).
+    const current: Record<string, string> = {};
+    for (const q of questions) {
+      if (!q.scheduleAction?.key || !q.scheduleAction.triggerValue) continue;
+      const rowVal = computedValues[q.id] ?? values[q.id];
+      let effective: any = rowVal;
+      // If the row has no row-level value but col1 does (multi-column
+      // formula row), use col1. Otherwise fall through to row value.
+      if ((effective === undefined || effective === null || effective === '') && Array.isArray(q.columns) && q.columns.length > 0) {
+        const col1Key = `${q.id}_col1`;
+        const col1 = computedValues[col1Key] ?? values[col1Key];
+        if (col1 !== undefined && col1 !== null && col1 !== '') effective = col1;
+      }
+      current[q.id] = effective === null || effective === undefined ? '' : String(effective).trim();
+    }
+
+    // First render: stash and bail. We don't want to refire actions
+    // that had already triggered in a prior session.
+    if (prevTriggerSnapshotRef.current === null) {
+      prevTriggerSnapshotRef.current = current;
+      return;
+    }
+
+    for (const q of questions) {
+      if (!q.scheduleAction?.key || !q.scheduleAction.triggerValue) continue;
+      const want = String(q.scheduleAction.triggerValue).trim();
+      const now = current[q.id] ?? '';
+      const before = prevTriggerSnapshotRef.current[q.id] ?? '';
+      // Fire only on transition into the trigger value.
+      if (now === want && before !== want) {
+        const actionKey = q.scheduleAction.key;
+        fetch(`/api/engagements/${engagementId}/specialists/items`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            scheduleActionKey: actionKey,
+            questionId: q.id,
+            questionText: q.questionText,
+            response: now,
+          }),
+        }).catch(() => { /* fire-and-forget; server is idempotent */ });
+      }
+    }
+    prevTriggerSnapshotRef.current = current;
+    // questions / engagementId are stable for the lifetime of this form.
+    // computedValues + values drive re-evaluation.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [computedValues, values]);
 
   /** Evaluate a `conditionalOn` rule against the current answers
    *  collection. Supports the full operator set; defaults to 'eq'
