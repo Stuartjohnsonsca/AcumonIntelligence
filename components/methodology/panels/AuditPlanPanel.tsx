@@ -1651,41 +1651,55 @@ export function AuditPlanPanel({ engagementId, clientId, periodId, onClose, peri
                           </td>
                           <td colSpan={isThreeLevel ? 8 : 7} className="py-0.5 pl-5 pr-2">
                             {/* Test row layout —
-                                [type pill] [Open Test] [conclusion dot] [G/L | Mgmt | 3rdP indent] [description grows] [Reviewer/RI →]
-                                The action controls (Open Test + dot +
-                                indent picker) sit in fixed-width slots on
-                                the left so they line up vertically across
-                                rows regardless of how long the description
-                                is. The description itself uses flex-1 +
-                                truncate so it fills the remaining space
-                                without pushing the controls around. */}
+                                [type pill] [conclusion dot] [description grows] [Execute] [G/L | Mgmt | 3rdP] [Reviewer/RI →]
+                                The Execute and G/L buttons sit in fixed-
+                                width slots on the right of the description
+                                so they line up vertically across rows. The
+                                description itself uses flex-1 + truncate so
+                                it fills the remaining space without
+                                pushing the right-side controls around. */}
                             <div className="flex items-center gap-1.5">
                               <span className={`text-[7px] px-1 py-0.5 rounded border font-semibold flex-shrink-0 ${test.color}`}>{test.typeName}</span>
-                              {(() => {
-                                const currentSource: DataSource = testDataSources[testKey] || 'gl';
-                                const SOURCE_DEF: Record<DataSource, { label: string; full: string; cls: string; title: string }> = {
-                                  gl:   { label: 'G/L',  full: 'General Ledger',          cls: 'bg-blue-50 text-blue-700 border-blue-200 hover:bg-blue-100',          title: 'Evidence comes from the General Ledger / TB' },
-                                  mgmt: { label: 'Mgmt', full: 'Management',              cls: 'bg-amber-50 text-amber-700 border-amber-200 hover:bg-amber-100',     title: 'Evidence comes from management (schedules, reports)' },
-                                  tp:   { label: '3rdP', full: 'Third Party',             cls: 'bg-violet-50 text-violet-700 border-violet-200 hover:bg-violet-100', title: 'Evidence comes from a third party (bank, supplier, etc.)' },
-                                };
-                                const order: DataSource[] = ['gl', 'mgmt', 'tp'];
-                                const def = SOURCE_DEF[currentSource];
-                                return (
-                                  <button
-                                    onClick={(e) => {
-                                      e.stopPropagation();
-                                      const idx = order.indexOf(currentSource);
-                                      const nextSrc = order[(idx + 1) % order.length];
-                                      setTestDataSource(testKey, nextSrc);
-                                    }}
-                                    className={`inline-flex items-center text-[8px] font-semibold px-1.5 py-0.5 rounded border transition-colors flex-shrink-0 w-12 justify-center ${def.cls}`}
-                                    title={`${def.full} — ${def.title}. Click to cycle: G/L → Management → Third Party`}
-                                  >
-                                    {def.label}
-                                  </button>
-                                );
-                              })()}
-                              {isApplicable && (() => {
+                              {/* Conclusion dot — clickable to toggle results */}
+                              {conc !== 'pending' && (
+                                <button
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    setActiveExecutions(prev => {
+                                      const next = new Set(prev);
+                                      if (next.has(testKey)) next.delete(testKey); else next.add(testKey);
+                                      return next;
+                                    });
+                                  }}
+                                  className={`w-2.5 h-2.5 rounded-full flex-shrink-0 cursor-pointer hover:ring-2 hover:ring-offset-1 ${
+                                    conc === 'green' ? 'bg-green-500 hover:ring-green-300' :
+                                    conc === 'orange' ? 'bg-orange-500 hover:ring-orange-300' :
+                                    conc === 'failed' ? 'bg-red-800 hover:ring-red-300' : 'bg-red-500 hover:ring-red-300'
+                                  }`} title={`${
+                                    conc === 'green' ? 'No material errors' :
+                                    conc === 'orange' ? 'Errors above CT, within PM' :
+                                    conc === 'failed' ? 'Test failed to run' : 'Errors exceed PM'
+                                  } — click to ${isExecutionOpen ? 'hide' : 'view'} results`}
+                                />
+                              )}
+                              {/* Test description — flex-1 so it absorbs all
+                                  remaining horizontal space, pushing the
+                                  Execute / G/L / R/RI controls to the
+                                  right edge. Truncates with ellipsis on
+                                  long text so the row never wraps. */}
+                              <span
+                                className={`text-[9px] flex-1 min-w-0 truncate ${isApplicable ? 'text-slate-700' : 'text-slate-400 line-through'}`}
+                                title={test.description}
+                              >
+                                {test.description}
+                              </span>
+                              {/* Execute / Open / Close — fixed-width slot
+                                  so the button's right edge stays aligned
+                                  across rows regardless of label length.
+                                  When the test isn't applicable we still
+                                  reserve the space (empty div) so the
+                                  G/L pill doesn't shift left. */}
+                              {isApplicable ? (() => {
                                 // hasRun = "this test has been kicked off
                                 // at least once" — true for in-progress
                                 // runs as well as completed ones, so the
@@ -1712,7 +1726,7 @@ export function AuditPlanPanel({ engagementId, clientId, periodId, onClose, peri
                                       return next;
                                     });
                                   }}
-                                  className={`inline-flex items-center gap-0.5 text-[8px] font-medium px-1.5 py-0.5 rounded transition-colors flex-shrink-0 ${
+                                  className={`inline-flex items-center gap-0.5 text-[8px] font-medium px-1.5 py-0.5 rounded transition-colors flex-shrink-0 w-16 justify-center ${
                                     isExecutionOpen
                                       ? 'bg-blue-600 text-white'
                                       : hasRun
@@ -1725,40 +1739,31 @@ export function AuditPlanPanel({ engagementId, clientId, periodId, onClose, peri
                                   {label}
                                 </button>
                                 );
+                              })() : <div className="w-16 flex-shrink-0" aria-hidden />}
+                              {(() => {
+                                const currentSource: DataSource = testDataSources[testKey] || 'gl';
+                                const SOURCE_DEF: Record<DataSource, { label: string; full: string; cls: string; title: string }> = {
+                                  gl:   { label: 'G/L',  full: 'General Ledger',          cls: 'bg-blue-50 text-blue-700 border-blue-200 hover:bg-blue-100',          title: 'Evidence comes from the General Ledger / TB' },
+                                  mgmt: { label: 'Mgmt', full: 'Management',              cls: 'bg-amber-50 text-amber-700 border-amber-200 hover:bg-amber-100',     title: 'Evidence comes from management (schedules, reports)' },
+                                  tp:   { label: '3rdP', full: 'Third Party',             cls: 'bg-violet-50 text-violet-700 border-violet-200 hover:bg-violet-100', title: 'Evidence comes from a third party (bank, supplier, etc.)' },
+                                };
+                                const order: DataSource[] = ['gl', 'mgmt', 'tp'];
+                                const def = SOURCE_DEF[currentSource];
+                                return (
+                                  <button
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      const idx = order.indexOf(currentSource);
+                                      const nextSrc = order[(idx + 1) % order.length];
+                                      setTestDataSource(testKey, nextSrc);
+                                    }}
+                                    className={`inline-flex items-center text-[8px] font-semibold px-1.5 py-0.5 rounded border transition-colors flex-shrink-0 w-12 justify-center ${def.cls}`}
+                                    title={`${def.full} — ${def.title}. Click to cycle: G/L → Management → Third Party`}
+                                  >
+                                    {def.label}
+                                  </button>
+                                );
                               })()}
-                              {/* Conclusion dot — clickable to toggle results */}
-                              {conc !== 'pending' && (
-                                <button
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    setActiveExecutions(prev => {
-                                      const next = new Set(prev);
-                                      if (next.has(testKey)) next.delete(testKey); else next.add(testKey);
-                                      return next;
-                                    });
-                                  }}
-                                  className={`w-2.5 h-2.5 rounded-full flex-shrink-0 cursor-pointer hover:ring-2 hover:ring-offset-1 ${
-                                    conc === 'green' ? 'bg-green-500 hover:ring-green-300' :
-                                    conc === 'orange' ? 'bg-orange-500 hover:ring-orange-300' :
-                                    conc === 'failed' ? 'bg-red-800 hover:ring-red-300' : 'bg-red-500 hover:ring-red-300'
-                                  }`} title={`${
-                                    conc === 'green' ? 'No material errors' :
-                                    conc === 'orange' ? 'Errors above CT, within PM' :
-                                    conc === 'failed' ? 'Test failed to run' : 'Errors exceed PM'
-                                  } — click to ${isExecutionOpen ? 'hide' : 'view'} results`}
-                                />
-                              )}
-                              {/* Test description — flex-1 so it absorbs all
-                                  remaining horizontal space, pushing the
-                                  R/RI sign-off chips to the right edge.
-                                  Truncates with ellipsis on long text so
-                                  the row never wraps. */}
-                              <span
-                                className={`text-[9px] flex-1 min-w-0 truncate ${isApplicable ? 'text-slate-700' : 'text-slate-400 line-through'}`}
-                                title={test.description}
-                              >
-                                {test.description}
-                              </span>
                               {/* Review / RI checkboxes — clickable */}
                               {dbConc && (
                                 <div className="flex items-center gap-1 flex-shrink-0 ml-1" onClick={e => e.stopPropagation()}>
