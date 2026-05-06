@@ -1,7 +1,8 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { FileText, CheckSquare, ClipboardList, BarChart3, Eye, AlertTriangle, ChevronDown, ChevronUp, ChevronRight, CheckCircle2, Loader2, Sparkles, ShieldAlert, ShieldCheck, ExternalLink, Plus, Trash2 } from 'lucide-react';
+import { FileText, CheckSquare, ClipboardList, BarChart3, Eye, AlertTriangle, ChevronDown, ChevronUp, ChevronRight, CheckCircle2, Loader2, Sparkles, ShieldAlert, ShieldCheck, ExternalLink, Plus, Trash2, UserCheck } from 'lucide-react';
+import { findScheduleAction } from '@/lib/schedule-actions';
 import { buildVisibilityChecker, type Trigger, type TriggerContext } from '@/lib/schedule-triggers';
 import { AuditTestSummaryPanel } from './AuditTestSummaryPanel';
 import { ErrorSchedulePanel } from './ErrorSchedulePanel';
@@ -273,6 +274,12 @@ function StructuredScheduleTab({ engagementId, templateType, title, showAutoComp
   // accepted as-is or written from scratch). Persisted alongside
   // answers/sources so the marker survives reloads.
   const [editedAfterAi, setEditedAfterAi] = useState<Set<string>>(new Set());
+  // Schedule-action fired markers — keyed by questionId. Replaces
+  // the old "triggered" status field on deployed schedules: instead
+  // of a verbose label, the question gets a small specialist icon
+  // with a hover tooltip naming the role that was initiated.
+  // Persists alongside answers so the marker survives reloads.
+  const [firedTriggers, setFiredTriggers] = useState<Record<string, { actionKey: string; firedAt: string }>>({});
   const [loading, setLoading] = useState(true);
   const [autoCompleting, setAutoCompleting] = useState(false);
   const [saveTimeout, setSaveTimeout] = useState<NodeJS.Timeout | null>(null);
@@ -343,6 +350,12 @@ function StructuredScheduleTab({ engagementId, templateType, title, showAutoComp
             // friendly) so we re-hydrate into a Set here. Backwards
             // compatible — older saves don't carry the field.
             if (Array.isArray(saved.editedAfterAi)) setEditedAfterAi(new Set<string>(saved.editedAfterAi));
+            // Fired-trigger markers — { questionId → { actionKey, firedAt } }.
+            // Older saves don't have this; we hydrate to {} and let
+            // the next trigger fill it in.
+            if (saved.firedTriggers && typeof saved.firedTriggers === 'object') {
+              setFiredTriggers(saved.firedTriggers as Record<string, { actionKey: string; firedAt: string }>);
+            }
           }
         } catch {}
       } catch {} finally { setLoading(false); }
@@ -371,6 +384,32 @@ function StructuredScheduleTab({ engagementId, templateType, title, showAutoComp
       }
     }
     debounceSave({ ...answers, [key]: value }, undefined, nextSources, undefined, undefined, nextEdited);
+
+    // Schedule Action trigger — when the new value matches a
+    // configured triggerValue, fire the action (creates a chat
+    // item in the Specialists tab for the action's role). The
+    // server-side handler is idempotent per (questionId, action)
+    // so re-firing the same trigger doesn't pile up duplicates.
+    // We also stamp `firedTriggers[questionId]` so the row gets
+    // a "specialist initiated" marker on this and every future
+    // render (replaces the old triggered-status text field).
+    const q = questions.find(qq => qq.id === questionId);
+    if (q?.scheduleAction?.key && value === q.scheduleAction.triggerValue) {
+      const actionKey = q.scheduleAction.key;
+      fetch(`/api/engagements/${engagementId}/specialists/items`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          scheduleActionKey: actionKey,
+          questionId: q.id,
+          questionText: q.questionText,
+          response: value,
+        }),
+      }).catch(() => { /* fire-and-forget */ });
+      const nextFired = { ...firedTriggers, [q.id]: { actionKey, firedAt: new Date().toISOString() } };
+      setFiredTriggers(nextFired);
+      debounceSave({ ...answers, [key]: value }, undefined, nextSources, undefined, undefined, nextEdited, nextFired);
+    }
   }
 
   function debounceSave(
@@ -380,11 +419,13 @@ function StructuredScheduleTab({ engagementId, templateType, title, showAutoComp
     cs?: Record<string, TemplateSectionMeta & { userAdded?: boolean; createdByUserId?: string }>,
     cq?: Record<string, TemplateQuestion[]>,
     edited?: Set<string>,
+    fired?: Record<string, { actionKey: string; firedAt: string }>,
   ) {
     if (saveTimeout) clearTimeout(saveTimeout);
     const t = setTimeout(async () => {
       try {
         const editedToPersist = edited || editedAfterAi;
+        const firedToPersist = fired || firedTriggers;
         await fetch(`/api/engagements/${engagementId}/permanent-file`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -398,6 +439,7 @@ function StructuredScheduleTab({ engagementId, templateType, title, showAutoComp
               customSections: cs || customSections,
               customQuestions: cq || customQuestions,
               editedAfterAi: Array.from(editedToPersist),
+              firedTriggers: firedToPersist,
             } },
           }),
         });
@@ -971,6 +1013,24 @@ function StructuredScheduleTab({ engagementId, templateType, title, showAutoComp
                               <ExternalLink className="h-3 w-3" />
                             </button>
                           )}
+                          {firedTriggers[q.id] && (() => {
+                            // Specialist-initiated marker — replaces the
+                            // legacy "triggered" status field with a tiny
+                            // icon. Hover surfaces the role that was
+                            // initiated and when, sourced from the
+                            // schedule-actions catalog.
+                            const action = findScheduleAction(firedTriggers[q.id].actionKey);
+                            if (!action) return null;
+                            const when = new Date(firedTriggers[q.id].firedAt).toLocaleDateString('en-GB');
+                            return (
+                              <span
+                                className="inline-flex items-center text-indigo-500"
+                                title={`Specialist initiated: ${action.specialistRoleKey.replace(/_/g, ' ')} — ${when}`}
+                              >
+                                <UserCheck className="h-3 w-3" />
+                              </span>
+                            );
+                          })()}
                         </span>
                       </td>
                       {/* Remaining columns: editable cells */}
@@ -1080,7 +1140,26 @@ function StructuredScheduleTab({ engagementId, templateType, title, showAutoComp
                         </button>
                       </div>
                     ) : (
-                      <div className={`text-xs ${q.isBold ? 'font-bold text-slate-700' : 'text-slate-600'}`}>{q.questionText}</div>
+                      <div className={`text-xs flex items-center gap-1 ${q.isBold ? 'font-bold text-slate-700' : 'text-slate-600'}`}>
+                        <span>{q.questionText}</span>
+                        {firedTriggers[q.id] && (() => {
+                          // See the table-layout marker above for the
+                          // shared comment — this is the standard-
+                          // layout twin so both renders surface the
+                          // initiated specialist.
+                          const action = findScheduleAction(firedTriggers[q.id].actionKey);
+                          if (!action) return null;
+                          const when = new Date(firedTriggers[q.id].firedAt).toLocaleDateString('en-GB');
+                          return (
+                            <span
+                              className="inline-flex items-center text-indigo-500"
+                              title={`Specialist initiated: ${action.specialistRoleKey.replace(/_/g, ' ')} — ${when}`}
+                            >
+                              <UserCheck className="h-3 w-3" />
+                            </span>
+                          );
+                        })()}
+                      </div>
                     )}
                     {!q.isBold && (
                       <div className="flex items-start gap-1">

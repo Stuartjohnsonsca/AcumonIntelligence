@@ -13,6 +13,7 @@ import { ContinuanceTab } from './tabs/ContinuanceTab';
 import { SubsequentEventsTab } from './tabs/SubsequentEventsTab';
 import { NewClientTab } from './tabs/NewClientTab';
 import { TaxTechnicalTab } from './tabs/TaxTechnicalTab';
+import { SpecialistsTab } from './tabs/SpecialistsTab';
 import { MaterialityTab } from './tabs/MaterialityTab';
 import { TrialBalanceTab } from './tabs/TrialBalanceTab';
 import { PARTab } from './tabs/PARTab';
@@ -67,6 +68,10 @@ const TABS = [
   { key: 'outstanding', label: 'Outstanding' },
   { key: 'portal', label: 'Portal' },
   { key: 'communication', label: 'Communication' },
+  // Tab key kept as 'tax-technical' for back-compat with existing
+  // PF sections + sign-off entries; the user-facing label is
+  // "Specialists" and the body renders SpecialistsTab.
+  { key: 'tax-technical', label: 'Specialists' },
 ] as const;
 
 // Tabs that get sign-off dots — everything except Documents and Portal
@@ -88,7 +93,7 @@ const SIGNOFF_TABS: Record<string, string> = {
   // this map — without this entry the dots Walkthroughs writes go
   // unread on the tab bar.
   'walkthroughs': 'Walkthroughs',
-  'tax-technical': 'Tax Technical',
+  'tax-technical': 'Specialists',
   'communication': 'Communication',
 };
 
@@ -118,9 +123,10 @@ const TAB_SIGNOFF_PF_SECTIONS: Record<string, string> = {
   // their own; the OVERALL sign-off lives in this section and is
   // what the tab-bar dot should reflect.
   walkthroughs: 'walkthrough_overall_signoffs',
-  // Tax Technical's overall is added via a dedicated PF section
-  // (see TaxTechnicalTab.toggleOverallSignOff).
-  'tax-technical': 'tax_technical_overall_signoffs',
+  // Tax Technical / Specialists no longer uses the simple
+  // PF-section loader — it has a partial / hollow / solid
+  // aggregate that needs custom translation, see the custom
+  // loader below.
 };
 
 // Tabs whose tab-bar dots come from a tab-specific endpoint that
@@ -129,6 +135,37 @@ const TAB_SIGNOFF_PF_SECTIONS: Record<string, string> = {
 // Used by Communication today; future tabs with bespoke overall
 // sign-off plumbing land here too.
 const TAB_SIGNOFF_CUSTOM_LOADERS: Record<string, (engagementId: string) => Promise<TabSignOffStatus | null>> = {
+  // Specialists tab — reads the aggregate {reviewer, ri} states
+  // SpecialistsTab writes to the tax_technical_overall_signoffs
+  // section. The aggregate is one of 'all' | 'some' | 'none' per
+  // role; we map that to signed / stale / none for the tab strip.
+  // Reviewer cascades to Preparer (Preparer slot reads the same).
+  'tax-technical': async (engagementId) => {
+    try {
+      const res = await fetch(`/api/engagements/${engagementId}/permanent-file?section=tax_technical_overall_signoffs`);
+      if (!res.ok) return null;
+      const json = await res.json();
+      const data = (json?.data || {}) as { reviewer?: any; ri?: any; partial?: boolean };
+      function translate(value: any): 'none' | 'signed' | 'stale' {
+        if (value === 'all') return 'signed';
+        if (value === 'some') return 'stale';
+        return 'none';
+      }
+      // If the section was written by the legacy TaxTechnicalTab
+      // (object-with-{at} shape) rather than the new aggregate
+      // string shape, fall back to the simple "any sign-off →
+      // signed" rule so old data still lights the dots.
+      const reviewer = typeof data.reviewer === 'string' ? translate(data.reviewer)
+        : (data.reviewer?.at || data.reviewer?.timestamp ? 'signed' : 'none');
+      const ri = typeof data.ri === 'string' ? translate(data.ri)
+        : (data.ri?.at || data.ri?.timestamp ? 'signed' : 'none');
+      return {
+        preparer: reviewer !== 'none' || ri !== 'none' ? 'signed' : 'none',
+        reviewer,
+        partner: ri,
+      };
+    } catch { return null; }
+  },
   communication: async (engagementId) => {
     try {
       const res = await fetch(`/api/engagements/${engagementId}/communication`);
@@ -1054,6 +1091,21 @@ export function EngagementTabs({ engagement, auditType, clientName, periodEndDat
           clientId={engagement.clientId}
           teamMembers={teamMembers}
           currentUserId={currentUserId}
+        />;
+      case 'tax-technical':
+        // Tab key kept for back-compat; visible label is
+        // "Specialists" and the body renders the new SpecialistsTab.
+        return <SpecialistsTab
+          engagementId={engagement.id}
+          specialists={(engagement.specialists || []).map(s => ({
+            id: s.id,
+            specialistType: s.specialistType,
+            name: s.name || '',
+            email: s.email,
+          }))}
+          teamMembers={teamMembers as any}
+          currentUserId={currentUserId}
+          currentUserName={teamMembers.find(m => m.userId === currentUserId)?.userName || undefined}
         />;
       default:
         return null;

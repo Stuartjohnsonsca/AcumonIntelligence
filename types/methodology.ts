@@ -3,7 +3,13 @@
 export type AuditType = 'SME' | 'PIE' | 'SME_CONTROLS' | 'PIE_CONTROLS' | 'GROUP';
 export type EngagementStatus = 'pre_start' | 'active' | 'review' | 'complete' | 'archived';
 export type TeamRole = 'Junior' | 'Manager' | 'RI' | 'Partner' | 'EQR';
-export type SpecialistType = 'Specialist' | 'Expert' | 'EthicsPartner' | 'TechnicalAdvisor' | 'Ethics' | 'Technical';
+// SpecialistType used to be a fixed union of 4 types (Specialist /
+// Expert / EthicsPartner / TechnicalAdvisor). Now widened to
+// `string` so it can carry the per-firm role keys configured in
+// Methodology Admin → Specialist Roles (e.g. ethics_partner,
+// mrlo, custom_tax_advisor). The legacy values remain valid for
+// already-saved data.
+export type SpecialistType = string;
 export type InfoRequestType = 'preliminary' | 'standard';
 export type ProgressStatus = 'Not Started' | 'In Progress' | 'Complete' | 'Overdue';
 export type ToolAvailability = 'unavailable' | 'discretion' | 'available';
@@ -371,6 +377,15 @@ export interface TemplateQuestion {
   };
   mergedWith?: string;
   isBold?: boolean; // For conclusion/header rows in tables
+  /** Optional Schedule Action configuration. When the auditor's
+   *  answer to this question matches `triggerValue`, the action
+   *  identified by `key` fires — typically opening a chat with the
+   *  configured specialist in the Specialists tab. The catalog of
+   *  actions lives in lib/schedule-actions.ts. */
+  scheduleAction?: {
+    key: string;
+    triggerValue: string;
+  };
   /** Per-column cell configuration for this ROW when the parent
    *  section uses a table layout (3/4/5-col). One entry per non-label
    *  column — columns[0] is the cell in column 1, columns[1] is the

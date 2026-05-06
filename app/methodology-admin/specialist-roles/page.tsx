@@ -14,10 +14,10 @@ export default async function SpecialistRolesPage() {
   }
 
   const DEFAULT_ROLES = [
-    { key: 'ethics_partner',   label: 'Ethics Partner',   name: '', email: '', isActive: true },
-    { key: 'mrlo',             label: 'MRLO',             name: '', email: '', isActive: true },
-    { key: 'management_board', label: 'Management Board', name: '', email: '', isActive: true },
-    { key: 'acp',              label: 'ACP',              name: '', email: '', isActive: true },
+    { key: 'ethics_partner',   label: 'Ethics Partner',   name: '', email: '', isActive: true, isAuditRole: true,  members: [] },
+    { key: 'mrlo',             label: 'MRLO',             name: '', email: '', isActive: true, isAuditRole: true,  members: [] },
+    { key: 'management_board', label: 'Management Board', name: '', email: '', isActive: true, isAuditRole: false, members: [] },
+    { key: 'acp',              label: 'ACP',              name: '', email: '', isActive: true, isAuditRole: false, members: [] },
   ];
 
   let initialRoles = DEFAULT_ROLES;

@@ -30,12 +30,22 @@ const TEAM_ROLES = [
 // The role grants unlimited READ access to one engagement and is
 // blocked from every write route via assertEngagementWriteAccess.
 const REGULATORY_REVIEWER_ROLE = { value: 'RegulatoryReviewer', label: 'Regulatory Reviewer (read-only)' } as const;
-const SPECIALIST_TYPES = [
-  { type: 'Specialist', label: 'Specialist' },
-  { type: 'Expert', label: 'Expert' },
-  { type: 'EthicsPartner', label: 'Ethics Partner' },
-  { type: 'TechnicalAdvisor', label: 'Technical Advisor' },
-] as const;
+
+// A specialist role and its assignable people, sourced from
+// /api/methodology-admin/specialist-roles. The list loads on mount
+// so the auditor can pick a role + a specific person from the
+// firm's configured roster instead of typing names by hand.
+interface SpecialistRoleOption {
+  key: string;
+  label: string;
+  isAuditRole?: boolean;
+  isActive?: boolean;
+  // Lead person (always option 0).
+  name: string;
+  email: string;
+  // Additional members beyond the lead.
+  members?: { name: string; email: string }[];
+}
 
 export function TeamPanel({ engagementId, initialTeamMembers, initialSpecialists, ethicsPartnerName }: Props) {
   const { data: session } = useSession();
@@ -54,9 +64,30 @@ export function TeamPanel({ engagementId, initialTeamMembers, initialSpecialists
   const [firmUsers, setFirmUsers] = useState<FirmUser[]>([]);
   const [showAddMember, setShowAddMember] = useState(false);
   const [showAddSpecialist, setShowAddSpecialist] = useState(false);
+  // Firm-configured specialist roles. We use `isAuditRole && isActive`
+  // to filter — firm-global roles like ACP / Management Board are
+  // hidden from the engagement picker per the methodology admin's
+  // toggle. Falls back to an empty array if the API can't be
+  // reached, in which case the picker just shows "no roles".
+  const [roleOptions, setRoleOptions] = useState<SpecialistRoleOption[]>([]);
 
   useEffect(() => { setTeamMembers(initialTeamMembers); }, [initialTeamMembers]);
   useEffect(() => { setSpecialists(initialSpecialists); }, [initialSpecialists]);
+
+  // Load specialist roles on mount. The endpoint is admin-tooling
+  // but the GET only requires twoFactorVerified, so engagement
+  // members can read it.
+  useEffect(() => {
+    (async () => {
+      try {
+        const res = await fetch('/api/methodology-admin/specialist-roles');
+        if (!res.ok) return;
+        const data = await res.json();
+        const list: SpecialistRoleOption[] = Array.isArray(data?.roles) ? data.roles : [];
+        setRoleOptions(list.filter(r => r.isActive !== false && r.isAuditRole !== false));
+      } catch { /* tolerant */ }
+    })();
+  }, []);
 
   useAutoSave(
     `/api/engagements/${engagementId}/team`,
@@ -132,14 +163,29 @@ export function TeamPanel({ engagementId, initialTeamMembers, initialSpecialists
     });
   }
 
-  function addSpecialist(type: string) {
-    // Only one of each type
-    if (specialists.some(s => s.specialistType === type)) return;
+  // People available for a given role — Lead first, members after.
+  // The engagement picker exposes one of these per chosen role.
+  function peopleForRole(roleKey: string): { name: string; email: string }[] {
+    const role = roleOptions.find(r => r.key === roleKey);
+    if (!role) return [];
+    const lead = role.name || role.email
+      ? [{ name: role.name || '', email: role.email || '' }]
+      : [];
+    const members = (role.members || []).filter(m => m.name || m.email);
+    return [...lead, ...members];
+  }
+
+  function addSpecialist(roleKey: string) {
+    // Only one entry per role on an engagement; the dropdown still
+    // lets the team swap who's assigned without re-adding the row.
+    if (specialists.some(s => s.specialistType === roleKey)) return;
+    const people = peopleForRole(roleKey);
+    const seed = people[0] || { name: '', email: '' };
     setSpecialists(prev => [...prev, {
       id: '',
-      name: type === 'EthicsPartner' && ethicsPartnerName ? ethicsPartnerName : '',
-      email: '',
-      specialistType: type as SpecialistData['specialistType'],
+      name: seed.name,
+      email: seed.email,
+      specialistType: roleKey,
       firmName: '',
     }]);
     setShowAddSpecialist(false);
@@ -149,13 +195,24 @@ export function TeamPanel({ engagementId, initialTeamMembers, initialSpecialists
     setSpecialists(prev => prev.map((s, i) => i === index ? { ...s, [field]: value } : s));
   }
 
+  // Set the assigned person for a specialist row by picking from
+  // the role's `[lead, ...members]` list. The role key is encoded
+  // as `<name>|<email>` in the option value so we can disambiguate
+  // people who share a name.
+  function pickSpecialistPerson(index: number, comboValue: string) {
+    const [name, email] = comboValue.split('|');
+    setSpecialists(prev => prev.map((s, i) => i === index ? { ...s, name: name || '', email: email || '' } : s));
+  }
+
   function removeSpecialist(index: number) {
     setSpecialists(prev => prev.filter((_, i) => i !== index));
   }
 
-  const availableSpecialistTypes = SPECIALIST_TYPES.filter(
-    st => !specialists.some(s => s.specialistType === st.type)
-  );
+  // Roles the auditor can still add to this engagement — exclude
+  // any whose key already has a row.
+  const availableSpecialistTypes = roleOptions
+    .filter(r => !specialists.some(s => s.specialistType === r.key))
+    .map(r => ({ type: r.key, label: r.label }));
 
   return (
     <div className="bg-white rounded-lg border border-slate-200 p-4 h-full">
@@ -245,7 +302,13 @@ export function TeamPanel({ engagementId, initialTeamMembers, initialSpecialists
         ))}
       </div>
 
-      {/* Specialists Section */}
+      {/* Specialists Section — roles + people sourced from
+          Methodology Admin → Specialist Roles. Each row is one
+          role; the dropdown lets the auditor pick the specific
+          person ([Lead, ...members]) without typing names by
+          hand. Roles whose `isAuditRole` is false (e.g. ACP /
+          Management Board) don't appear here — they're firm-
+          global, not per-engagement. */}
       <div className="border-t border-slate-200 pt-3">
         <div className="flex items-center justify-between mb-2">
           <span className="text-xs font-medium text-slate-600">Specialists</span>
@@ -260,8 +323,12 @@ export function TeamPanel({ engagementId, initialTeamMembers, initialSpecialists
         </div>
 
         {showAddSpecialist && (
-          <div className="mb-2 border border-slate-200 rounded p-2 bg-slate-50">
-            {availableSpecialistTypes.map(st => (
+          <div className="mb-2 border border-slate-200 rounded p-2 bg-slate-50 max-h-44 overflow-auto">
+            {availableSpecialistTypes.length === 0 ? (
+              <p className="text-[10px] text-slate-400 italic px-1 py-0.5">
+                No more roles to add. Configure roles in Methodology Admin → Specialist Roles.
+              </p>
+            ) : availableSpecialistTypes.map(st => (
               <button
                 key={st.type}
                 onClick={() => addSpecialist(st.type)}
@@ -274,32 +341,69 @@ export function TeamPanel({ engagementId, initialTeamMembers, initialSpecialists
         )}
 
         <div className="space-y-2">
-          {specialists.map((spec, i) => (
-            <div key={spec.id || `spec-${i}`} className="p-2 border border-slate-100 rounded">
-              <div className="flex items-center justify-between mb-1">
-                <span className="text-xs font-medium text-slate-500">
-                  {SPECIALIST_TYPES.find(st => st.type === spec.specialistType)?.label}
-                </span>
-                <button onClick={() => removeSpecialist(i)} className="text-red-400 hover:text-red-600 text-xs">Remove</button>
+          {specialists.length === 0 && (
+            <p className="text-[11px] text-slate-400 italic">No specialists assigned yet.</p>
+          )}
+          {specialists.map((spec, i) => {
+            // Resolve the role's display label + pickable people.
+            // Falls back to the raw key if the role's been removed
+            // from Methodology Admin since this engagement was
+            // saved (so old assignments stay editable).
+            const role = roleOptions.find(r => r.key === spec.specialistType);
+            const people = peopleForRole(spec.specialistType);
+            const currentValue = `${spec.name || ''}|${spec.email || ''}`;
+            const currentInList = people.some(p => `${p.name}|${p.email}` === currentValue);
+            return (
+              <div key={spec.id || `spec-${i}`} className="p-2 border border-slate-100 rounded">
+                <div className="flex items-center justify-between mb-1">
+                  <span className="text-xs font-medium text-slate-500">
+                    {role?.label || spec.specialistType}
+                  </span>
+                  <button onClick={() => removeSpecialist(i)} className="text-red-400 hover:text-red-600 text-xs">Remove</button>
+                </div>
+                {people.length > 0 ? (
+                  <select
+                    value={currentValue}
+                    onChange={e => pickSpecialistPerson(i, e.target.value)}
+                    className="w-full border border-slate-200 rounded px-2 py-1 text-xs bg-white"
+                    title="Pick from the firm's configured people for this role"
+                  >
+                    {!currentInList && currentValue !== '|' && (
+                      <option value={currentValue}>
+                        {spec.name || '(no name)'}{spec.email ? ` — ${spec.email}` : ''} (off-list)
+                      </option>
+                    )}
+                    {people.map((p, idx) => (
+                      <option key={idx} value={`${p.name}|${p.email}`}>
+                        {p.name || '(no name)'}{p.email ? ` — ${p.email}` : ''}{idx === 0 ? ' · Lead' : ''}
+                      </option>
+                    ))}
+                  </select>
+                ) : (
+                  // Role exists but no Lead / members configured —
+                  // keep the legacy free-text inputs as a fallback so
+                  // the auditor isn't blocked. The Methodology Admin
+                  // can fill in the roster later.
+                  <div className="grid grid-cols-2 gap-1">
+                    <input
+                      type="text"
+                      value={spec.name}
+                      onChange={e => updateSpecialist(i, 'name', e.target.value)}
+                      placeholder="Name"
+                      className="border border-slate-200 rounded px-2 py-0.5 text-xs"
+                    />
+                    <input
+                      type="email"
+                      value={spec.email || ''}
+                      onChange={e => updateSpecialist(i, 'email', e.target.value)}
+                      placeholder="Email"
+                      className="border border-slate-200 rounded px-2 py-0.5 text-xs"
+                    />
+                  </div>
+                )}
               </div>
-              <div className="grid grid-cols-2 gap-1">
-                <input
-                  type="text"
-                  value={spec.name}
-                  onChange={e => updateSpecialist(i, 'name', e.target.value)}
-                  placeholder="Name"
-                  className="border border-slate-200 rounded px-2 py-0.5 text-xs"
-                />
-                <input
-                  type="email"
-                  value={spec.email || ''}
-                  onChange={e => updateSpecialist(i, 'email', e.target.value)}
-                  placeholder="Email"
-                  className="border border-slate-200 rounded px-2 py-0.5 text-xs"
-                />
-              </div>
-            </div>
-          ))}
+            );
+          })}
         </div>
       </div>
     </div>

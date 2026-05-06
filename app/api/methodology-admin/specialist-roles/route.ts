@@ -17,11 +17,17 @@ import { prisma } from '@/lib/db';
 const TEMPLATE_TYPE = 'specialist_roles';
 const AUDIT_TYPE = 'ALL';
 
+// Default roles seeded the first time a firm visits Specialist
+// Roles. `isAuditRole` controls whether the role appears on the
+// Opening-tab specialist picker for an engagement. ACP and
+// Management Board look across the whole firm, not per engagement,
+// so they default to false; Ethics Partner and MRLO are commonly
+// scoped per engagement so they default to true.
 const DEFAULT_ROLES = [
-  { key: 'ethics_partner',   label: 'Ethics Partner',   name: '', email: '', isActive: true },
-  { key: 'mrlo',             label: 'MRLO',             name: '', email: '', isActive: true },
-  { key: 'management_board', label: 'Management Board', name: '', email: '', isActive: true },
-  { key: 'acp',              label: 'ACP',              name: '', email: '', isActive: true },
+  { key: 'ethics_partner',   label: 'Ethics Partner',   name: '', email: '', isActive: true, isAuditRole: true,  members: [] as Array<{ name: string; email: string }> },
+  { key: 'mrlo',             label: 'MRLO',             name: '', email: '', isActive: true, isAuditRole: true,  members: [] },
+  { key: 'management_board', label: 'Management Board', name: '', email: '', isActive: true, isAuditRole: false, members: [] },
+  { key: 'acp',              label: 'ACP',              name: '', email: '', isActive: true, isAuditRole: false, members: [] },
 ];
 
 export async function GET() {
@@ -72,6 +78,7 @@ export async function PUT(req: Request) {
   const roles = body?.roles;
   if (!Array.isArray(roles)) return NextResponse.json({ error: 'roles[] required' }, { status: 400 });
 
+  const FIRM_GLOBAL = new Set(['acp', 'management_board']);
   const clean = roles
     .filter((r: any) => r && typeof r === 'object' && typeof r.key === 'string' && r.key.length > 0)
     .map((r: any) => ({
@@ -80,6 +87,20 @@ export async function PUT(req: Request) {
       name: String(r.name || '').slice(0, 200),
       email: String(r.email || '').slice(0, 200).trim(),
       isActive: r.isActive !== false,
+      // isAuditRole: missing → default false for firm-global roles
+      // (ACP, Management Board), true for everything else. Lets us
+      // honour the original spec — these roles look at the firm
+      // globally and shouldn't auto-appear on engagement pickers.
+      isAuditRole: typeof r.isAuditRole === 'boolean' ? r.isAuditRole : !FIRM_GLOBAL.has(String(r.key)),
+      members: Array.isArray(r.members)
+        ? r.members
+            .filter((m: any) => m && typeof m === 'object')
+            .map((m: any) => ({
+              name: String(m.name || '').slice(0, 200),
+              email: String(m.email || '').slice(0, 200).trim(),
+            }))
+            .filter((m: any) => m.name || m.email)
+        : [],
     }));
 
   try {
