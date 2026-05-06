@@ -1,6 +1,7 @@
 'use client';
 
-import { useState, useEffect, useCallback, Component, Fragment, type ReactNode } from 'react';
+import { useState, useEffect, useCallback, useRef, Component, Fragment, type ReactNode } from 'react';
+import { ChevronLeft, ChevronRight } from 'lucide-react';
 import { useSearchParams, useRouter } from 'next/navigation';
 import type { AuditType } from '@/types/methodology';
 import type { EngagementData } from '@/hooks/useEngagement';
@@ -137,11 +138,14 @@ const TAB_SIGNOFF_CUSTOM_LOADERS: Record<string, (engagementId: string) => Promi
       // sign-offs live under the section keys (board-minutes etc.)
       // and are aggregated for show in the tab body itself.
       const overall = data?.signOffs?.overall || {};
+      const preparerSigned = !!(overall?.preparer?.timestamp || overall?.preparer?.at || overall?.operator?.timestamp || overall?.operator?.at);
       const reviewerSigned = !!(overall?.reviewer?.timestamp || overall?.reviewer?.at);
       const riSigned = !!(overall?.ri?.timestamp || overall?.ri?.at);
-      // Cascade rule: an RI sign-off implies the Reviewer slot is
-      // effectively signed too.
+      // Cascade rule: each senior role implies the slots below it
+      // are effectively signed (RI → Reviewer, Preparer; Reviewer
+      // → Preparer). This is what the user sees on the tab strip.
       return {
+        preparer: preparerSigned || reviewerSigned || riSigned ? 'signed' : 'none',
         reviewer: reviewerSigned || riSigned ? 'signed' : 'none',
         partner: riSigned ? 'signed' : 'none',
       };
@@ -214,10 +218,192 @@ class TabErrorBoundary extends Component<{ tabName: string; engagementId?: strin
   }
 }
 
-// Sign-off status for tab-level dots
+// Sign-off status for tab-level dots. The tab strip renders three
+// dots — Preparer / Reviewer / RI — so the senior reviewer can
+// scan progress across every tab without opening each one. Each
+// slot carries 'none' (not yet signed), 'signed' (current as of
+// the last edit) or 'stale' (signed, but a field has been edited
+// since — only detectable on tabs that expose fieldMeta).
 interface TabSignOffStatus {
+  preparer: 'none' | 'signed' | 'stale';
   reviewer: 'none' | 'signed' | 'stale';
   partner: 'none' | 'signed' | 'stale';
+}
+
+// ─── Horizontal tab strip with overflow-aware affordances ──────────
+//
+// The default <div className="overflow-x-auto"> wrapper hides extra
+// tabs behind the right edge with no visual cue, and the auditor
+// reported missing the planning tabs that scrolled off-screen. This
+// component wraps the strip with:
+//   - Left/right fade gradients that appear only when there's
+//     content to scroll in that direction.
+//   - Chevron buttons in those gradient zones — one click scrolls
+//     ~80% of the visible width, so the user reaches the off-screen
+//     tabs without fiddling with the scrollbar or shift-wheel.
+//   - Per-tab Preparer + Reviewer + RI dots so the senior reviewer
+//     can scan progress at a glance (was Reviewer + RI only).
+function TabStrip({
+  visibleTabs,
+  activeTab,
+  tabSignOffs,
+  switchTab,
+  continuanceLabel,
+  outstandingTeamCount,
+  outstandingClientCount,
+}: {
+  visibleTabs: { key: string; label: string }[];
+  activeTab: string;
+  tabSignOffs: Record<string, TabSignOffStatus>;
+  switchTab: (key: string) => void;
+  continuanceLabel: string;
+  outstandingTeamCount: number;
+  outstandingClientCount: number;
+}) {
+  const scrollRef = useRef<HTMLDivElement | null>(null);
+  const [canScrollLeft, setCanScrollLeft] = useState(false);
+  const [canScrollRight, setCanScrollRight] = useState(false);
+
+  // Recompute which directions can be scrolled. Runs on mount, on
+  // window resize, on user scroll, and whenever the tab list itself
+  // changes (e.g. schedule visibility filters flipping a tab on or
+  // off). 1px tolerance avoids fade flicker on sub-pixel rounding.
+  const recompute = useCallback(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+    setCanScrollLeft(el.scrollLeft > 1);
+    setCanScrollRight(el.scrollLeft + el.clientWidth < el.scrollWidth - 1);
+  }, []);
+
+  useEffect(() => {
+    recompute();
+    const el = scrollRef.current;
+    if (!el) return;
+    const onScroll = () => recompute();
+    el.addEventListener('scroll', onScroll, { passive: true });
+    window.addEventListener('resize', recompute);
+    return () => {
+      el.removeEventListener('scroll', onScroll);
+      window.removeEventListener('resize', recompute);
+    };
+  }, [recompute, visibleTabs.length]);
+
+  // Auto-scroll the active tab into view when it changes — useful
+  // when a deep link lands the user on a tab that's currently
+  // off-screen.
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+    const activeBtn = el.querySelector<HTMLElement>(`[data-tabkey="${activeTab}"]`);
+    if (activeBtn) {
+      const elRect = el.getBoundingClientRect();
+      const btnRect = activeBtn.getBoundingClientRect();
+      if (btnRect.left < elRect.left || btnRect.right > elRect.right) {
+        activeBtn.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'nearest' });
+      }
+    }
+  }, [activeTab]);
+
+  function scrollBy(direction: 'left' | 'right') {
+    const el = scrollRef.current;
+    if (!el) return;
+    const amount = Math.round(el.clientWidth * 0.8) * (direction === 'left' ? -1 : 1);
+    el.scrollBy({ left: amount, behavior: 'smooth' });
+  }
+
+  return (
+    <div className="relative border-x border-slate-200 bg-white">
+      <div ref={scrollRef} data-howto-id="eng.tab-strip" className="overflow-x-auto scroll-smooth">
+        <nav className="flex -mb-px" aria-label="Engagement tabs">
+          {visibleTabs.map(tab => {
+            const isActive = activeTab === tab.key;
+            const label = tab.key === 'continuance' ? continuanceLabel : tab.label;
+            const tso = tabSignOffs[tab.key];
+            return (
+              <button
+                key={tab.key}
+                data-tabkey={tab.key}
+                onClick={() => switchTab(tab.key)}
+                data-howto-id={`eng.tab.${tab.key}`}
+                className={`whitespace-nowrap py-2.5 px-4 border-b-2 text-xs font-medium transition-colors flex items-center gap-1.5 ${
+                  isActive
+                    ? 'border-blue-500 text-blue-600'
+                    : 'border-transparent text-slate-500 hover:text-slate-700 hover:border-slate-300'
+                }`}
+              >
+                {label}
+                {tab.key in SIGNOFF_TABS && (
+                  <span className="inline-flex items-center gap-0.5 ml-0.5">
+                    {/* Preparer · Reviewer · RI — green when signed,
+                        green ring when stale (signed but content
+                        edited since), slate ring when unsigned. */}
+                    <span
+                      className={`w-2 h-2 rounded-full ${
+                        tso?.preparer === 'signed' ? 'bg-green-500' :
+                        tso?.preparer === 'stale' ? 'border border-green-500 bg-transparent' :
+                        'border border-slate-300 bg-transparent'
+                      }`}
+                      title={`Preparer: ${tso?.preparer === 'signed' ? 'Complete' : tso?.preparer === 'stale' ? 'Partial (stale)' : 'Not signed'}`}
+                    />
+                    <span
+                      className={`w-2 h-2 rounded-full ${
+                        tso?.reviewer === 'signed' ? 'bg-green-500' :
+                        tso?.reviewer === 'stale' ? 'border border-green-500 bg-transparent' :
+                        'border border-slate-300 bg-transparent'
+                      }`}
+                      title={`Reviewer: ${tso?.reviewer === 'signed' ? 'Complete' : tso?.reviewer === 'stale' ? 'Partial (stale)' : 'Not signed'}`}
+                    />
+                    <span
+                      className={`w-2 h-2 rounded-full ${
+                        tso?.partner === 'signed' ? 'bg-green-500' :
+                        tso?.partner === 'stale' ? 'border border-green-500 bg-transparent' :
+                        'border border-slate-300 bg-transparent'
+                      }`}
+                      title={`RI: ${tso?.partner === 'signed' ? 'Complete' : tso?.partner === 'stale' ? 'Partial (stale)' : 'Not signed'}`}
+                    />
+                  </span>
+                )}
+                {tab.key === 'outstanding' && outstandingTeamCount > 0 && (
+                  <span className="inline-flex items-center justify-center min-w-[18px] px-1 h-[18px] rounded-full bg-teal-500 text-white text-[9px] font-bold leading-none">{outstandingTeamCount}</span>
+                )}
+                {tab.key === 'outstanding' && outstandingClientCount > 0 && (
+                  <span className="inline-flex items-center justify-center min-w-[18px] px-1 h-[18px] rounded-full bg-orange-500 text-white text-[9px] font-bold leading-none">{outstandingClientCount}</span>
+                )}
+              </button>
+            );
+          })}
+        </nav>
+      </div>
+      {/* Left edge fade + scroll button — only render when there's
+          actually content to the left. pointer-events-none on the
+          gradient layer lets clicks pass through to the tabs
+          underneath; the chevron has its own pointer-events-auto. */}
+      {canScrollLeft && (
+        <div className="absolute inset-y-0 left-0 w-12 pointer-events-none flex items-center bg-gradient-to-r from-white via-white/85 to-transparent">
+          <button
+            onClick={() => scrollBy('left')}
+            className="pointer-events-auto ml-1 w-6 h-6 rounded-full bg-white border border-slate-200 shadow-sm flex items-center justify-center text-slate-500 hover:text-slate-700 hover:border-slate-300"
+            aria-label="Scroll tabs left"
+            title="Scroll tabs left"
+          >
+            <ChevronLeft className="h-3.5 w-3.5" />
+          </button>
+        </div>
+      )}
+      {canScrollRight && (
+        <div className="absolute inset-y-0 right-0 w-12 pointer-events-none flex items-center justify-end bg-gradient-to-l from-white via-white/85 to-transparent">
+          <button
+            onClick={() => scrollBy('right')}
+            className="pointer-events-auto mr-1 w-6 h-6 rounded-full bg-white border border-slate-200 shadow-sm flex items-center justify-center text-slate-500 hover:text-slate-700 hover:border-slate-300"
+            aria-label="More tabs to the right"
+            title="More tabs to the right"
+          >
+            <ChevronRight className="h-3.5 w-3.5" />
+          </button>
+        </div>
+      )}
+    </div>
+  );
 }
 
 export function EngagementTabs({ engagement, auditType, clientName, periodEndDate, periodStartDate, currentUserId }: Props) {
@@ -480,15 +666,19 @@ export function EngagementTabs({ engagement, auditType, clientName, periodEndDat
             return Object.values(meta).some(m => m.lastEditedAt && new Date(m.lastEditedAt).getTime() > signTime);
           }
 
-          // Cascade: Partner sign-off implies Reviewer is effectively
-          // signed too. The Reviewer tab-bar dot therefore shows green
-          // whenever EITHER the reviewer themselves signed OR the partner
-          // signed. Staleness is tested against the timestamp that drove
-          // the effective state (reviewer's own if signed, otherwise the
-          // partner's cascaded timestamp).
+          // Cascade rules:
+          //   Partner signed  → Reviewer effective AND Preparer effective
+          //   Reviewer signed → Preparer effective
+          // i.e. the senior role's sign-off implies all junior slots
+          // are also "covered" so the tab-bar dots tell the truth at
+          // a glance: a green RI dot means the whole tab is good.
+          // Staleness is tested against the timestamp that drove the
+          // effective state.
+          const preparerTs = so.operator?.timestamp || so.preparer?.timestamp || so.reviewer?.timestamp || so.partner?.timestamp;
           const reviewerTs = so.reviewer?.timestamp || so.partner?.timestamp;
           const partnerTs = so.partner?.timestamp;
           statuses[tabKey] = {
+            preparer: preparerTs ? (isStaleByTimestamp(preparerTs) ? 'stale' : 'signed') : 'none',
             reviewer: reviewerTs ? (isStaleByTimestamp(reviewerTs) ? 'stale' : 'signed') : 'none',
             partner: partnerTs ? (isStaleByTimestamp(partnerTs) ? 'stale' : 'signed') : 'none',
           };
@@ -506,10 +696,12 @@ export function EngagementTabs({ engagement, auditType, clientName, periodEndDat
           const res = await fetch(`/api/engagements/${engagement.id}/permanent-file?section=${encodeURIComponent(section)}`);
           if (!res.ok) return;
           const json = await res.json();
-          const so = (json?.data || {}) as { reviewer?: { at?: string; timestamp?: string }; partner?: { at?: string; timestamp?: string }; ri?: { at?: string; timestamp?: string } };
+          const so = (json?.data || {}) as { preparer?: { at?: string; timestamp?: string }; reviewer?: { at?: string; timestamp?: string }; partner?: { at?: string; timestamp?: string }; ri?: { at?: string; timestamp?: string } };
+          const preparerTs = so.preparer?.at || so.preparer?.timestamp || so.reviewer?.at || so.reviewer?.timestamp || so.partner?.at || so.partner?.timestamp || so.ri?.at || so.ri?.timestamp;
           const reviewerTs = so.reviewer?.at || so.reviewer?.timestamp || so.partner?.at || so.partner?.timestamp || so.ri?.at || so.ri?.timestamp;
           const partnerTs = so.partner?.at || so.partner?.timestamp || so.ri?.at || so.ri?.timestamp;
           statuses[tabKey] = {
+            preparer: preparerTs ? 'signed' : 'none',
             reviewer: reviewerTs ? 'signed' : 'none',
             partner: partnerTs ? 'signed' : 'none',
           };
@@ -554,13 +746,16 @@ export function EngagementTabs({ engagement, auditType, clientName, periodEndDat
    * — but a sign-off that was just made is by definition fresh, so marking
    * reviewer/partner as 'signed' (or 'none' after unsign) is correct.
    */
-  const handleTabSignOffChange = useCallback((tabKey: string, signOffs: { reviewer?: { timestamp?: string } | null; partner?: { timestamp?: string } | null }) => {
-    // Cascade: Partner signed implies Reviewer is effectively signed.
+  const handleTabSignOffChange = useCallback((tabKey: string, signOffs: { operator?: { timestamp?: string } | null; preparer?: { timestamp?: string } | null; reviewer?: { timestamp?: string } | null; partner?: { timestamp?: string } | null }) => {
+    // Cascade: Partner signed → Reviewer + Preparer effective.
+    //          Reviewer signed → Preparer effective.
+    const preparerEffective = !!(signOffs.operator?.timestamp || signOffs.preparer?.timestamp || signOffs.reviewer?.timestamp || signOffs.partner?.timestamp);
     const reviewerEffective = !!(signOffs.reviewer?.timestamp || signOffs.partner?.timestamp);
     const partnerSigned = !!signOffs.partner?.timestamp;
     setTabSignOffs(prev => ({
       ...prev,
       [tabKey]: {
+        preparer: preparerEffective ? 'signed' : 'none',
         reviewer: reviewerEffective ? 'signed' : 'none',
         partner: partnerSigned ? 'signed' : 'none',
       },
@@ -1126,8 +1321,9 @@ export function EngagementTabs({ engagement, auditType, clientName, periodEndDat
                     {label}
                     {tab.key in SIGNOFF_TABS && (
                       <span className="inline-flex items-center gap-0.5 ml-auto">
-                        <span className={`w-1.5 h-1.5 rounded-full ${tso?.reviewer === 'signed' ? 'bg-green-500' : tso?.reviewer === 'stale' ? 'border border-green-500' : 'border border-slate-300'}`} />
-                        <span className={`w-1.5 h-1.5 rounded-full ${tso?.partner === 'signed' ? 'bg-green-500' : tso?.partner === 'stale' ? 'border border-green-500' : 'border border-slate-300'}`} />
+                        <span className={`w-1.5 h-1.5 rounded-full ${tso?.preparer === 'signed' ? 'bg-green-500' : tso?.preparer === 'stale' ? 'border border-green-500' : 'border border-slate-300'}`} title={`Preparer: ${tso?.preparer === 'signed' ? 'Complete' : tso?.preparer === 'stale' ? 'Partial (stale)' : 'Not signed'}`} />
+                        <span className={`w-1.5 h-1.5 rounded-full ${tso?.reviewer === 'signed' ? 'bg-green-500' : tso?.reviewer === 'stale' ? 'border border-green-500' : 'border border-slate-300'}`} title={`Reviewer: ${tso?.reviewer === 'signed' ? 'Complete' : tso?.reviewer === 'stale' ? 'Partial (stale)' : 'Not signed'}`} />
+                        <span className={`w-1.5 h-1.5 rounded-full ${tso?.partner === 'signed' ? 'bg-green-500' : tso?.partner === 'stale' ? 'border border-green-500' : 'border border-slate-300'}`} title={`RI: ${tso?.partner === 'signed' ? 'Complete' : tso?.partner === 'stale' ? 'Partial (stale)' : 'Not signed'}`} />
                       </span>
                     )}
                   </button>
@@ -1265,8 +1461,9 @@ export function EngagementTabs({ engagement, auditType, clientName, periodEndDat
                   {label}
                   {tab.key in SIGNOFF_TABS && (
                     <span className="inline-flex items-center gap-0.5 ml-auto">
-                      <span className={`w-1.5 h-1.5 rounded-full ${tso?.reviewer === 'signed' ? 'bg-green-500' : tso?.reviewer === 'stale' ? 'border border-green-500' : 'border border-slate-300'}`} />
-                      <span className={`w-1.5 h-1.5 rounded-full ${tso?.partner === 'signed' ? 'bg-green-500' : tso?.partner === 'stale' ? 'border border-green-500' : 'border border-slate-300'}`} />
+                      <span className={`w-1.5 h-1.5 rounded-full ${tso?.preparer === 'signed' ? 'bg-green-500' : tso?.preparer === 'stale' ? 'border border-green-500' : 'border border-slate-300'}`} title={`Preparer: ${tso?.preparer === 'signed' ? 'Complete' : tso?.preparer === 'stale' ? 'Partial (stale)' : 'Not signed'}`} />
+                      <span className={`w-1.5 h-1.5 rounded-full ${tso?.reviewer === 'signed' ? 'bg-green-500' : tso?.reviewer === 'stale' ? 'border border-green-500' : 'border border-slate-300'}`} title={`Reviewer: ${tso?.reviewer === 'signed' ? 'Complete' : tso?.reviewer === 'stale' ? 'Partial (stale)' : 'Not signed'}`} />
+                      <span className={`w-1.5 h-1.5 rounded-full ${tso?.partner === 'signed' ? 'bg-green-500' : tso?.partner === 'stale' ? 'border border-green-500' : 'border border-slate-300'}`} title={`RI: ${tso?.partner === 'signed' ? 'Complete' : tso?.partner === 'stale' ? 'Partial (stale)' : 'Not signed'}`} />
                     </span>
                   )}
                   {tab.key === 'outstanding' && outstandingTeamCount > 0 && (
@@ -1298,58 +1495,20 @@ export function EngagementTabs({ engagement, auditType, clientName, periodEndDat
         </div>
       ) : (
         <>
-          {/* Normal horizontal tab bar */}
-          <div data-howto-id="eng.tab-strip" className="border-x border-slate-200 bg-white overflow-x-auto">
-            <nav className="flex -mb-px" aria-label="Engagement tabs">
-              {visibleTabs.map(tab => {
-                const isActive = activeTab === tab.key;
-                const label = tab.key === 'continuance' ? continuanceLabel : tab.label;
-                const tso = tabSignOffs[tab.key];
-                return (
-                  <button
-                    key={tab.key}
-                    onClick={() => switchTab(tab.key)}
-                    data-howto-id={`eng.tab.${tab.key}`}
-                    className={`whitespace-nowrap py-2.5 px-4 border-b-2 text-xs font-medium transition-colors flex items-center gap-1.5 ${
-                      isActive
-                        ? 'border-blue-500 text-blue-600'
-                        : 'border-transparent text-slate-500 hover:text-slate-700 hover:border-slate-300'
-                    }`}
-                  >
-                    {label}
-                    {tab.key in SIGNOFF_TABS && (
-                      <span className="inline-flex items-center gap-0.5 ml-0.5">
-                        {/* Reviewer dot */}
-                        <span
-                          className={`w-2 h-2 rounded-full ${
-                            tso?.reviewer === 'signed' ? 'bg-green-500' :
-                            tso?.reviewer === 'stale' ? 'border border-green-500 bg-transparent' :
-                            'border border-slate-300 bg-transparent'
-                          }`}
-                          title={`Reviewer: ${tso?.reviewer === 'signed' ? 'Complete' : tso?.reviewer === 'stale' ? 'Partial (stale)' : 'Not signed'}`}
-                        />
-                        {/* RI dot */}
-                        <span
-                          className={`w-2 h-2 rounded-full ${
-                            tso?.partner === 'signed' ? 'bg-green-500' :
-                            tso?.partner === 'stale' ? 'border border-green-500 bg-transparent' :
-                            'border border-slate-300 bg-transparent'
-                          }`}
-                          title={`RI: ${tso?.partner === 'signed' ? 'Complete' : tso?.partner === 'stale' ? 'Partial (stale)' : 'Not signed'}`}
-                        />
-                      </span>
-                    )}
-                    {tab.key === 'outstanding' && outstandingTeamCount > 0 && (
-                      <span className="inline-flex items-center justify-center min-w-[18px] px-1 h-[18px] rounded-full bg-teal-500 text-white text-[9px] font-bold leading-none">{outstandingTeamCount}</span>
-                    )}
-                    {tab.key === 'outstanding' && outstandingClientCount > 0 && (
-                      <span className="inline-flex items-center justify-center min-w-[18px] px-1 h-[18px] rounded-full bg-orange-500 text-white text-[9px] font-bold leading-none">{outstandingClientCount}</span>
-                    )}
-                  </button>
-                );
-              })}
-            </nav>
-          </div>
+          {/* Normal horizontal tab bar — wrapped in a relative
+              container so we can overlay scroll-affordance fades on
+              the left/right edges. The auditor reported that tabs
+              past the viewport edge weren't discoverable; the fade
+              gradients + chevron buttons make the overflow obvious. */}
+          <TabStrip
+            visibleTabs={visibleTabs}
+            activeTab={activeTab}
+            tabSignOffs={tabSignOffs}
+            switchTab={(key) => switchTab(key as TabKey)}
+            continuanceLabel={continuanceLabel}
+            outstandingTeamCount={outstandingTeamCount}
+            outstandingClientCount={outstandingClientCount}
+          />
 
           {/* Tab Content */}
           <div data-howto-id="page.engagement.body" className="bg-white rounded-b-lg border border-t-0 border-slate-200 min-h-[500px]">

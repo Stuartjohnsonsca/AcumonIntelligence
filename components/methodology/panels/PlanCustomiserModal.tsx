@@ -24,9 +24,11 @@
  * the action shapes: set_na, clear_na, add_custom, remove_custom, update_custom.
  */
 
-import { useState, useEffect, useMemo } from 'react';
-import { X, Loader2, Plus, Check, Ban, Trash2, Save, Edit2, Table } from 'lucide-react';
+import { useState, useEffect, useMemo, useRef } from 'react';
+import { X, Loader2, Plus, Check, Ban, Trash2, Save, Edit2, Table, Library, Wrench, Search } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { AUDIT_TOOLS as STATIC_AUDIT_TOOLS, type AuditTool } from '@/lib/audit-tools';
+import type { ToolAvailability } from '@/types/methodology';
 
 interface FsLineOption {
   id: string;
@@ -84,6 +86,31 @@ interface PlanCustomiserData {
   customTests: CustomTest[];
 }
 
+// Tests pulled from the firm-wide library (the same catalog the
+// audit-plan derives from). The Plan Customiser surfaces these as
+// "live tests" so an auditor can pull a test that wasn't auto-
+// allocated to this FS Line into the engagement on demand.
+interface LiveTest {
+  id: string;
+  name: string;
+  description: string | null;
+  testTypeCode: string;
+  assertions: string[] | null;
+  framework: string;
+}
+
+// Audit Tool definitions live in lib/audit-tools so the
+// Methodology Admin grid + this modal share one source of truth.
+// We extend the base type with the resolved availability so we
+// can surface Discretion vs Available to the operator.
+type ResolvedAuditTool = AuditTool & { availability: ToolAvailability };
+
+// Number of milliseconds we keep the dropdown's selection
+// "armed" before the deployment fires. Gives the operator a
+// chance to cancel after an accidental click without forcing a
+// confirm dialog.
+const DEPLOY_ARM_MS = 2000;
+
 interface Props {
   engagementId: string;
   fsLineId: string;
@@ -118,6 +145,27 @@ export function PlanCustomiserModal({
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Firm-wide test library + the search/filter state for the Live
+  // Tests panel below. Loaded on mount alongside the customiser
+  // data so the operator never sees a blank "Live Tests" panel.
+  const [liveTests, setLiveTests] = useState<LiveTest[]>([]);
+  const [liveSearch, setLiveSearch] = useState('');
+  // Audit Tools — fetched per-engagement so the firm-admin's
+  // availability settings filter the list. Defaults to the static
+  // catalog with availability=available so the dropdown still
+  // works while the network round-trip is in flight (or the API
+  // is unreachable).
+  const [auditTools, setAuditTools] = useState<ResolvedAuditTool[]>(
+    STATIC_AUDIT_TOOLS.map(t => ({ ...t, availability: 'available' }))
+  );
+  // Dropdown state. `armedTool` is the tool the operator selected
+  // — once set, a 2-second countdown begins; if the operator
+  // hasn't cancelled by the time the timer fires, the deployment
+  // goes through. Resets to null after fire / cancel / unmount.
+  const [armedTool, setArmedTool] = useState<ResolvedAuditTool | null>(null);
+  const [armedSecondsLeft, setArmedSecondsLeft] = useState(0);
+  const armTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const armTickRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   // N/A reason dialog state
   const [naDialogFor, setNaDialogFor] = useState<AllocatedTest | null>(null);
@@ -162,12 +210,31 @@ export function PlanCustomiserModal({
     async function load() {
       setLoading(true);
       try {
-        const res = await fetch(`/api/engagements/${engagementId}/plan-customiser`);
-        if (res.ok) {
-          const json = await res.json();
+        // Customiser data + firm-wide test catalog + per-firm
+        // audit-tool availability all in parallel. The first two
+        // are critical — the audit-tools fetch is best-effort: a
+        // 4xx leaves us on the static catalog with default
+        // availability so the dropdown still renders.
+        const [pcRes, taRes, atRes] = await Promise.all([
+          fetch(`/api/engagements/${engagementId}/plan-customiser`),
+          fetch(`/api/engagements/${engagementId}/test-allocations`),
+          fetch(`/api/engagements/${engagementId}/audit-tools`),
+        ]);
+        if (pcRes.ok) {
+          const json = await pcRes.json();
           setData(json.data || { overrides: {}, customTests: [] });
         } else {
           setError('Failed to load Plan Customiser data');
+        }
+        if (taRes.ok) {
+          const json = await taRes.json();
+          const list: LiveTest[] = Array.isArray(json?.tests) ? json.tests : [];
+          setLiveTests(list);
+        }
+        if (atRes.ok) {
+          const json = await atRes.json();
+          const list: ResolvedAuditTool[] = Array.isArray(json?.tools) ? json.tools : [];
+          if (list.length > 0) setAuditTools(list);
         }
       } catch (err: any) {
         setError(err?.message || 'Failed to load Plan Customiser data');
@@ -253,6 +320,115 @@ export function PlanCustomiserModal({
       : await post({ action: 'add_custom', customTest: payload });
     if (ok) resetForm();
   }
+
+  // Pull a firm-wide test into this engagement scoped to the
+  // current FS Line. We clone the test's metadata into a custom
+  // test (same plan-customiser endpoint, same payload shape) so it
+  // shows up in the audit-plan immediately. The original firm-wide
+  // test is unaffected.
+  async function addLiveTest(t: LiveTest) {
+    const ok = await post({
+      action: 'add_custom',
+      customTest: {
+        name: t.name,
+        description: t.description || '',
+        fsLineId,
+        fsLineName,
+        testTypeCode: t.testTypeCode || 'team_action',
+        assertions: Array.isArray(t.assertions) ? t.assertions : [],
+        framework: t.framework || 'ALL',
+        outputFormat: 'three_section_no_sampling',
+      },
+    });
+    if (ok) setLiveSearch('');
+  }
+
+  // Deploy an Audit Tool — creates a custom test on this FS Line
+  // using the tool template's testTypeCode / outputFormat /
+  // assertions. The deployment is scoped to the FS Line; the
+  // operator can refine the resulting test (codes, sampling
+  // params, etc.) by clicking through to the test workspace
+  // afterwards. Called from the arm timer, never directly.
+  async function fireDeployment(tool: AuditTool) {
+    const desc = `${tool.description}\n\nDeployed against ${fsLineName} from the Plan Customiser. Refine sampling / population once opened.`;
+    const ok = await post({
+      action: 'add_custom',
+      customTest: {
+        name: tool.label,
+        description: desc,
+        fsLineId,
+        fsLineName,
+        testTypeCode: tool.testTypeCode,
+        assertions: tool.defaultAssertions,
+        framework: 'ALL',
+        outputFormat: tool.outputFormat,
+      },
+    });
+    if (!ok) {
+      // Surface the error so the operator can retry instead of
+      // clearing the armed state silently.
+      setError(`Failed to deploy "${tool.label}". Try again.`);
+    }
+  }
+
+  // Clear any active arm timer. Used by both the explicit Cancel
+  // button and the unmount cleanup so we never fire a deployment
+  // after the modal has closed.
+  function cancelArm() {
+    if (armTimerRef.current) clearTimeout(armTimerRef.current);
+    if (armTickRef.current) clearInterval(armTickRef.current);
+    armTimerRef.current = null;
+    armTickRef.current = null;
+    setArmedTool(null);
+    setArmedSecondsLeft(0);
+  }
+
+  // Arm a tool for deployment — start the 2-second countdown,
+  // tick the visible timer once a second, fire when it expires.
+  // Picking a different tool while one is armed cancels the
+  // previous and re-arms with the new selection.
+  function armTool(tool: ResolvedAuditTool) {
+    cancelArm();
+    setArmedTool(tool);
+    setArmedSecondsLeft(Math.ceil(DEPLOY_ARM_MS / 1000));
+    armTickRef.current = setInterval(() => {
+      setArmedSecondsLeft(prev => (prev > 0 ? prev - 1 : 0));
+    }, 1000);
+    armTimerRef.current = setTimeout(async () => {
+      if (armTickRef.current) clearInterval(armTickRef.current);
+      armTimerRef.current = null;
+      armTickRef.current = null;
+      try {
+        await fireDeployment(tool);
+      } finally {
+        setArmedTool(null);
+        setArmedSecondsLeft(0);
+      }
+    }, DEPLOY_ARM_MS);
+  }
+
+  // Always cancel the arm timer on unmount so a closed modal
+  // can never spawn a phantom deployment a second later.
+  useEffect(() => {
+    return () => {
+      if (armTimerRef.current) clearTimeout(armTimerRef.current);
+      if (armTickRef.current) clearInterval(armTickRef.current);
+    };
+  }, []);
+
+  // Tests already pulled into the plan (allocated firm-wide OR
+  // already in customTests for this FS Line), used to filter the
+  // Live Tests catalog so the operator doesn't add a duplicate by
+  // accident. Match by id + by case-insensitive name.
+  const alreadyInPlan = useMemo(() => {
+    const ids = new Set<string>();
+    const names = new Set<string>();
+    for (const a of allocatedTests) {
+      ids.add(a.id);
+      names.add((a.name || '').trim().toLowerCase());
+    }
+    return { ids, names };
+  }, [allocatedTests]);
 
   // Quick-add: drop a fresh spreadsheet test in with sensible defaults.
   // The user spec called out a "simple option" for adding a blank
@@ -537,6 +713,151 @@ export function PlanCustomiserModal({
                     })}
                   </div>
                 ) : null}
+              </div>
+
+              {/* ─── Live Tests Library ───
+                  The full firm-wide test catalog, minus tests
+                  already allocated to this FS Line and minus the
+                  custom tests we just added. Lets the auditor
+                  pull a relevant test in on demand without
+                  rebuilding it from scratch as a custom test. */}
+              <div>
+                <div className="flex items-center justify-between mb-2 gap-2">
+                  <h3 className="text-xs font-semibold text-slate-700 uppercase tracking-wide flex items-center gap-1.5">
+                    <Library className="h-3.5 w-3.5 text-slate-500" />
+                    Live Tests Library
+                  </h3>
+                  <div className="relative">
+                    <Search className="h-3 w-3 text-slate-400 absolute left-2 top-1/2 -translate-y-1/2" />
+                    <input
+                      type="text"
+                      value={liveSearch}
+                      onChange={e => setLiveSearch(e.target.value)}
+                      placeholder="Search tests..."
+                      className="text-xs pl-6 pr-2 py-1 border border-slate-300 rounded w-48"
+                    />
+                  </div>
+                </div>
+                {(() => {
+                  const customNames = new Set(customTestsForLine.map(t => (t.name || '').trim().toLowerCase()));
+                  const filter = liveSearch.trim().toLowerCase();
+                  const candidates = liveTests.filter(t => {
+                    const nameLc = (t.name || '').toLowerCase();
+                    if (alreadyInPlan.ids.has(t.id)) return false;
+                    if (alreadyInPlan.names.has(nameLc.trim())) return false;
+                    if (customNames.has(nameLc.trim())) return false;
+                    if (!filter) return true;
+                    return nameLc.includes(filter) || (t.description || '').toLowerCase().includes(filter);
+                  }).slice(0, 25);
+                  if (liveTests.length === 0) {
+                    return <p className="text-xs text-slate-400 italic">Loading firm-wide test catalog…</p>;
+                  }
+                  if (candidates.length === 0) {
+                    return <p className="text-xs text-slate-400 italic">{filter ? 'No tests match your search.' : 'Every firm-wide test is already in the plan for this scope.'}</p>;
+                  }
+                  return (
+                    <div className="border border-slate-200 rounded overflow-hidden">
+                      <div className="grid grid-cols-[1fr_80px_90px] gap-x-2 px-3 py-1.5 text-[10px] font-semibold text-slate-600 uppercase bg-slate-50 border-b border-slate-200">
+                        <div>Test</div>
+                        <div>Type</div>
+                        <div className="text-right">Action</div>
+                      </div>
+                      {candidates.map(t => (
+                        <div key={t.id} className="grid grid-cols-[1fr_80px_90px] gap-x-2 px-3 py-2 border-b border-slate-100 last:border-b-0 bg-white">
+                          <div className="min-w-0">
+                            <div className="text-xs font-medium text-slate-800 truncate" title={t.name}>{t.name}</div>
+                            {t.description && (
+                              <div className="text-[10px] text-slate-500 truncate" title={t.description}>{t.description}</div>
+                            )}
+                          </div>
+                          <div className="text-[10px] text-slate-500 self-center truncate">{t.testTypeCode}</div>
+                          <div className="self-center text-right">
+                            <Button size="sm" variant="outline" disabled={saving} onClick={() => void addLiveTest(t)} className="text-[10px] h-6">
+                              <Plus className="h-3 w-3 mr-1" /> Add
+                            </Button>
+                          </div>
+                        </div>
+                      ))}
+                      {liveTests.filter(t => !alreadyInPlan.ids.has(t.id) && !alreadyInPlan.names.has((t.name || '').trim().toLowerCase()) && !customNames.has((t.name || '').trim().toLowerCase()) && (!filter || (t.name || '').toLowerCase().includes(filter) || (t.description || '').toLowerCase().includes(filter))).length > 25 && (
+                        <div className="px-3 py-1.5 text-[10px] text-slate-400 italic bg-slate-50 border-t border-slate-200">Showing first 25 — refine your search to narrow.</div>
+                      )}
+                    </div>
+                  );
+                })()}
+              </div>
+
+              {/* ─── Audit Tools ───
+                  Substantive-procedure templates that deploy as
+                  custom tests on this FS Line. Picking a tool from
+                  the dropdown arms a 2-second countdown — gives
+                  the operator a chance to undo an accidental
+                  click without forcing a confirm dialog. The
+                  Methodology Admin's Tools Settings page controls
+                  which tools appear here per firm; tools marked
+                  Unavailable are filtered out entirely, tools
+                  marked Discretion still appear but are flagged
+                  for the operator. */}
+              <div>
+                <h3 className="text-xs font-semibold text-slate-700 uppercase tracking-wide mb-2 flex items-center gap-1.5">
+                  <Wrench className="h-3.5 w-3.5 text-slate-500" />
+                  Audit Tools
+                  <span className="text-[10px] font-normal text-slate-400 normal-case ml-1">— pick to deploy on {fsLineName}</span>
+                </h3>
+                {(() => {
+                  const visibleTools = auditTools.filter(t => t.availability !== 'unavailable');
+                  if (visibleTools.length === 0) {
+                    return (
+                      <p className="text-xs text-slate-400 italic">No audit tools enabled for your firm. Ask the Methodology Admin to enable them in Tools Settings.</p>
+                    );
+                  }
+                  return (
+                    <div className="space-y-2">
+                      <div className="flex items-center gap-2">
+                        <select
+                          value={armedTool?.key || ''}
+                          disabled={saving || !!armedTool}
+                          onChange={e => {
+                            const tool = visibleTools.find(t => t.key === e.target.value);
+                            if (tool) armTool(tool);
+                          }}
+                          className="flex-1 text-xs border border-slate-300 rounded px-2 py-1.5 bg-white disabled:opacity-60"
+                        >
+                          <option value="">Select a tool to deploy…</option>
+                          {visibleTools.map(t => (
+                            <option key={t.key} value={t.key}>
+                              {t.label}{t.availability === 'discretion' ? ' (RI discretion)' : ''}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                      {armedTool && (
+                        <div className="flex items-center gap-3 px-3 py-2 rounded bg-amber-50 border border-amber-200">
+                          <Loader2 className="h-3.5 w-3.5 text-amber-600 animate-spin flex-shrink-0" />
+                          <div className="flex-1 min-w-0">
+                            <div className="text-xs font-medium text-amber-800 truncate">
+                              Deploying "{armedTool.label}" in {armedSecondsLeft}s…
+                            </div>
+                            <div className="text-[10px] text-amber-700 truncate">
+                              {armedTool.description}
+                            </div>
+                          </div>
+                          <Button size="sm" variant="outline" onClick={cancelArm} className="text-[10px] h-6 flex-shrink-0">
+                            <X className="h-3 w-3 mr-1" />
+                            Cancel
+                          </Button>
+                        </div>
+                      )}
+                      {/* Quiet-state hint — visible when nothing is
+                          armed so the operator knows what selecting
+                          will do (vs. opening a configuration form). */}
+                      {!armedTool && (
+                        <p className="text-[10px] text-slate-400 italic">
+                          Selecting a tool deploys it after a 2-second pause. You can refine sampling and population on the resulting test.
+                        </p>
+                      )}
+                    </div>
+                  );
+                })()}
               </div>
             </>
           )}

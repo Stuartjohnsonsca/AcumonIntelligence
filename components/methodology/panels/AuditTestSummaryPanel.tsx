@@ -42,6 +42,9 @@ interface TestExecution {
   completedAt: string | null;
   errorMessage: string | null;
   tbCheck: TbCheck | null;
+  // Accumulated time (ms) the test row was actively in front of a user.
+  // Optional — backend may not emit yet; rendering falls back to "—".
+  userTimeMs?: number | null;
 }
 
 interface TestConclusion {
@@ -85,10 +88,17 @@ interface SummaryRow {
   // in the TB Code column so the auditor doesn't have to memorise
   // every chart-of-accounts number.
   tbCodeDescription: string | null;
+  // FS-line level TB code count + aggregated value, used as the
+  // fallback rendering when a test row isn't tied to a single
+  // accountCode (most FS-line-level tests). Avoids the dash-only
+  // TB Code / Value cells that auditors flagged as misleading.
+  fsLineCodeCount: number;
   tbCheck: TbCheck | null;
   progress: Dot;
   result: Dot;
-  durationMs: number | null;
+  // Last-activity timestamp surfaced to replace the regulator-
+  // sensitive run duration. Falls back to startedAt or null.
+  lastActivityAt: string | null;
   totalErrors: number;
   extrapolatedError: number;
   status: string;
@@ -132,7 +142,10 @@ const DOT_BG: Record<Dot, string> = {
   green: 'bg-green-500',
   orange: 'bg-orange-500',
   red: 'bg-red-500',
-  pending: 'bg-slate-300',
+  // Pending renders as a hollow circle (transparent fill, slate
+  // border) so it reads as "outstanding" rather than the previous
+  // greyed-out solid look that auditors mistook for "deactivated".
+  pending: 'bg-transparent border border-slate-400',
 };
 
 const PROGRESS_TITLE: Record<Dot, string> = {
@@ -161,16 +174,30 @@ const CATEGORY_PILL: Record<Category, string> = {
   planning: 'bg-indigo-50 text-indigo-700 border-indigo-200',
 };
 
-function formatDuration(ms: number | null): string {
-  if (ms == null || ms < 0) return '—';
-  const totalMinutes = Math.round(ms / 60_000);
-  const hours = Math.floor(totalMinutes / 60);
-  const minutes = totalMinutes % 60;
-  if (totalMinutes === 0) {
-    const seconds = Math.max(1, Math.round(ms / 1000));
-    return `0:00:${String(seconds).padStart(2, '0')}`;
-  }
-  return `${hours}:${String(minutes).padStart(2, '0')}`;
+/**
+ * Relative-time formatter for the "Updated" column. We deliberately
+ * do NOT show test execution duration here — auditors flagged that
+ * regulators dislike a duration metric on the working file (it can
+ * be read as "how long did the auditor spend on this test"). Last-
+ * activity timestamp is a neutral substitute that still lets the
+ * reviewer spot stale work.
+ */
+function formatRelativeTime(iso: string | null): string {
+  if (!iso) return '—';
+  const t = Date.parse(iso);
+  if (!Number.isFinite(t)) return '—';
+  const diffMs = Date.now() - t;
+  if (diffMs < 0) return '—';
+  const minutes = Math.floor(diffMs / 60_000);
+  if (minutes < 1) return 'Just now';
+  if (minutes < 60) return `${minutes}m ago`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours}h ago`;
+  const days = Math.floor(hours / 24);
+  if (days < 7) return `${days}d ago`;
+  const weeks = Math.floor(days / 7);
+  if (weeks < 5) return `${weeks}w ago`;
+  return new Date(t).toLocaleDateString('en-GB', { day: '2-digit', month: 'short' });
 }
 
 function formatGbp(n: number | null): string {
@@ -207,7 +234,7 @@ function resultFromConclusion(
 }
 
 // ─── Sorting / filtering ───────────────────────────────────────────
-type SortKey = 'fsLine' | 'tbCode' | 'value' | 'tbCheck' | 'testDescription' | 'progress' | 'result' | 'extrapolatedError' | 'durationMs' | 'reviewer' | 'ri';
+type SortKey = 'fsLine' | 'tbCode' | 'value' | 'tbCheck' | 'testDescription' | 'progress' | 'result' | 'extrapolatedError' | 'lastActivity' | 'reviewer' | 'ri';
 type SortDir = 'asc' | 'desc';
 
 interface ColumnFilters {
@@ -252,7 +279,11 @@ function compareRow(a: SummaryRow, b: SummaryRow, key: SortKey, dir: SortDir): n
     case 'progress':         return sign * (dotRank(a.progress) - dotRank(b.progress));
     case 'result':           return sign * (dotRank(a.result) - dotRank(b.result));
     case 'extrapolatedError':return sign * ((a.extrapolatedError || 0) - (b.extrapolatedError || 0));
-    case 'durationMs':       return sign * ((a.durationMs ?? -1) - (b.durationMs ?? -1));
+    case 'lastActivity': {
+      const aT = a.lastActivityAt ? Date.parse(a.lastActivityAt) : -Infinity;
+      const bT = b.lastActivityAt ? Date.parse(b.lastActivityAt) : -Infinity;
+      return sign * (aT - bT);
+    }
     case 'reviewer':         return sign * ((a.reviewerSignedByName || a.riSignedByName ? 1 : 0) - (b.reviewerSignedByName || b.riSignedByName ? 1 : 0));
     case 'ri':               return sign * ((a.riSignedByName ? 1 : 0) - (b.riSignedByName ? 1 : 0));
   }
@@ -437,6 +468,14 @@ export function AuditTestSummaryPanel({ engagementId, userRole }: Props) {
     return v === undefined || v === '' ? null : v;
   }
 
+  // Number of distinct TB codes mapped to a given FS Line. Used as
+  // the fallback rendering for the TB Code column on test rows that
+  // aren't tied to a single accountCode (most FS-line-level tests).
+  function lookupFsLineCodeCount(fsLine: string): number {
+    const list = tbCodesByFsLine.get((fsLine || '').trim().toLowerCase());
+    return list ? list.length : 0;
+  }
+
   // Build the per-test row list. Same join logic as before but with
   // the additional FS-line value + TB check + Reviewer name fields.
   const rows = useMemo<SummaryRow[]>(() => {
@@ -445,10 +484,11 @@ export function AuditTestSummaryPanel({ engagementId, userRole }: Props) {
       const conc = conclusions.find(c => c.executionId === e.id)
         ?? conclusions.find(c => c.testDescription === e.testDescription && c.fsLine === e.fsLine)
         ?? null;
-      const startedAt = e.startedAt ? new Date(e.startedAt).getTime() : null;
-      const completedAt = e.completedAt ? new Date(e.completedAt).getTime() : null;
-      const durationMs = startedAt != null && completedAt != null ? completedAt - startedAt : null;
       const ac = conc?.accountCode || null;
+      // Last activity = the latest meaningful timestamp on the row.
+      // Conclusion sign-offs win when present (they're the latest
+      // human action), then completedAt, then startedAt.
+      const lastActivityAt = conc?.riSignedAt || conc?.reviewedAt || e.completedAt || e.startedAt || null;
       out.push({
         key: e.id,
         testDescription: e.testDescription,
@@ -457,10 +497,11 @@ export function AuditTestSummaryPanel({ engagementId, userRole }: Props) {
         accountCode: ac,
         tbCodeValue: lookupTbCodeValue(ac),
         tbCodeDescription: lookupTbCodeDescription(ac),
+        fsLineCodeCount: lookupFsLineCodeCount(e.fsLine),
         tbCheck: e.tbCheck || null,
         progress: progressFromStatus(e.status),
         result: resultFromConclusion(conc, e.status, performanceMateriality, clearlyTrivial),
-        durationMs,
+        lastActivityAt,
         totalErrors: conc?.totalErrors || 0,
         extrapolatedError: Number(conc?.extrapolatedError) || 0,
         status: conc?.status || e.status,
@@ -482,10 +523,11 @@ export function AuditTestSummaryPanel({ engagementId, userRole }: Props) {
         accountCode: c.accountCode,
         tbCodeValue: lookupTbCodeValue(c.accountCode),
         tbCodeDescription: lookupTbCodeDescription(c.accountCode),
+        fsLineCodeCount: lookupFsLineCodeCount(c.fsLine),
         tbCheck: null,
         progress: c.status === 'pending' ? 'pending' : 'green',
         result: resultFromConclusion(c, 'completed', performanceMateriality, clearlyTrivial),
-        durationMs: null,
+        lastActivityAt: c.riSignedAt || c.reviewedAt || null,
         totalErrors: c.totalErrors || 0,
         extrapolatedError: Number(c.extrapolatedError) || 0,
         status: c.status,
@@ -508,10 +550,11 @@ export function AuditTestSummaryPanel({ engagementId, userRole }: Props) {
         accountCode: et.accountCode,
         tbCodeValue: lookupTbCodeValue(et.accountCode),
         tbCodeDescription: lookupTbCodeDescription(et.accountCode),
+        fsLineCodeCount: lookupFsLineCodeCount(et.fsLine),
         tbCheck: null,
         progress: 'pending',
         result: 'pending',
-        durationMs: null,
+        lastActivityAt: null,
         totalErrors: 0,
         extrapolatedError: 0,
         status: 'pending',
@@ -531,10 +574,11 @@ export function AuditTestSummaryPanel({ engagementId, userRole }: Props) {
         accountCode: null,
         tbCodeValue: null,
         tbCodeDescription: null,
+        fsLineCodeCount: 0,
         tbCheck: null,
         progress: p.progress,
         result: p.progress === 'green' ? 'green' : 'pending',
-        durationMs: null,
+        lastActivityAt: null,
         totalErrors: 0,
         extrapolatedError: 0,
         status: p.progress === 'green' ? 'complete' : 'pending',
@@ -653,6 +697,13 @@ export function AuditTestSummaryPanel({ engagementId, userRole }: Props) {
     rows: SummaryRow[];
     progress: Dot;
     result: Dot;
+    // Per-state counts at the FS-Line level — same shape as the
+    // section-header buckets so the group can show "🔴N 🟠N 🟢N ⚪N"
+    // pills instead of a single worst-state dot. The aggregate dot
+    // (above) is retained for compactness in places that only have
+    // room for one icon.
+    progressCounts: { red: number; orange: number; green: number; pending: number };
+    resultCounts: { red: number; orange: number; green: number; pending: number };
     tbCheckDot: Dot | null;
     extrapolatedErrorTotal: number;
     distinctCodeCount: number;
@@ -709,10 +760,11 @@ export function AuditTestSummaryPanel({ engagementId, userRole }: Props) {
                 accountCode: c.code,
                 tbCodeValue: c.currentYear,
                 tbCodeDescription: c.description,
+                fsLineCodeCount: tbCodes.length,
                 tbCheck: null,
                 progress: 'pending',
                 result: 'pending',
-                durationMs: null,
+                lastActivityAt: null,
                 totalErrors: 0,
                 extrapolatedError: 0,
                 status: 'untested',
@@ -727,6 +779,12 @@ export function AuditTestSummaryPanel({ engagementId, userRole }: Props) {
         // Hide placeholder rows when the toggle is off — but keep
         // the group itself since it has tests.
         const allRows = showUntested ? [...groupRows, ...placeholders] : groupRows;
+        const progressCounts = { red: 0, orange: 0, green: 0, pending: 0 };
+        const resultCounts = { red: 0, orange: 0, green: 0, pending: 0 };
+        for (const r of groupRows) {
+          progressCounts[r.progress]++;
+          resultCounts[r.result]++;
+        }
         init[cat].push({
           key: `${cat}::${fsLine}`,
           fsLine,
@@ -734,6 +792,8 @@ export function AuditTestSummaryPanel({ engagementId, userRole }: Props) {
           rows: allRows,
           progress: aggregateDot(groupRows.map(r => r.progress)),
           result: aggregateDot(groupRows.map(r => r.result)),
+          progressCounts,
+          resultCounts,
           tbCheckDot: tbDots.length === 0 ? null : aggregateDot(tbDots),
           extrapolatedErrorTotal: groupRows.reduce((acc, r) => acc + (r.extrapolatedError || 0), 0),
           // Distinct-code count uses the TB-side population (not
@@ -765,10 +825,11 @@ export function AuditTestSummaryPanel({ engagementId, userRole }: Props) {
           accountCode: c.code,
           tbCodeValue: c.currentYear,
           tbCodeDescription: c.description,
+          fsLineCodeCount: codes.length,
           tbCheck: null,
           progress: 'pending',
           result: 'pending',
-          durationMs: null,
+          lastActivityAt: null,
           totalErrors: 0,
           extrapolatedError: 0,
           status: 'untested',
@@ -786,6 +847,8 @@ export function AuditTestSummaryPanel({ engagementId, userRole }: Props) {
           rows: placeholders,
           progress: 'pending',
           result: 'pending',
+          progressCounts: { red: 0, orange: 0, green: 0, pending: 0 },
+          resultCounts: { red: 0, orange: 0, green: 0, pending: 0 },
           tbCheckDot: null,
           extrapolatedErrorTotal: 0,
           distinctCodeCount: codes.length,
@@ -952,12 +1015,12 @@ export function AuditTestSummaryPanel({ engagementId, userRole }: Props) {
               <SortableHeader label="FS Line" col="fsLine" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} onFilterToggle={() => setOpenFilter(o => o === 'fsLine' ? null : 'fsLine')} hasFilter={!!filters.fsLine} className="w-40 text-left" />
               <SortableHeader label="TB Code" col="tbCode" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} className="w-20 text-left" />
               <SortableHeader label="Value" col="value" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} className="w-24 text-right" />
-              <SortableHeader label="TB" col="tbCheck" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} onFilterToggle={() => setOpenFilter(o => o === 'tbCheck' ? null : 'tbCheck')} hasFilter={filters.tbCheck !== 'any'} className="w-12 text-center" />
+              <SortableHeader label="TB ✓" col="tbCheck" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} onFilterToggle={() => setOpenFilter(o => o === 'tbCheck' ? null : 'tbCheck')} hasFilter={filters.tbCheck !== 'any'} className="w-12 text-center" titleText="TB Reconciliation — green if the third-party listing total reconciles to the trial balance for this test, red if there is a variance, blank if no listing was provided yet." />
               <SortableHeader label="Test" col="testDescription" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} onFilterToggle={() => setOpenFilter(o => o === 'testDescription' ? null : 'testDescription')} hasFilter={!!filters.testDescription} className="text-left" />
               <SortableHeader label="Progress" col="progress" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} onFilterToggle={() => setOpenFilter(o => o === 'progress' ? null : 'progress')} hasFilter={filters.progress.size > 0} className="w-20 text-center" />
               <SortableHeader label="Result" col="result" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} onFilterToggle={() => setOpenFilter(o => o === 'result' ? null : 'result')} hasFilter={filters.result.size > 0} className="w-20 text-center" />
               <SortableHeader label="Error £" col="extrapolatedError" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} className="w-24 text-right" />
-              <SortableHeader label="Duration" col="durationMs" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} className="w-20 text-right" />
+              <SortableHeader label="Updated" col="lastActivity" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} className="w-20 text-right" titleText="Time since the last update on this row (sign-off / completion). Replaces test execution duration, which auditors flagged as regulator-sensitive." />
               <SortableHeader label="Reviewer" col="reviewer" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} className="w-16 text-center" />
               <SortableHeader label="RI" col="ri" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} className="w-12 text-center" />
             </tr>
@@ -1051,11 +1114,27 @@ export function AuditTestSummaryPanel({ engagementId, userRole }: Props) {
                           <td className="px-3 py-1.5 text-[10px] text-slate-500 italic">
                             {group.rows.length} test{group.rows.length === 1 ? '' : 's'} {isExpanded ? '— click to collapse' : '— click to expand'}
                           </td>
+                          {/* Progress / Result group cells — render 4 count
+                              pills (one per state) so the FS-Line header
+                              mirrors the section-level rollup the auditor
+                              sees at the top. The number inside each pill
+                              is the count of rows in this FS Line in that
+                              state, so a glance shows where the work is. */}
                           <td className="px-2 py-1.5 text-center">
-                            <div className={`w-3 h-3 rounded-full mx-auto ${DOT_BG[group.progress]}`} title={`Progress (group) — ${PROGRESS_TITLE[group.progress]}`} />
+                            <div className="inline-flex items-center gap-0.5" title={`Progress — ${PROGRESS_TITLE[group.progress]}`}>
+                              <CountPill colour="red" count={group.progressCounts.red} title={`${group.progressCounts.red} failed`} />
+                              <CountPill colour="orange" count={group.progressCounts.orange} title={`${group.progressCounts.orange} in progress`} />
+                              <CountPill colour="green" count={group.progressCounts.green} title={`${group.progressCounts.green} ran`} />
+                              <CountPill colour="pending" count={group.progressCounts.pending} title={`${group.progressCounts.pending} not started`} />
+                            </div>
                           </td>
                           <td className="px-2 py-1.5 text-center">
-                            <div className={`w-3 h-3 rounded-full mx-auto ${DOT_BG[group.result]}`} title={`Result (group) — ${RESULT_TITLE[group.result]}`} />
+                            <div className="inline-flex items-center gap-0.5" title={`Result — ${RESULT_TITLE[group.result]}`}>
+                              <CountPill colour="red" count={group.resultCounts.red} title={`${group.resultCounts.red} above PM`} />
+                              <CountPill colour="orange" count={group.resultCounts.orange} title={`${group.resultCounts.orange} CT–PM`} />
+                              <CountPill colour="green" count={group.resultCounts.green} title={`${group.resultCounts.green} clean`} />
+                              <CountPill colour="pending" count={group.resultCounts.pending} title={`${group.resultCounts.pending} no result`} />
+                            </div>
                           </td>
                           <td className="px-2 py-1.5 text-right text-slate-700 tabular-nums font-medium">
                             {group.extrapolatedErrorTotal ? formatGbp(group.extrapolatedErrorTotal) : <span className="text-slate-300 font-normal">—</span>}
@@ -1071,9 +1150,11 @@ export function AuditTestSummaryPanel({ engagementId, userRole }: Props) {
                             <td className="px-2 py-1.5 text-slate-300 text-[9px] pl-6">
                               {/* indent shown via pl-6; FS Line name lives on the group header */}
                             </td>
-                            {/* TB Code + description side by side. Code
-                                in mono so the digits read clearly,
-                                description in regular text afterwards. */}
+                            {/* TB Code + description side by side, mirroring
+                                the Adj TB layout. When a test isn't tied to
+                                a single accountCode (most FS-line-level
+                                tests) we fall back to the FS-Line aggregate
+                                so the column never reads as "missing data". */}
                             <td className="px-2 py-1.5 text-left text-slate-600 text-[10px]">
                               {row.accountCode ? (
                                 <div className="flex items-baseline gap-1.5 min-w-0">
@@ -1082,12 +1163,24 @@ export function AuditTestSummaryPanel({ engagementId, userRole }: Props) {
                                     <span className="text-slate-500 truncate" title={row.tbCodeDescription}>{row.tbCodeDescription}</span>
                                   )}
                                 </div>
+                              ) : row.fsLineCodeCount > 0 ? (
+                                <span className="text-slate-500 italic" title={`Test covers all ${row.fsLineCodeCount} TB codes mapped to ${row.fsLine}`}>
+                                  All {row.fsLineCodeCount} code{row.fsLineCodeCount === 1 ? '' : 's'}
+                                </span>
                               ) : (
                                 <span className="text-slate-300 italic">—</span>
                               )}
                             </td>
                             <td className="px-2 py-1.5 text-right text-slate-600 tabular-nums">
-                              {formatGbp(row.tbCodeValue)}
+                              {/* When the row has no specific accountCode we
+                                  show the FS-Line total instead of "—" so
+                                  the auditor can still see the value being
+                                  tested. */}
+                              {row.tbCodeValue !== null
+                                ? formatGbp(row.tbCodeValue)
+                                : row.fsLineValue !== null
+                                  ? <span title={`FS Line total — ${row.fsLine}`}>{formatGbp(row.fsLineValue)}</span>
+                                  : <span className="text-slate-300">—</span>}
                             </td>
                             <td className="px-2 py-1.5 text-center">{renderTbDot(row.tbCheck)}</td>
                             <td className="px-3 py-1.5 text-slate-700">
@@ -1115,7 +1208,9 @@ export function AuditTestSummaryPanel({ engagementId, userRole }: Props) {
                             <td className="px-2 py-1.5 text-right text-slate-600 tabular-nums">
                               {row.extrapolatedError ? formatGbp(row.extrapolatedError) : <span className="text-slate-300">—</span>}
                             </td>
-                            <td className="px-2 py-1.5 text-right text-slate-500 tabular-nums">{formatDuration(row.durationMs)}</td>
+                            <td className="px-2 py-1.5 text-right text-slate-500 tabular-nums" title={row.lastActivityAt ? new Date(row.lastActivityAt).toLocaleString('en-GB') : 'No activity recorded'}>
+                              {formatRelativeTime(row.lastActivityAt)}
+                            </td>
                             <td className="px-2 py-1.5 text-center">{row.isPlaceholder ? <span className="text-slate-300 text-[9px]">—</span> : renderSignOffButton(row, 'reviewer')}</td>
                             <td className="px-2 py-1.5 text-center">{row.isPlaceholder ? <span className="text-slate-300 text-[9px]">—</span> : renderSignOffButton(row, 'ri')}</td>
                           </tr>
@@ -1144,17 +1239,20 @@ interface SortableHeaderProps {
   onFilterToggle?: () => void;
   hasFilter?: boolean;
   className?: string;
+  // Optional explanatory text shown on hover — used on TB ✓ /
+  // Updated columns to clarify what the column represents.
+  titleText?: string;
 }
 
-function SortableHeader({ label, col, sortKey, sortDir, onSort, onFilterToggle, hasFilter, className }: SortableHeaderProps) {
+function SortableHeader({ label, col, sortKey, sortDir, onSort, onFilterToggle, hasFilter, className, titleText }: SortableHeaderProps) {
   const active = col === sortKey;
   return (
-    <th className={`px-2 py-1.5 font-semibold ${className || ''}`}>
+    <th className={`px-2 py-1.5 font-semibold ${className || ''}`} title={titleText}>
       <div className="inline-flex items-center gap-1">
         <button
           onClick={() => onSort(col)}
           className={`inline-flex items-center gap-1 hover:text-slate-700 ${active ? 'text-slate-700' : ''}`}
-          title="Click to sort"
+          title={titleText || 'Click to sort'}
         >
           <span>{label}</span>
           {active

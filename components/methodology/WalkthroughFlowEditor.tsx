@@ -632,28 +632,60 @@ function FlowEditorInner({ steps, onStepsChange, readOnly = false, userRole, eng
     [nodes, readOnly, userRole, engagementId]
   );
 
-  // Propagate changes back (debounced, flush on unmount)
+  // Propagate changes back (debounced, flush on unmount). The
+  // callback is held in a ref so the debounce/flush logic only
+  // depends on the actual editor state — without this the cleanup
+  // would fire on every render of WalkthroughProcess (because
+  // `onStepsChange` is an inline arrow function recreated each
+  // render), and each cleanup-fire would call `saveStatus` on the
+  // parent which set state which triggered another render. That
+  // feedback loop was the source of the "Maximum update depth
+  // exceeded" error reported when opening Walkthroughs.
   const nodesRef = useRef(nodes);
   const edgesRef = useRef(edges);
-  const initialStepCount = useRef(steps.length);
+  const onStepsChangeRef = useRef(onStepsChange);
+  const hasUnsavedChangesRef = useRef(false);
   nodesRef.current = nodes;
   edgesRef.current = edges;
+  onStepsChangeRef.current = onStepsChange;
+
+  // Track when the editor's state actually diverges from the
+  // initial steps prop so we don't fire onStepsChange on the
+  // first mount (the "no-op" debounce that was previously firing
+  // 800ms after every mount and writing the same data back to
+  // the server, which triggered renders in the parent and re-
+  // mounted us via the `key={fc-…}` prop).
+  useEffect(() => {
+    hasUnsavedChangesRef.current = true;
+  }, [nodes, edges]);
 
   useEffect(() => {
+    if (!hasUnsavedChangesRef.current) return;
     clearTimeout(changeTimerRef.current);
     changeTimerRef.current = setTimeout(() => {
-      const flowSteps = reactFlowToFlowSteps(nodes, edges);
-      onStepsChange(flowSteps);
+      const flowSteps = reactFlowToFlowSteps(nodesRef.current, edgesRef.current);
+      onStepsChangeRef.current(flowSteps);
+      hasUnsavedChangesRef.current = false;
     }, 800);
     return () => {
       clearTimeout(changeTimerRef.current);
-      // Flush on unmount — but only if we have nodes (don't overwrite with empty)
-      if (nodesRef.current.length > 0) {
-        const flowSteps = reactFlowToFlowSteps(nodesRef.current, edgesRef.current);
-        onStepsChange(flowSteps);
-      }
     };
   }, [nodes, edges]);
+
+  // True unmount flush — fires only when the component is
+  // unmounting (empty deps so cleanup only runs once, on
+  // unmount). Skips the flush if nothing has been edited since
+  // the last save, which is the case immediately after the
+  // initial load.
+  useEffect(() => {
+    return () => {
+      if (!hasUnsavedChangesRef.current) return;
+      if (nodesRef.current.length === 0) return;
+      const flowSteps = reactFlowToFlowSteps(nodesRef.current, edgesRef.current);
+      onStepsChangeRef.current(flowSteps);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const onConnect = useCallback((params: Connection) => {
     if (readOnly) return;

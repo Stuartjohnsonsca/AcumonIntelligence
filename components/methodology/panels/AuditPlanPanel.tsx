@@ -355,6 +355,28 @@ export function AuditPlanPanel({ engagementId, clientId, periodId, onClose, peri
   const [framework, setFramework] = useState('');
   const [expandedRmm, setExpandedRmm] = useState<Set<string>>(new Set());
   const [excludedTests, setExcludedTests] = useState<Set<string>>(new Set());
+  // Per-test data source — where the auditor expects the evidence
+  // for this test to come from. Drives nothing behaviour-wise yet
+  // (no automatic ingest swap), but the dropdown/indent on each row
+  // makes the planning decision visible and reviewable. Persisted
+  // to localStorage per engagement so the choice survives reloads
+  // without a backend change.
+  type DataSource = 'gl' | 'mgmt' | 'tp';
+  const dataSourceStorageKey = `audit-plan-data-sources:${engagementId}`;
+  const [testDataSources, setTestDataSources] = useState<Record<string, DataSource>>(() => {
+    if (typeof window === 'undefined') return {};
+    try {
+      const raw = window.localStorage.getItem(dataSourceStorageKey);
+      return raw ? (JSON.parse(raw) as Record<string, DataSource>) : {};
+    } catch { return {}; }
+  });
+  function setTestDataSource(testKey: string, source: DataSource) {
+    setTestDataSources(prev => {
+      const next = { ...prev, [testKey]: source };
+      try { window.localStorage.setItem(dataSourceStorageKey, JSON.stringify(next)); } catch {}
+      return next;
+    });
+  }
   // Multiple test execution panels can be open at once. Switching from
   // a single id to a Set so clicking Execute on one test no longer
   // unmounts the panel for another — each TestExecutionPanel polls
@@ -1180,32 +1202,31 @@ export function AuditPlanPanel({ engagementId, clientId, periodId, onClose, peri
       )}
 
       {/*
-        Plan Customiser action bar — prominent row below the FS Level sub-tabs
-        (or statement tabs when no level is active). Opens a modal where the
-        auditor can mark tests N/A for this engagement (with a reason) and
-        add engagement-specific custom tests.
-
-        Renders whenever the user is on any statement/level/note scope (i.e.
-        NOT on one of the "Other" tabs like Going Concern / SRMM). The scope
-        label falls back through Level → Statement so the bar is visible from
-        the moment the audit plan opens.
+        Plan Customiser action bar — visible on every Audit Plan
+        view (Statement / Level / Note AND the "Other" tabs:
+        Going Concern, Management Override, SRMM Memos,
+        Disclosure, etc.). The auditor flagged that hiding the
+        button on Other tabs left them unable to add custom tests
+        or audit-tools to those sections. Scope name falls back:
+        Other tab > Level > Statement.
 
         FS Line resolution uses a fallback chain:
-        exact → case-insensitive → alias → fsLevelMap → synthetic pseudo-id.
+        exact → case-insensitive → alias → fsLevelMap → synthetic
+        pseudo-id keyed by the scope label.
       */}
-      {!activeOtherTab && (activeLevel || activeStatement) && (
+      {(activeOtherTab || activeLevel || activeStatement) && (
         <div className="flex items-center justify-between gap-3 px-3 py-2 bg-indigo-50 border border-indigo-200 rounded">
           <div className="text-xs text-slate-700">
             <span className="text-[10px] uppercase tracking-wide text-indigo-700 font-semibold">Audit Plan for:</span>{' '}
-            <span className="font-semibold">{activeLevel || activeStatement}</span>
+            <span className="font-semibold">{activeOtherTab || activeLevel || activeStatement}</span>
             {activeNote && <span className="text-slate-500"> → {activeNote}</span>}
-            {!activeLevel && (
+            {!activeOtherTab && !activeLevel && (
               <span className="ml-2 text-[10px] text-slate-500 italic">(select an FS Level for more precise customisation)</span>
             )}
           </div>
           <button
             onClick={() => {
-              const scopeName = activeLevel || activeStatement;
+              const scopeName = activeOtherTab || activeLevel || activeStatement;
               const levelLower = scopeName.toLowerCase().trim();
               // 1. Exact name match
               let fl = fsLinesList.find(f => f.name === scopeName);
@@ -1225,9 +1246,11 @@ export function AuditPlanPanel({ engagementId, clientId, periodId, onClose, peri
                 const mapped = fsLevelMap[scopeName].toLowerCase().trim();
                 fl = fsLinesList.find(f => f.name.toLowerCase().trim() === mapped);
               }
-              // 5. Synthetic fallback — use the raw scope name as both id
-              //    and name. The modal filters allocations by both id and
-              //    by case-insensitive name match so this still works.
+              // 5. Synthetic fallback — use the raw scope name as
+              //    both id and name. The modal filters by id and
+              //    by case-insensitive name match so this also
+              //    works for Other tabs (Going Concern etc.) where
+              //    no FS Line record exists.
               setPlanCustomiserContext({
                 fsLineId: fl?.id || `__synthetic__${scopeName}`,
                 fsLineName: fl?.name || scopeName,
@@ -1235,7 +1258,7 @@ export function AuditPlanPanel({ engagementId, clientId, periodId, onClose, peri
               setPlanCustomiserOpen(true);
             }}
             className="inline-flex items-center gap-1.5 text-xs font-semibold px-3 py-1.5 rounded bg-indigo-600 text-white border border-indigo-700 hover:bg-indigo-700 shadow-sm whitespace-nowrap"
-            title="Open Plan Customiser for this scope — mark tests N/A or add engagement-specific custom tests"
+            title="Open Plan Customiser for this scope — mark tests N/A, add engagement-specific custom tests, or deploy Audit Tools"
           >
             <ClipboardList className="h-3.5 w-3.5" />
             Plan Customiser
@@ -1338,8 +1361,9 @@ export function AuditPlanPanel({ engagementId, clientId, periodId, onClose, peri
               <col style={{width: '12px'}} />{/* spacer between CY and PY */}
               <col style={{width: '70px'}} />
               <col style={{width: '70px'}} />
-              <col style={{width: '70px'}} />
-              <col style={{width: '50px'}} />
+              <col style={{width: '70px'}} />{/* Assertions */}
+              <col style={{width: '60px'}} />{/* Coverage — applicable tests for this FS row */}
+              <col style={{width: '50px'}} />{/* Risk */}
             </colgroup>
             <thead className="bg-slate-50 border-b border-slate-200">
               <tr>
@@ -1348,17 +1372,21 @@ export function AuditPlanPanel({ engagementId, clientId, periodId, onClose, peri
                 <th className="pl-1 pr-0.5 py-0.5 text-left font-semibold text-slate-600" rowSpan={2}>Code</th>
                 <th className="px-0.5 py-0.5 text-left font-semibold text-slate-600" rowSpan={2}>Description</th>
                 {isThreeLevel && <th className="px-0.5 py-0.5 text-left font-semibold text-slate-600" rowSpan={2}>FS Note</th>}
-                <th className="px-0.5 py-0 text-center font-semibold text-slate-600 whitespace-nowrap border-b border-slate-200" colSpan={2}>{fmtDate(periodEndDate) || 'CY'}</th>
-                <th rowSpan={2}></th>{/* spacer */}
-                <th className="px-0.5 py-0 text-center font-semibold text-slate-600 whitespace-nowrap border-b border-slate-200" colSpan={2}>{dayBefore(periodStartDate) || 'PY'}</th>
+                <th className="px-0.5 py-0 text-left font-semibold text-slate-600 whitespace-nowrap border-b border-slate-200" colSpan={2}>{fmtDate(periodEndDate) || 'CY'}</th>
+                <th rowSpan={2} className="w-3"></th>{/* spacer between CY/PY blocks */}
+                <th className="px-0.5 py-0 text-left font-semibold text-slate-600 whitespace-nowrap border-b border-slate-200" colSpan={2}>{dayBefore(periodStartDate) || 'PY'}</th>
                 <th className="px-0.5 py-0.5 text-left font-semibold text-slate-600" rowSpan={2}>Assertions</th>
+                <th className="px-0.5 py-0.5 text-left font-semibold text-slate-600" rowSpan={2}>Coverage</th>
                 <th className="px-0.5 py-0.5 text-left font-semibold text-slate-600" rowSpan={2}>Risk</th>
               </tr>
               <tr>
-                <th className="px-0.5 py-0 text-right text-[8px] text-slate-400 font-medium">Dr</th>
-                <th className="px-0.5 py-0 text-right text-[8px] text-slate-400 font-medium">Cr</th>
-                <th className="px-0.5 py-0 text-right text-[8px] text-slate-400 font-medium">Dr</th>
-                <th className="px-0.5 py-0 text-right text-[8px] text-slate-400 font-medium">Cr</th>
+                {/* Dr/Cr sub-headers — left-aligned to match the
+                    body cells. min-w keeps the column wide enough
+                    for 7-figure values without truncation. */}
+                <th className="px-1 py-0 text-left text-[8px] text-slate-400 font-medium min-w-[80px]">Dr</th>
+                <th className="px-1 py-0 text-left text-[8px] text-slate-400 font-medium min-w-[80px]">Cr</th>
+                <th className="px-1 py-0 text-left text-[8px] text-slate-400 font-medium min-w-[80px]">Dr</th>
+                <th className="px-1 py-0 text-left text-[8px] text-slate-400 font-medium min-w-[80px]">Cr</th>
               </tr>
             </thead>
             <tbody>
@@ -1478,11 +1506,18 @@ export function AuditPlanPanel({ engagementId, clientId, periodId, onClose, peri
                       <td className="pl-1 pr-0.5 py-px font-mono text-slate-500">{displayCode}</td>
                       <td className="px-0.5 py-px text-slate-700">{row.description}</td>
                       {isThreeLevel && <td className="px-0.5 py-px text-slate-400">{row.fsNoteLevel || ''}</td>}
-                      <td className="px-0.5 py-px text-right whitespace-nowrap"><DrCell value={row.currentYear} /></td>
-                      <td className="px-0.5 py-px text-right whitespace-nowrap"><CrCell value={row.currentYear} /></td>
-                      <td></td>{/* spacer */}
-                      <td className="px-0.5 py-px text-right whitespace-nowrap"><DrCell value={row.priorYear} className="text-slate-500" /></td>
-                      <td className="px-0.5 py-px text-right whitespace-nowrap"><CrCell value={row.priorYear} className="text-slate-500" /></td>
+                      {/* Dr/Cr cells — left-aligned with a fixed
+                          min-width so a long Cr value (e.g. a
+                          7-figure trade payables balance rendered
+                          as "(5,000,000)") can't overflow leftward
+                          into the Description / FS Note columns
+                          that the auditor flagged. tabular-nums
+                          keeps digit columns aligned across rows. */}
+                      <td className="px-1 py-px text-left whitespace-nowrap min-w-[80px] tabular-nums"><DrCell value={row.currentYear} /></td>
+                      <td className="px-1 py-px text-left whitespace-nowrap min-w-[80px] tabular-nums"><CrCell value={row.currentYear} /></td>
+                      <td className="w-3"></td>{/* spacer between CY and PY blocks */}
+                      <td className="px-1 py-px text-left whitespace-nowrap min-w-[80px] tabular-nums"><DrCell value={row.priorYear} className="text-slate-500" /></td>
+                      <td className="px-1 py-px text-left whitespace-nowrap min-w-[80px] tabular-nums"><CrCell value={row.priorYear} className="text-slate-500" /></td>
                       <td className="px-0.5 py-px">
                         {rmmMatch?.assertions && rmmMatch.assertions.length > 0 ? (
                           <div className="flex flex-wrap gap-px">
@@ -1491,6 +1526,38 @@ export function AuditPlanPanel({ engagementId, clientId, periodId, onClose, peri
                             ))}
                           </div>
                         ) : ''}
+                      </td>
+                      {/* Coverage pill — count of applicable tests
+                          and how many have a recorded conclusion.
+                          Sits beneath the Assertions pill so the
+                          reviewer can see at a glance how much of
+                          the row is covered without expanding it. */}
+                      <td className="px-0.5 py-px">
+                        {(() => {
+                          const applicable = tests.filter(t => t?.description && !excludedTests.has(`${rowKey}::${t.description}`));
+                          if (applicable.length === 0) {
+                            return <span className="text-[8px] text-slate-300">—</span>;
+                          }
+                          const concluded = applicable.filter(t => {
+                            const tk = `${rowKey}::${t.description}`;
+                            return testConclusions[tk] || dbConclusions.some(c => c.testDescription === t.description);
+                          }).length;
+                          const allDone = concluded === applicable.length;
+                          return (
+                            <span
+                              className={`text-[8px] px-1 py-0.5 rounded font-semibold border whitespace-nowrap ${
+                                allDone
+                                  ? 'bg-green-100 text-green-700 border-green-200'
+                                  : concluded > 0
+                                    ? 'bg-amber-100 text-amber-700 border-amber-200'
+                                    : 'bg-slate-100 text-slate-500 border-slate-200'
+                              }`}
+                              title={`${concluded} of ${applicable.length} applicable test${applicable.length === 1 ? '' : 's'} concluded`}
+                            >
+                              {concluded}/{applicable.length}
+                            </span>
+                          );
+                        })()}
                       </td>
                       <td className="px-0.5 py-px">
                         {rmmMatch?.overallRisk && (
@@ -1562,9 +1629,41 @@ export function AuditPlanPanel({ engagementId, clientId, periodId, onClose, peri
                               className="w-2.5 h-2.5 rounded border-slate-300 cursor-pointer" title={isApplicable ? 'Applicable — click to exclude' : 'Not applicable — click to include'} />
                           </td>
                           <td colSpan={isThreeLevel ? 8 : 7} className="py-0.5 pl-5 pr-2">
+                            {/* Test row layout —
+                                [type pill] [Open Test] [conclusion dot] [G/L | Mgmt | 3rdP indent] [description grows] [Reviewer/RI →]
+                                The action controls (Open Test + dot +
+                                indent picker) sit in fixed-width slots on
+                                the left so they line up vertically across
+                                rows regardless of how long the description
+                                is. The description itself uses flex-1 +
+                                truncate so it fills the remaining space
+                                without pushing the controls around. */}
                             <div className="flex items-center gap-1.5">
                               <span className={`text-[7px] px-1 py-0.5 rounded border font-semibold flex-shrink-0 ${test.color}`}>{test.typeName}</span>
-                              <span className={`text-[9px] min-w-0 truncate ${isApplicable ? 'text-slate-700' : 'text-slate-400 line-through'}`} style={{maxWidth: '60%'}}>{test.description}</span>
+                              {(() => {
+                                const currentSource: DataSource = testDataSources[testKey] || 'gl';
+                                const SOURCE_DEF: Record<DataSource, { label: string; full: string; cls: string; title: string }> = {
+                                  gl:   { label: 'G/L',  full: 'General Ledger',          cls: 'bg-blue-50 text-blue-700 border-blue-200 hover:bg-blue-100',          title: 'Evidence comes from the General Ledger / TB' },
+                                  mgmt: { label: 'Mgmt', full: 'Management',              cls: 'bg-amber-50 text-amber-700 border-amber-200 hover:bg-amber-100',     title: 'Evidence comes from management (schedules, reports)' },
+                                  tp:   { label: '3rdP', full: 'Third Party',             cls: 'bg-violet-50 text-violet-700 border-violet-200 hover:bg-violet-100', title: 'Evidence comes from a third party (bank, supplier, etc.)' },
+                                };
+                                const order: DataSource[] = ['gl', 'mgmt', 'tp'];
+                                const def = SOURCE_DEF[currentSource];
+                                return (
+                                  <button
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      const idx = order.indexOf(currentSource);
+                                      const nextSrc = order[(idx + 1) % order.length];
+                                      setTestDataSource(testKey, nextSrc);
+                                    }}
+                                    className={`inline-flex items-center text-[8px] font-semibold px-1.5 py-0.5 rounded border transition-colors flex-shrink-0 w-12 justify-center ${def.cls}`}
+                                    title={`${def.full} — ${def.title}. Click to cycle: G/L → Management → Third Party`}
+                                  >
+                                    {def.label}
+                                  </button>
+                                );
+                              })()}
                               {isApplicable && (() => {
                                 // hasRun = "this test has been kicked off
                                 // at least once" — true for in-progress
@@ -1628,6 +1727,17 @@ export function AuditPlanPanel({ engagementId, clientId, periodId, onClose, peri
                                   } — click to ${isExecutionOpen ? 'hide' : 'view'} results`}
                                 />
                               )}
+                              {/* Test description — flex-1 so it absorbs all
+                                  remaining horizontal space, pushing the
+                                  R/RI sign-off chips to the right edge.
+                                  Truncates with ellipsis on long text so
+                                  the row never wraps. */}
+                              <span
+                                className={`text-[9px] flex-1 min-w-0 truncate ${isApplicable ? 'text-slate-700' : 'text-slate-400 line-through'}`}
+                                title={test.description}
+                              >
+                                {test.description}
+                              </span>
                               {/* Review / RI checkboxes — clickable */}
                               {dbConc && (
                                 <div className="flex items-center gap-1 flex-shrink-0 ml-1" onClick={e => e.stopPropagation()}>
@@ -1693,7 +1803,7 @@ export function AuditPlanPanel({ engagementId, clientId, periodId, onClose, peri
                         {/* Execution Panel — opens below the test row */}
                         {isExecutionOpen && (
                           <tr>
-                            <td colSpan={isThreeLevel ? 12 : 11} className="p-2 bg-slate-50/50">
+                            <td colSpan={isThreeLevel ? 13 : 12} className="p-2 bg-slate-50/50">
                               <TestExecutionPanel
                                 testId={testKey}
                                 testDescription={test.description}
@@ -1723,7 +1833,7 @@ export function AuditPlanPanel({ engagementId, clientId, periodId, onClose, peri
                         {/* Payroll Workpaper — for payroll_workpaper output format */}
                         {isExecutionOpen && test.outputFormat === 'payroll_workpaper' && (
                           <tr>
-                            <td colSpan={isThreeLevel ? 12 : 11} className="p-2 bg-white">
+                            <td colSpan={isThreeLevel ? 13 : 12} className="p-2 bg-white">
                               <PayrollTestPanel
                                 engagementId={engagementId}
                                 fsLine={activeLevel || activeStatement}
@@ -1734,7 +1844,7 @@ export function AuditPlanPanel({ engagementId, clientId, periodId, onClose, peri
                         {/* Results Panel — shown for completed tests with results (not for ranked_flagged which shows in execution panel) */}
                         {isExecutionOpen && hasResults && test.outputFormat !== 'ranked_flagged' && (
                           <tr>
-                            <td colSpan={isThreeLevel ? 12 : 11} className="p-2 bg-white">
+                            <td colSpan={isThreeLevel ? 13 : 12} className="p-2 bg-white">
                               <TestResultsPanel
                                 engagementId={engagementId}
                                 executionId={effectiveExecId}
@@ -1756,7 +1866,7 @@ export function AuditPlanPanel({ engagementId, clientId, periodId, onClose, peri
                     {/* Analytical Review Panel — for AR-classified rows */}
                     {isExp && isAR && (
                       <tr>
-                        <td colSpan={isThreeLevel ? 12 : 11} className="p-2 bg-green-50/30">
+                        <td colSpan={isThreeLevel ? 13 : 12} className="p-2 bg-green-50/30">
                           <AnalyticalReviewPanel
                             engagementId={engagementId}
                             fsLine={effectiveFsLevel || activeLevel || activeStatement}

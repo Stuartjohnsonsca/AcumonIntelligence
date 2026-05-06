@@ -64,6 +64,16 @@ interface RiskRecord {
   signOffs: Record<string, { userId: string; userName: string; timestamp: string }>;
 }
 
+// SRMM (Significant Risk Memo) records authored in the planning
+// stage. We pull these into the completion-stage Significant Risk
+// tab so the same risk can be reviewed and concluded against the
+// memo without re-typing planning context. SRMM authors against
+// the same rmmRowId, so tabs match one-to-one.
+interface SrmmMemo {
+  rmmRowId: string;
+  memo: Record<string, string>;
+}
+
 type TeamMember = { userId: string; userName?: string; role: string };
 
 interface Props {
@@ -121,8 +131,15 @@ const OTHER_QUESTIONS = [
 ];
 
 // ─── Collapsible Section ──────────────────────────────────────────────
-function Section({ title, children, defaultOpen = false }: { title: string; children: React.ReactNode; defaultOpen?: boolean }) {
-  const [open, setOpen] = useState(defaultOpen);
+// `hasContent` controls the auto-expand-when-filled / auto-collapse-when-
+// empty behaviour requested by the audit team — sections with text
+// already in them open on first render so reviewers don't have to
+// click through every empty section to find the populated ones.
+// `defaultOpen` is the explicit override (used on Risk Description and
+// Conclusion regardless of content). The user can still toggle either
+// way after load.
+function Section({ title, children, defaultOpen = false, hasContent = false }: { title: string; children: React.ReactNode; defaultOpen?: boolean; hasContent?: boolean }) {
+  const [open, setOpen] = useState(defaultOpen || hasContent);
   return (
     <div className="border border-slate-200 rounded-lg overflow-hidden">
       <button onClick={() => setOpen(!open)}
@@ -135,6 +152,39 @@ function Section({ title, children, defaultOpen = false }: { title: string; chil
   );
 }
 
+// Auto-sizing textarea — rows defaults to 1 then grows with the
+// content, capped by maxRows. Used in the Significant Risk panel so
+// that pre-populated SRMM text is fully visible on open without
+// the user having to drag-resize the box. Falls back to the static
+// rows prop until the user types.
+function AutoTextarea({ value, onChange, placeholder, minRows = 2, maxRows = 18, className = '' }: {
+  value: string; onChange: (v: string) => void; placeholder?: string; minRows?: number; maxRows?: number; className?: string;
+}) {
+  const ref = useRef<HTMLTextAreaElement | null>(null);
+  // Resize on mount + every value change so SRMM-prefilled text
+  // shows in full, and the box keeps growing as the user types.
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    el.style.height = 'auto';
+    const lineH = 16; // ~text-xs line height
+    const min = minRows * lineH + 12;
+    const max = maxRows * lineH + 12;
+    const next = Math.min(Math.max(el.scrollHeight, min), max);
+    el.style.height = `${next}px`;
+  }, [value, minRows, maxRows]);
+  return (
+    <textarea
+      ref={ref}
+      value={value}
+      onChange={e => onChange(e.target.value)}
+      placeholder={placeholder}
+      rows={minRows}
+      className={`w-full text-xs border border-slate-200 rounded px-2 py-1.5 resize-y overflow-hidden ${className}`}
+    />
+  );
+}
+
 // ─── Main Panel ───────────────────────────────────────────────────────
 export function SignificantRiskPanel({ engagementId, userId, userName, teamMembers }: Props) {
   const { data: session } = useSession();
@@ -142,6 +192,7 @@ export function SignificantRiskPanel({ engagementId, userId, userName, teamMembe
   const [records, setRecords] = useState<Record<string, RiskRecord>>({});
   const [allocations, setAllocations] = useState<TestAllocation[]>([]);
   const [conclusions, setConclusions] = useState<TestConclusion[]>([]);
+  const [srmmByRisk, setSrmmByRisk] = useState<Record<string, Record<string, string>>>({});
   const [loading, setLoading] = useState(true);
   const [activeRiskId, setActiveRiskId] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
@@ -149,11 +200,17 @@ export function SignificantRiskPanel({ engagementId, userId, userName, teamMembe
 
   const loadAll = useCallback(async () => {
     try {
-      const [rmmRes, sigRes, allocRes, concRes] = await Promise.all([
+      // SRMM is fetched alongside the rest so the planning-stage
+      // memo content is available to pre-fill matching fields in
+      // this completion-stage panel. It's optional — if the API
+      // doesn't return memos (e.g. older engagements) the panel
+      // still works as before.
+      const [rmmRes, sigRes, allocRes, concRes, srmmRes] = await Promise.all([
         fetch(`/api/engagements/${engagementId}/rmm`),
         fetch(`/api/engagements/${engagementId}/significant-risk`),
         fetch(`/api/engagements/${engagementId}/test-allocations`),
         fetch(`/api/engagements/${engagementId}/test-conclusions`),
+        fetch(`/api/engagements/${engagementId}/srmm`),
       ]);
 
       if (rmmRes.ok) {
@@ -179,6 +236,16 @@ export function SignificantRiskPanel({ engagementId, userId, userName, teamMembe
         const data = await concRes.json();
         setConclusions(data.conclusions || data.rows || []);
       }
+
+      if (srmmRes.ok) {
+        const data = await srmmRes.json();
+        const memos: SrmmMemo[] = Array.isArray(data?.memos) ? data.memos : [];
+        const byId: Record<string, Record<string, string>> = {};
+        for (const m of memos) {
+          if (m.rmmRowId && m.memo && typeof m.memo === 'object') byId[m.rmmRowId] = m.memo;
+        }
+        setSrmmByRisk(byId);
+      }
     } catch (err) {
       console.error('[SignificantRisk] load failed:', err);
     }
@@ -190,16 +257,32 @@ export function SignificantRiskPanel({ engagementId, userId, userName, teamMembe
   const activeRisk = rmmRows.find(r => r.id === activeRiskId);
   const activeRecord = activeRiskId ? records[activeRiskId] : undefined;
   const activeAnswers = activeRecord?.answers || {};
+  const activeSrmm = activeRiskId ? (srmmByRisk[activeRiskId] || {}) : {};
 
-  // Pre-fill defaults from RMM data
+  // Map an SRMM "testingApproach" free-text value onto the constrained
+  // RiskAnswers enum. Anything else returns '' so we don't show a
+  // dropdown value the form can't represent.
+  const srmmTestingApproach = ((): RiskAnswers['testingApproach'] => {
+    const t = (activeSrmm.testingApproach || '').trim().toLowerCase();
+    if (t.startsWith('substantive')) return 'substantive';
+    if (t.startsWith('control'))     return 'controls';
+    if (t.startsWith('defrayment'))  return 'defrayment';
+    return '';
+  })();
+
+  // Pre-fill defaults from RMM data + SRMM memo (planning-stage).
+  // Order of preference for each field: completion-stage answer wins,
+  // then SRMM memo, then RMM seed, then empty. Once the user types
+  // anything in the Significant Risk panel it's treated as the
+  // completion-stage answer and overrides SRMM.
   const effectiveAnswers: RiskAnswers = {
-    riskDescription: activeAnswers.riskDescription ?? activeRisk?.riskIdentified ?? '',
+    riskDescription: activeAnswers.riskDescription ?? activeSrmm.riskDescription ?? activeRisk?.riskIdentified ?? '',
     impactedAssertions: activeAnswers.impactedAssertions ?? (activeRisk?.assertions?.join(', ') || ''),
-    estimates: activeAnswers.estimates ?? '',
-    controlDeficiencies: activeAnswers.controlDeficiencies ?? '',
-    operatingEffectiveness: activeAnswers.operatingEffectiveness ?? '',
-    testingApproach: activeAnswers.testingApproach ?? '',
-    changesToRisk: activeAnswers.changesToRisk ?? '',
+    estimates: activeAnswers.estimates ?? activeSrmm.estimatesJudgements ?? '',
+    controlDeficiencies: activeAnswers.controlDeficiencies ?? activeSrmm.controlDeficiencies ?? '',
+    operatingEffectiveness: activeAnswers.operatingEffectiveness ?? activeSrmm.controlEffectiveness ?? '',
+    testingApproach: activeAnswers.testingApproach ?? srmmTestingApproach,
+    changesToRisk: activeAnswers.changesToRisk ?? activeSrmm.changesAssessedRisk ?? '',
     customTests: activeAnswers.customTests ?? [],
     auditExperts: activeAnswers.auditExperts ?? {},
     managementExpert: activeAnswers.managementExpert ?? {},
@@ -212,8 +295,16 @@ export function SignificantRiskPanel({ engagementId, userId, userName, teamMembe
     other: activeAnswers.other ?? {},
     standback: activeAnswers.standback ?? '',
     difficulties: activeAnswers.difficulties ?? '',
-    conclusion: activeAnswers.conclusion ?? '',
+    conclusion: activeAnswers.conclusion ?? activeSrmm.conclusion ?? '',
   };
+
+  // Helper to test whether a string field has user-visible content
+  // — used to drive the Section auto-expand behaviour. We treat
+  // SRMM fallbacks as "has content" so a section pre-populated
+  // from the planning memo also opens automatically.
+  const hasText = (s?: string | null) => !!(s && s.toString().trim().length > 0);
+  const hasArr = (a?: any[]) => Array.isArray(a) && a.length > 0;
+  const hasRecord = (r?: Record<string, string>) => !!r && Object.values(r).some(v => hasText(v));
 
   function updateAnswer<K extends keyof RiskAnswers>(key: K, value: RiskAnswers[K]) {
     if (!activeRiskId) return;
@@ -323,7 +414,12 @@ export function SignificantRiskPanel({ engagementId, userId, userName, teamMembe
       {saving && <div className="text-[10px] text-blue-500 mb-2 animate-pulse">Saving...</div>}
 
       {activeRisk && (
-        <div className="space-y-2">
+        // key=activeRiskId remounts the whole section list when the
+        // user switches between significant-risk tabs, so each Section
+        // re-evaluates its hasContent / defaultOpen logic for the
+        // newly-selected risk's data. Without this, the open/closed
+        // state from the previous risk would carry over.
+        <div key={activeRisk.id} className="space-y-2">
           {/* Risk header */}
           <div className="border border-red-200 bg-red-50/30 rounded-lg p-3 flex items-center justify-between">
             <div>
@@ -368,37 +464,32 @@ export function SignificantRiskPanel({ engagementId, userId, userName, teamMembe
 
           {/* Section 1: Risk Description */}
           <Section title="Risk description" defaultOpen>
-            <textarea value={effectiveAnswers.riskDescription || ''} onChange={e => updateAnswer('riskDescription', e.target.value)}
-              rows={3} className="w-full text-xs border border-slate-200 rounded px-2 py-1.5 resize-y"
-              placeholder="Describe the significant risk..." />
+            <AutoTextarea value={effectiveAnswers.riskDescription || ''} onChange={v => updateAnswer('riskDescription', v)}
+              minRows={3} placeholder="Describe the significant risk..." />
           </Section>
 
           {/* Section 2: Impacted Assertions */}
-          <Section title="Impacted assertions">
-            <textarea value={effectiveAnswers.impactedAssertions || ''} onChange={e => updateAnswer('impactedAssertions', e.target.value)}
-              rows={2} className="w-full text-xs border border-slate-200 rounded px-2 py-1.5 resize-y" />
+          <Section title="Impacted assertions" hasContent={hasText(effectiveAnswers.impactedAssertions)}>
+            <AutoTextarea value={effectiveAnswers.impactedAssertions || ''} onChange={v => updateAnswer('impactedAssertions', v)} minRows={2} />
           </Section>
 
           {/* Section 3: Significant Estimates and Judgements */}
-          <Section title="Significant estimates and judgements">
-            <textarea value={effectiveAnswers.estimates || ''} onChange={e => updateAnswer('estimates', e.target.value)}
-              rows={3} className="w-full text-xs border border-slate-200 rounded px-2 py-1.5 resize-y" />
+          <Section title="Significant estimates and judgements" hasContent={hasText(effectiveAnswers.estimates)}>
+            <AutoTextarea value={effectiveAnswers.estimates || ''} onChange={v => updateAnswer('estimates', v)} minRows={3} />
           </Section>
 
           {/* Section 4: Control deficiencies */}
-          <Section title="Significant deficiencies in design and implementation of controls addressing the significant risk">
-            <textarea value={effectiveAnswers.controlDeficiencies || ''} onChange={e => updateAnswer('controlDeficiencies', e.target.value)}
-              rows={3} className="w-full text-xs border border-slate-200 rounded px-2 py-1.5 resize-y" />
+          <Section title="Significant deficiencies in design and implementation of controls addressing the significant risk" hasContent={hasText(effectiveAnswers.controlDeficiencies)}>
+            <AutoTextarea value={effectiveAnswers.controlDeficiencies || ''} onChange={v => updateAnswer('controlDeficiencies', v)} minRows={3} />
           </Section>
 
           {/* Section 5: Operating effectiveness of controls */}
-          <Section title="Results of test of operating effectiveness of controls">
-            <textarea value={effectiveAnswers.operatingEffectiveness || ''} onChange={e => updateAnswer('operatingEffectiveness', e.target.value)}
-              rows={3} className="w-full text-xs border border-slate-200 rounded px-2 py-1.5 resize-y" />
+          <Section title="Results of test of operating effectiveness of controls" hasContent={hasText(effectiveAnswers.operatingEffectiveness)}>
+            <AutoTextarea value={effectiveAnswers.operatingEffectiveness || ''} onChange={v => updateAnswer('operatingEffectiveness', v)} minRows={3} />
           </Section>
 
           {/* Section 6: Testing approach */}
-          <Section title="Testing approach">
+          <Section title="Testing approach" hasContent={hasText(effectiveAnswers.testingApproach)}>
             <select value={effectiveAnswers.testingApproach || ''} onChange={e => updateAnswer('testingApproach', e.target.value as any)}
               className="w-full text-xs border border-slate-200 rounded px-2 py-1.5">
               <option value="">Select approach...</option>
@@ -409,14 +500,13 @@ export function SignificantRiskPanel({ engagementId, userId, userName, teamMembe
           </Section>
 
           {/* Section 7: Changes to Assessed Risk */}
-          <Section title="Changes to Assessed Risk">
+          <Section title="Changes to Assessed Risk" hasContent={hasText(effectiveAnswers.changesToRisk)}>
             <p className="text-[10px] text-slate-500 mb-1">Did audit team note any additional information that require reassessment of the identified significant risk?</p>
-            <textarea value={effectiveAnswers.changesToRisk || ''} onChange={e => updateAnswer('changesToRisk', e.target.value)}
-              rows={3} className="w-full text-xs border border-slate-200 rounded px-2 py-1.5 resize-y" />
+            <AutoTextarea value={effectiveAnswers.changesToRisk || ''} onChange={v => updateAnswer('changesToRisk', v)} minRows={3} />
           </Section>
 
           {/* Section 8: Procedures */}
-          <Section title="Procedures">
+          <Section title="Procedures" hasContent={relevantTests.length > 0 || hasArr(effectiveAnswers.customTests)}>
             <p className="text-[10px] text-slate-500 mb-2">Tests from the audit plan relating to this significant risk and their outcome</p>
             <table className="w-full text-[10px] border border-slate-200 rounded overflow-hidden mb-2">
               <thead><tr className="bg-slate-100">
@@ -479,7 +569,7 @@ export function SignificantRiskPanel({ engagementId, userId, userName, teamMembe
           </Section>
 
           {/* Section 9: Audit experts and specialists */}
-          <Section title="Audit experts and specialists">
+          <Section title="Audit experts and specialists" hasContent={hasRecord(effectiveAnswers.auditExperts as Record<string, string>)}>
             <table className="w-full text-[10px] border border-slate-200 rounded overflow-hidden">
               <tbody>
                 {AUDIT_EXPERT_QUESTIONS.map((q, idx) => (
@@ -497,7 +587,7 @@ export function SignificantRiskPanel({ engagementId, userId, userName, teamMembe
           </Section>
 
           {/* Section 10: Management expert */}
-          <Section title="Management expert">
+          <Section title="Management expert" hasContent={hasRecord(effectiveAnswers.managementExpert as Record<string, string>)}>
             <table className="w-full text-[10px] border border-slate-200 rounded overflow-hidden">
               <tbody>
                 {MANAGEMENT_EXPERT_QUESTIONS.map((q, idx) => (
@@ -515,14 +605,13 @@ export function SignificantRiskPanel({ engagementId, userId, userName, teamMembe
           </Section>
 
           {/* Section 11: Professional skepticism */}
-          <Section title="Professional skepticism">
+          <Section title="Professional skepticism" hasContent={hasText(effectiveAnswers.professionalSkepticism)}>
             <p className="text-[10px] text-slate-500 mb-1">Explain how audit team has exercised professional skepticism in relation to the audit of significant risk</p>
-            <textarea value={effectiveAnswers.professionalSkepticism || ''} onChange={e => updateAnswer('professionalSkepticism', e.target.value)}
-              rows={4} className="w-full text-xs border border-slate-200 rounded px-2 py-1.5 resize-y" />
+            <AutoTextarea value={effectiveAnswers.professionalSkepticism || ''} onChange={v => updateAnswer('professionalSkepticism', v)} minRows={4} />
           </Section>
 
           {/* Section 12: Summary of challenges to management */}
-          <Section title="Summary of challenges to management">
+          <Section title="Summary of challenges to management" hasContent={hasArr(effectiveAnswers.challenges)}>
             <p className="text-[10px] text-slate-500 mb-2">Summarise the challenges made by audit team to management, management responses, and audit team\u2019s conclusion</p>
             <table className="w-full text-[10px] border border-slate-200 rounded overflow-hidden mb-2">
               <thead><tr className="bg-slate-100">
@@ -572,7 +661,7 @@ export function SignificantRiskPanel({ engagementId, userId, userName, teamMembe
           </Section>
 
           {/* Section 13: Consultation */}
-          <Section title="Consultation">
+          <Section title="Consultation" hasContent={hasRecord(effectiveAnswers.consultation as Record<string, string>)}>
             <p className="text-[10px] text-slate-500 mb-2">Did the audit team identify any difficult or contentious matters requiring consultation?</p>
             <table className="w-full text-[10px] border border-slate-200 rounded overflow-hidden">
               <tbody>
@@ -591,21 +680,19 @@ export function SignificantRiskPanel({ engagementId, userId, userName, teamMembe
           </Section>
 
           {/* Section 14: Summary of discussion with Audit Partner / RI */}
-          <Section title="Summary of discussion with Audit Partner / RI">
+          <Section title="Summary of discussion with Audit Partner / RI" hasContent={hasText(effectiveAnswers.discussionRI)}>
             <p className="text-[10px] text-slate-500 mb-1">Summarise discussion with audit partner/RI including details of challenges raised and how they were addressed</p>
-            <textarea value={effectiveAnswers.discussionRI || ''} onChange={e => updateAnswer('discussionRI', e.target.value)}
-              rows={4} className="w-full text-xs border border-slate-200 rounded px-2 py-1.5 resize-y" />
+            <AutoTextarea value={effectiveAnswers.discussionRI || ''} onChange={v => updateAnswer('discussionRI', v)} minRows={4} />
           </Section>
 
           {/* Section 15: Summary of Discussion with EQR */}
-          <Section title="Summary of Discussion with EQR">
+          <Section title="Summary of Discussion with EQR" hasContent={hasText(effectiveAnswers.discussionEQR)}>
             <p className="text-[10px] text-slate-500 mb-1">Summarise discussion with EQR including challenges raised and how they were addressed</p>
-            <textarea value={effectiveAnswers.discussionEQR || ''} onChange={e => updateAnswer('discussionEQR', e.target.value)}
-              rows={4} className="w-full text-xs border border-slate-200 rounded px-2 py-1.5 resize-y" />
+            <AutoTextarea value={effectiveAnswers.discussionEQR || ''} onChange={v => updateAnswer('discussionEQR', v)} minRows={4} />
           </Section>
 
           {/* Section 16: Misstatements */}
-          <Section title="Misstatements">
+          <Section title="Misstatements" hasContent={hasArr(effectiveAnswers.misstatements)}>
             <p className="text-[10px] text-slate-500 mb-2">List misstatements identified by the audit team with respect to the identified significant risk</p>
             <table className="w-full text-[10px] border border-slate-200 rounded overflow-hidden mb-2">
               <thead><tr className="bg-slate-100">
@@ -688,7 +775,7 @@ export function SignificantRiskPanel({ engagementId, userId, userName, teamMembe
           </Section>
 
           {/* Section 17: Other */}
-          <Section title="Other">
+          <Section title="Other" hasContent={hasRecord(effectiveAnswers.other as Record<string, string>)}>
             <table className="w-full text-[10px] border border-slate-200 rounded overflow-hidden">
               <tbody>
                 {OTHER_QUESTIONS.map((q, idx) => (
@@ -710,19 +797,17 @@ export function SignificantRiskPanel({ engagementId, userId, userName, teamMembe
           </Section>
 
           {/* Section 18: Standback assessment */}
-          <Section title="Standback assessment">
+          <Section title="Standback assessment" hasContent={hasText(effectiveAnswers.standback)}>
             <p className="text-[10px] text-slate-500 mb-1">
               Audit team is required to perform standback assessment to confirm that the procedures performed, audit evidence reviewed, and conclusions reached in response to identified significant risk is appropriate.
             </p>
-            <textarea value={effectiveAnswers.standback || ''} onChange={e => updateAnswer('standback', e.target.value)}
-              rows={4} className="w-full text-xs border border-slate-200 rounded px-2 py-1.5 resize-y" />
+            <AutoTextarea value={effectiveAnswers.standback || ''} onChange={v => updateAnswer('standback', v)} minRows={4} />
           </Section>
 
           {/* Section 19: Difficulties */}
-          <Section title="Difficulties">
+          <Section title="Difficulties" hasContent={hasText(effectiveAnswers.difficulties)}>
             <p className="text-[10px] text-slate-500 mb-1">Provide details of difficult circumstances (if any) that audit team faced to obtain sufficient appropriate evidence</p>
-            <textarea value={effectiveAnswers.difficulties || ''} onChange={e => updateAnswer('difficulties', e.target.value)}
-              rows={3} className="w-full text-xs border border-slate-200 rounded px-2 py-1.5 resize-y" />
+            <AutoTextarea value={effectiveAnswers.difficulties || ''} onChange={v => updateAnswer('difficulties', v)} minRows={3} />
           </Section>
 
           {/* Section 20: Conclusion */}
@@ -730,8 +815,7 @@ export function SignificantRiskPanel({ engagementId, userId, userName, teamMembe
             <p className="text-[10px] text-slate-500 mb-1">
               Audit team to confirm if all planned procedures have been performed, sufficient appropriate evidence is obtained and that there is no risk of material misstatement due to identified significant risk
             </p>
-            <textarea value={effectiveAnswers.conclusion || ''} onChange={e => updateAnswer('conclusion', e.target.value)}
-              rows={4} className="w-full text-xs border border-slate-200 rounded px-2 py-1.5 resize-y" />
+            <AutoTextarea value={effectiveAnswers.conclusion || ''} onChange={v => updateAnswer('conclusion', v)} minRows={4} />
           </Section>
         </div>
       )}

@@ -4,6 +4,7 @@ import { useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Save, Loader2 } from 'lucide-react';
 import type { ToolAvailability } from '@/types/methodology';
+import { AUDIT_TOOLS, AUDIT_TOOLS_GROUP } from '@/lib/audit-tools';
 
 interface ToolSetting {
   id: string;
@@ -64,9 +65,44 @@ const TOOL_METHODS = [
       'Manual Review',
     ],
   },
+  // Plan-Customiser Audit Tools — every tool the auditor sees in
+  // the Plan Customiser dropdown is gated by its row here. Marking
+  // a row Unavailable hides it from the dropdown for this firm
+  // (use this for tools the firm hasn't purchased); Discretion
+  // shows it but flags that RI approval is expected; Available
+  // makes it freely deployable. Sourced from lib/audit-tools so
+  // the admin grid + the modal share one definition.
+  {
+    tool: AUDIT_TOOLS_GROUP,
+    methods: AUDIT_TOOLS.map(t => t.label),
+  },
+  // Calculators — firm-licensed working-paper calculators that
+  // appear in the relevant FS Line workspaces. Same Unavailable /
+  // Discretion / Available semantics as the Audit Tools group
+  // above: Unavailable hides the calculator entirely (firm
+  // hasn't purchased), Discretion gates it behind RI approval,
+  // Available exposes it to every team member.
+  {
+    tool: 'Calculators',
+    methods: [
+      'VAT Reconciliation',
+      'Loan Calculator',
+      'Loan Costs Amortisation',
+      'Tax Calculator',
+      'Deferred Income',
+    ],
+  },
 ];
 
-const AUDIT_TYPES = ['ALL', 'SME', 'PIE', 'SME_CONTROLS', 'PIE_CONTROLS'];
+// Single audit-type bucket — the per-type tabs (SME / PIE /
+// SME_CONTROLS / PIE_CONTROLS) were removed because the firm
+// admin's purchasing decision applies across every engagement
+// type. We persist as auditType='ALL' on the wire so the existing
+// MethodologyToolSetting unique key (firmId, toolName, methodName,
+// auditType) still works without a schema change. Old per-type
+// rows from before this change remain in the database but are no
+// longer read or written from this page.
+const AUDIT_TYPE_KEY = 'ALL';
 const AVAILABILITY_OPTIONS: { value: ToolAvailability; label: string }[] = [
   { value: 'unavailable', label: 'Unavailable' },
   { value: 'discretion', label: 'Discretion' },
@@ -76,6 +112,11 @@ const AVAILABILITY_OPTIONS: { value: ToolAvailability; label: string }[] = [
 export function ToolsSettingsClient({ firmId, initialSettings }: Props) {
   const [settings, setSettings] = useState<Record<string, ToolAvailability>>(() => {
     const map: Record<string, ToolAvailability> = {};
+    // On hydrate we accept whatever's in the DB, but the UI only
+    // surfaces and writes the 'ALL' bucket from now on. If a firm
+    // had legacy per-type rows, those stay untouched — but the
+    // grid below shows the ALL row only, so the admin sees one
+    // consistent state per (tool, method).
     for (const s of initialSettings) {
       map[`${s.toolName}|${s.methodName}|${s.auditType}`] = s.availability as ToolAvailability;
     }
@@ -83,18 +124,17 @@ export function ToolsSettingsClient({ firmId, initialSettings }: Props) {
   });
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
-  const [activeAuditType, setActiveAuditType] = useState('ALL');
 
-  const getKey = (tool: string, method: string, auditType: string) =>
-    `${tool}|${method}|${auditType}`;
+  const getKey = (tool: string, method: string) =>
+    `${tool}|${method}|${AUDIT_TYPE_KEY}`;
 
   const getValue = (tool: string, method: string): ToolAvailability =>
-    settings[getKey(tool, method, activeAuditType)] || 'available';
+    settings[getKey(tool, method)] || 'available';
 
   const handleChange = (tool: string, method: string, value: ToolAvailability) => {
     setSettings((prev) => ({
       ...prev,
-      [getKey(tool, method, activeAuditType)]: value,
+      [getKey(tool, method)]: value,
     }));
     setSaved(false);
   };
@@ -102,10 +142,18 @@ export function ToolsSettingsClient({ firmId, initialSettings }: Props) {
   const handleSave = async () => {
     setSaving(true);
     try {
+      // Only push the rows we manage from this page (auditType=ALL).
+      // Legacy per-type rows in the DB are intentionally not sent —
+      // the PUT endpoint upserts on the (firm, tool, method, type)
+      // unique key, so untouched rows stay where they are.
+      const payload: Record<string, ToolAvailability> = {};
+      for (const [k, v] of Object.entries(settings)) {
+        if (k.endsWith(`|${AUDIT_TYPE_KEY}`)) payload[k] = v;
+      }
       await fetch('/api/methodology-admin/tools', {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ firmId, settings }),
+        body: JSON.stringify({ firmId, settings: payload }),
       });
       setSaved(true);
       setTimeout(() => setSaved(false), 3000);
@@ -118,25 +166,11 @@ export function ToolsSettingsClient({ firmId, initialSettings }: Props) {
 
   return (
     <div className="space-y-6">
-      {/* Audit Type Tabs */}
-      <div className="flex space-x-2 border-b pb-2">
-        {AUDIT_TYPES.map((at) => (
-          <button
-            key={at}
-            onClick={() => setActiveAuditType(at)}
-            className={`px-4 py-2 text-sm font-medium rounded-t-md transition-colors ${
-              activeAuditType === at
-                ? 'bg-blue-600 text-white'
-                : 'text-slate-600 hover:bg-slate-100'
-            }`}
-          >
-            {at === 'ALL' ? 'All Types' : at.replace('_', ' ')}
-          </button>
-        ))}
-      </div>
-
-      {/* Save button */}
-      <div className="flex justify-end">
+      {/* Save button + applies-to-all hint */}
+      <div className="flex justify-between items-center">
+        <p className="text-xs text-slate-500">
+          Settings here apply to <span className="font-semibold">every audit type</span>. When a tool is marked Available, the firm has access to it on every engagement.
+        </p>
         <Button onClick={handleSave} disabled={saving} className="bg-blue-600 hover:bg-blue-700">
           {saving ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Save className="h-4 w-4 mr-2" />}
           {saving ? 'Saving...' : saved ? 'Saved' : 'Save'}

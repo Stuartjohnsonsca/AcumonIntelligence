@@ -74,6 +74,14 @@ export function WalkthroughsTab({ engagementId, userRole }: Props) {
       }).catch(() => {});
   }, [engagementId]);
 
+  // Latest-processes ref so the nav-handler effects below can read
+  // the current value without re-subscribing each time `processes`
+  // is replaced. Re-subscribing on every load was creating a window
+  // where the unsubscribe callbacks ran inline with parent renders
+  // and contributed to the React #185 update-depth crash.
+  const processesRef = useRef(processes);
+  useEffect(() => { processesRef.current = processes; }, [processes]);
+
   // ── Engagement-nav wiring ───────────────────────────────────────
   // Push our current sub-tab into the registry so things like the RI
   // Matters modal can capture "user was on Walkthroughs › Sales" when
@@ -81,7 +89,7 @@ export function WalkthroughsTab({ engagementId, userRole }: Props) {
   useEffect(() => {
     const subKey = activeSubProcess || activeTab;
     const subLabel = (() => {
-      const parent = processes.find(p => p.key === activeTab);
+      const parent = processesRef.current.find(p => p.key === activeTab);
       if (!parent) return subKey;
       if (activeSubProcess) {
         const child = parent.children?.find(c => c.key === activeSubProcess);
@@ -90,42 +98,43 @@ export function WalkthroughsTab({ engagementId, userRole }: Props) {
       return `Walkthroughs › ${parent.label}`;
     })();
     setCurrentLocation({ tab: 'walkthroughs', subTab: subKey, label: subLabel });
-  }, [activeTab, activeSubProcess, processes]);
+  }, [activeTab, activeSubProcess]);
 
   // On mount, claim any pending nav target for this tab. Lets a back-
   // link from another part of the app drop the user straight into the
   // right sub-process when EngagementTabs has just switched the top-
-  // level tab to walkthroughs.
+  // level tab to walkthroughs. Runs once on mount (no `processes`
+  // dep) — when this fires before the async load, the call is a
+  // no-op and a separate effect below re-tries once processes
+  // arrive.
   useEffect(() => {
     const claimed = consumePendingNav(loc => loc.tab === 'walkthroughs');
-    if (claimed?.subTab) {
-      // The subTab string may name either a parent process or a child.
-      // Try child match first, fall back to parent.
-      let parent: ProcessTab | undefined;
-      let child: ProcessTab | undefined;
-      for (const p of processes) {
-        if (p.key === claimed.subTab) { parent = p; break; }
-        const c = p.children?.find(cc => cc.key === claimed.subTab);
-        if (c) { parent = p; child = c; break; }
-      }
-      if (parent) {
-        setActiveTab(parent.key);
-        setActiveSubProcess(child ? child.key : null);
-      }
+    if (!claimed?.subTab) return;
+    let parent: ProcessTab | undefined;
+    let child: ProcessTab | undefined;
+    for (const p of processesRef.current) {
+      if (p.key === claimed.subTab) { parent = p; break; }
+      const c = p.children?.find(cc => cc.key === claimed.subTab);
+      if (c) { parent = p; child = c; break; }
     }
-  // Run once when processes are loaded — claiming a pending target is
-  // a one-shot, and processes are stable for the rest of the lifetime.
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [processes]);
+    if (parent) {
+      setActiveTab(parent.key);
+      setActiveSubProcess(child ? child.key : null);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
-  // Live nav subscription for when the user is already on this tab and
-  // a back-link targets a different sub-process within walkthroughs.
+  // Live nav subscription for when the user is already on this tab
+  // and a back-link targets a different sub-process. Uses
+  // processesRef so we only register the subscription once and
+  // never re-subscribe on processes load — re-subscribing was part
+  // of the cascade that triggered the React update-depth crash.
   useEffect(() => {
     const unsub = subscribeNav((target) => {
       if (target.tab !== 'walkthroughs' || !target.subTab) return;
       let parent: ProcessTab | undefined;
       let child: ProcessTab | undefined;
-      for (const p of processes) {
+      for (const p of processesRef.current) {
         if (p.key === target.subTab) { parent = p; break; }
         const c = p.children?.find(cc => cc.key === target.subTab);
         if (c) { parent = p; child = c; break; }
@@ -136,7 +145,7 @@ export function WalkthroughsTab({ engagementId, userRole }: Props) {
       }
     });
     return unsub;
-  }, [processes]);
+  }, []);
 
   // Flatten process tree to get all keys (parents + children)
   function getAllProcessKeys(procs: ProcessTab[]): { key: string }[] {
@@ -397,6 +406,33 @@ function WalkthroughProcess({ engagementId, processKey, processLabel, userRole, 
   const [narrative, setNarrative] = useState('');
   const [controls, setControls] = useState<Control[]>([]);
   const [status, setStatus] = useState<ProcessStatus>({ stage: 'draft' });
+  // Reviewer-visible "user touched this field" markers — drive the
+  // red dashed border around any field whose contents diverge from
+  // whatever the AI / matrix import last produced. Keys are field
+  // ids (`narrative`, `control-{idx}-description` etc.). Persisted
+  // alongside the narrative payload so the marker survives reloads.
+  const [userEditedFields, setUserEditedFields] = useState<Set<string>>(new Set());
+  const markFieldEdited = useCallback((fieldId: string) => {
+    setUserEditedFields(prev => {
+      if (prev.has(fieldId)) return prev;
+      const next = new Set(prev);
+      next.add(fieldId);
+      return next;
+    });
+  }, []);
+  const clearEditedField = useCallback((fieldId: string) => {
+    setUserEditedFields(prev => {
+      if (!prev.has(fieldId)) return prev;
+      const next = new Set(prev);
+      next.delete(fieldId);
+      return next;
+    });
+  }, []);
+  // Reviewer/RI highlights — start/end character offsets within the
+  // narrative that a senior wants the next reader to focus on.
+  // Persisted alongside the narrative so the highlight is durable.
+  type Highlight = { id: string; start: number; end: number; colour: 'yellow' | 'green' | 'pink' | 'blue'; note?: string };
+  const [highlights, setHighlights] = useState<Highlight[]>([]);
   const [saving, setSaving] = useState(false);
   const [selectedEvidence, setSelectedEvidence] = useState<Set<string>>(new Set());
   const [annotatingEvidenceId, setAnnotatingEvidenceId] = useState<string | null>(null);
@@ -426,6 +462,19 @@ function WalkthroughProcess({ engagementId, processKey, processLabel, userRole, 
       const answers = content?.data || content?.answers || {};
       setNarrative(answers.narrative || '');
       setControls(answers.controls || []);
+      // Re-hydrate edit-after-AI markers + reviewer highlights.
+      // userEditedFields persists as a string[] on the wire (Sets
+      // aren't JSON-friendly), highlights as an array.
+      if (Array.isArray(answers.userEditedFields)) {
+        setUserEditedFields(new Set<string>(answers.userEditedFields));
+      } else {
+        setUserEditedFields(new Set());
+      }
+      if (Array.isArray(answers.highlights)) {
+        setHighlights(answers.highlights as Highlight[]);
+      } else {
+        setHighlights([]);
+      }
 
       const st = statusData?.data || statusData?.answers || {};
       if (st.stage) {
@@ -459,10 +508,18 @@ function WalkthroughProcess({ engagementId, processKey, processLabel, userRole, 
     try {
       await fetch(`/api/engagements/${engagementId}/permanent-file`, {
         method: 'PUT', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ sectionKey: `walkthrough_${processKey}`, data: { narrative, controls } }),
+        body: JSON.stringify({
+          sectionKey: `walkthrough_${processKey}`,
+          data: {
+            narrative,
+            controls,
+            userEditedFields: Array.from(userEditedFields),
+            highlights,
+          },
+        }),
       });
     } catch {} finally { setSaving(false); }
-  }, [engagementId, processKey, narrative, controls]);
+  }, [engagementId, processKey, narrative, controls, userEditedFields, highlights]);
 
   async function saveStatus(newStatus: Partial<ProcessStatus>) {
     const updated = { ...status, ...newStatus };
@@ -547,6 +604,9 @@ function WalkthroughProcess({ engagementId, processKey, processLabel, userRole, 
         // If extracted narrative was returned, update the narrative field
         if (data.extractedNarrative) {
           setNarrative(prev => prev ? `${prev}\n\n--- Extracted from documents ---\n${data.extractedNarrative}` : data.extractedNarrative);
+          // AI just rewrote / extended this field — reset the
+          // user-edit marker. The next manual edit will re-apply it.
+          clearEditedField('narrative');
           await save();
         }
         await saveStatus({ stage: 'flowchart_generated', flowchart: data.steps || [] });
@@ -593,6 +653,7 @@ function WalkthroughProcess({ engagementId, processKey, processLabel, userRole, 
           const sumData = await sumRes.json();
           if (sumData.narrative) {
             setNarrative(prev => prev ? `${prev}\n\n--- From Teams call: ${meeting.subject || 'Walkthrough'} ---\n${sumData.narrative}` : sumData.narrative);
+            clearEditedField('narrative');
             await save();
           }
         }
@@ -678,6 +739,67 @@ function WalkthroughProcess({ engagementId, processKey, processLabel, userRole, 
 
   const matrixRef = useRef<WalkthroughMatrixSectionHandle>(null);
   const uploadDocRef = useRef<HTMLInputElement>(null);
+  const narrativeRef = useRef<HTMLTextAreaElement>(null);
+
+  // Apply a highlight to whatever the auditor has selected inside
+  // the narrative textarea. Stored as start/end offsets so the
+  // highlight survives further edits and reads cleanly back into the
+  // reviewer panel below the textarea. Selecting nothing is a no-op
+  // (with a quiet alert so first-time users notice).
+  function addHighlight(colour: 'yellow' | 'green' | 'pink' | 'blue') {
+    const ta = narrativeRef.current;
+    if (!ta) return;
+    const start = ta.selectionStart;
+    const end = ta.selectionEnd;
+    if (start === end) { alert('Select some text in the narrative first.'); return; }
+    const id = `h-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+    const next = [...highlights, { id, start, end, colour }];
+    setHighlights(next);
+    persistNarrativeAside(next, undefined);
+  }
+  function removeHighlight(id: string) {
+    const next = highlights.filter(h => h.id !== id);
+    setHighlights(next);
+    persistNarrativeAside(next, undefined);
+  }
+  // Persist highlights / edit markers without waiting on a manual
+  // Save click. Narrative + controls are still part of the same
+  // permanent-file section so we send them along with whichever of
+  // the side payloads changed.
+  async function persistNarrativeAside(
+    nextHighlights?: Highlight[],
+    nextEdited?: Set<string>,
+  ) {
+    try {
+      await fetch(`/api/engagements/${engagementId}/permanent-file`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          sectionKey: `walkthrough_${processKey}`,
+          data: {
+            narrative,
+            controls,
+            userEditedFields: Array.from(nextEdited || userEditedFields),
+            highlights: nextHighlights || highlights,
+          },
+        }),
+      });
+    } catch {}
+  }
+  // Tailwind class lookup for highlight colours — kept here so
+  // the toolbar buttons + panel stay in sync.
+  const HIGHLIGHT_BG: Record<Highlight['colour'], string> = {
+    yellow: 'bg-yellow-200',
+    green:  'bg-green-200',
+    pink:   'bg-pink-200',
+    blue:   'bg-blue-200',
+  };
+  const HIGHLIGHT_BORDER: Record<Highlight['colour'], string> = {
+    yellow: 'border-yellow-400',
+    green:  'border-green-400',
+    pink:   'border-pink-400',
+    blue:   'border-blue-400',
+  };
 
   // Generate a flowchart from the parsed matrix narrative (and optional evidence files),
   // persist it, and advance the stage. Used by both Import from Excel and Upload Process Document.
@@ -700,6 +822,7 @@ function WalkthroughProcess({ engagementId, processKey, processLabel, userRole, 
       if (data.extractedNarrative) {
         const merged = opts.narrative ? `${opts.narrative}\n\n--- Extracted from document ---\n${data.extractedNarrative}` : data.extractedNarrative;
         setNarrative(merged);
+        clearEditedField('narrative');
       }
       await saveStatus({ stage: 'flowchart_generated', flowchart: data.steps || [] });
       return true;
@@ -718,6 +841,10 @@ function WalkthroughProcess({ engagementId, processKey, processLabel, userRole, 
     const nextControls = c.length ? [...controls, ...c] : controls;
     setNarrative(nextNarrative);
     setControls(nextControls);
+    // Excel matrix import wholesale-replaces the narrative when one
+    // is provided — clear the user-edit marker so the dashed border
+    // disappears until the auditor re-tweaks the imported text.
+    if (n) clearEditedField('narrative');
     try {
       await fetch(`/api/engagements/${engagementId}/permanent-file`, {
         method: 'PUT', headers: { 'Content-Type': 'application/json' },
@@ -884,13 +1011,74 @@ function WalkthroughProcess({ engagementId, processKey, processLabel, userRole, 
           {sectionOpen.narrative ? <ChevronDown className="h-3.5 w-3.5 text-slate-400" /> : <ChevronRight className="h-3.5 w-3.5 text-slate-400" />}
           <FileText className="h-3.5 w-3.5 text-blue-500" />
           <span className="text-xs font-semibold text-slate-700">{processLabel} — Narrative</span>
+          {userEditedFields.has('narrative') && (
+            <span
+              className="ml-1 text-[8px] font-semibold px-1 py-0.5 rounded text-red-600 bg-red-50 border border-red-300 border-dashed"
+              title="Manually edited since the last AI generation — review the wording"
+            >
+              edited
+            </span>
+          )}
         </button>
         {sectionOpen.narrative && (
-          <div className="p-3">
-            <p className="text-[10px] text-slate-400 mb-2">Document the process from initiation to recording. Include key personnel, systems, documents, and transaction flow.</p>
-            <textarea value={narrative} onChange={e => setNarrative(e.target.value)}
+          <div className="p-3 space-y-2">
+            <p className="text-[10px] text-slate-400">Document the process from initiation to recording. Include key personnel, systems, documents, and transaction flow.</p>
+            {/* Highlight toolbar — captures whatever the auditor
+                has selected in the textarea and stores it as a
+                coloured passage for reviewer/RI to inspect at a
+                glance. Acts only on the live selection; clears
+                when AI rewrites the narrative since offsets would
+                no longer match. */}
+            <div className="flex items-center gap-1 flex-wrap">
+              <span className="text-[9px] text-slate-500 mr-1">Highlight selection:</span>
+              {(['yellow', 'green', 'pink', 'blue'] as const).map(col => (
+                <button
+                  key={col}
+                  onClick={() => addHighlight(col)}
+                  className={`w-4 h-4 rounded ${HIGHLIGHT_BG[col]} border ${HIGHLIGHT_BORDER[col]} hover:scale-110 transition-transform`}
+                  title={`Mark selected text in ${col} for the reviewer`}
+                />
+              ))}
+              {highlights.length > 0 && (
+                <span className="text-[9px] text-slate-400 ml-2">{highlights.length} highlight{highlights.length === 1 ? '' : 's'}</span>
+              )}
+            </div>
+            <textarea
+              ref={narrativeRef}
+              value={narrative}
+              onChange={e => { setNarrative(e.target.value); markFieldEdited('narrative'); }}
               placeholder={`1. How are transactions initiated?\n2. What authorisation is required?\n3. How are transactions recorded?\n4. What reconciliations are performed?\n5. What systems are used?`}
-              className="w-full border border-slate-200 rounded-lg px-3 py-2 text-xs min-h-[150px] focus:outline-none focus:border-blue-400 resize-y" />
+              className={`w-full rounded-lg px-3 py-2 text-xs min-h-[150px] focus:outline-none focus:border-blue-400 resize-y ${
+                userEditedFields.has('narrative')
+                  ? 'border-2 border-dashed border-red-400'
+                  : 'border border-slate-200'
+              }`}
+              title={userEditedFields.has('narrative') ? 'Edited after AI generation — reviewer should re-read' : undefined}
+            />
+            {/* Reviewer panel — shows each highlighted passage in
+                its colour so a senior reviewer can scan their RI's
+                marked-up sections without rereading the whole
+                narrative. Click the × to clear a highlight. */}
+            {highlights.length > 0 && (
+              <div className="border border-slate-200 rounded-lg p-2 space-y-1">
+                <p className="text-[9px] font-semibold text-slate-500 uppercase tracking-wide">For reviewer · highlighted passages</p>
+                {highlights
+                  .map(h => ({ ...h, snippet: narrative.slice(h.start, h.end) }))
+                  .filter(h => h.snippet.length > 0)
+                  .map(h => (
+                    <div key={h.id} className={`flex items-start gap-2 px-2 py-1 rounded text-[10px] ${HIGHLIGHT_BG[h.colour]}`}>
+                      <span className="flex-1 text-slate-800 whitespace-pre-wrap break-words">{h.snippet}</span>
+                      <button
+                        onClick={() => removeHighlight(h.id)}
+                        className="text-slate-500 hover:text-red-600 flex-shrink-0"
+                        title="Remove highlight"
+                      >
+                        <X className="h-3 w-3" />
+                      </button>
+                    </div>
+                  ))}
+              </div>
+            )}
           </div>
         )}
       </div>
@@ -954,7 +1142,14 @@ function WalkthroughProcess({ engagementId, processKey, processLabel, userRole, 
         {sectionOpen.flowchart && (
           <div className="p-3">
             <WalkthroughFlowEditor
-              key={`fc-${(status.flowchart || []).length}-${status.stage}`}
+              // Key only flips between "no chart yet" and "chart
+              // exists" so a freshly-generated flowchart force-
+              // remounts the editor and seeds the new steps. We
+              // deliberately don't include `flowchart.length` —
+              // every user edit changes that, which would remount
+              // the editor mid-drag and contributed to the
+              // previous infinite-render crash.
+              key={`fc-${processKey}-${(status.flowchart || []).length === 0 ? 'empty' : 'loaded'}`}
               steps={status.flowchart || []}
               userRole={userRole}
               engagementId={engagementId}

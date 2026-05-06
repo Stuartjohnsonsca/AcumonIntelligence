@@ -267,6 +267,12 @@ function StructuredScheduleTab({ engagementId, templateType, title, showAutoComp
   const [answers, setAnswers] = useState<Record<string, any>>({});
   const [answerSources, setAnswerSources] = useState<Record<string, AnswerSource>>({});
   const [signOffs, setSignOffs] = useState<Record<string, any>>({});
+  // Cells where the user has hand-edited an AI-populated value.
+  // Rendered with a red dashed border so reviewers can see at a
+  // glance which AI suggestions were modified by the auditor (vs.
+  // accepted as-is or written from scratch). Persisted alongside
+  // answers/sources so the marker survives reloads.
+  const [editedAfterAi, setEditedAfterAi] = useState<Set<string>>(new Set());
   const [loading, setLoading] = useState(true);
   const [autoCompleting, setAutoCompleting] = useState(false);
   const [saveTimeout, setSaveTimeout] = useState<NodeJS.Timeout | null>(null);
@@ -333,6 +339,10 @@ function StructuredScheduleTab({ engagementId, templateType, title, showAutoComp
             // User-added sections + their rows persist in the same payload.
             if (saved.customSections) setCustomSections(saved.customSections);
             if (saved.customQuestions) setCustomQuestions(saved.customQuestions);
+            // editedAfterAi serialises as a string[] (Sets aren't JSON-
+            // friendly) so we re-hydrate into a Set here. Backwards
+            // compatible — older saves don't carry the field.
+            if (Array.isArray(saved.editedAfterAi)) setEditedAfterAi(new Set<string>(saved.editedAfterAi));
           }
         } catch {}
       } catch {} finally { setLoading(false); }
@@ -345,12 +355,22 @@ function StructuredScheduleTab({ engagementId, templateType, title, showAutoComp
     setAnswers(prev => ({ ...prev, [key]: value }));
     // Manual edit removes any auto-complete source marker for this cell
     let nextSources = answerSources;
+    let nextEdited = editedAfterAi;
     if (answerSources[key]) {
       nextSources = { ...answerSources };
       delete nextSources[key];
       setAnswerSources(nextSources);
+      // Cell was AI-populated and is now being edited by hand —
+      // mark it so the red dashed border surfaces the override
+      // to the reviewer. Skip if the new value is empty (likely
+      // a user-clearing of the AI output, not a reword).
+      if (value.trim().length > 0) {
+        nextEdited = new Set(editedAfterAi);
+        nextEdited.add(key);
+        setEditedAfterAi(nextEdited);
+      }
     }
-    debounceSave({ ...answers, [key]: value }, undefined, nextSources);
+    debounceSave({ ...answers, [key]: value }, undefined, nextSources, undefined, undefined, nextEdited);
   }
 
   function debounceSave(
@@ -359,10 +379,12 @@ function StructuredScheduleTab({ engagementId, templateType, title, showAutoComp
     srcs?: Record<string, AnswerSource>,
     cs?: Record<string, TemplateSectionMeta & { userAdded?: boolean; createdByUserId?: string }>,
     cq?: Record<string, TemplateQuestion[]>,
+    edited?: Set<string>,
   ) {
     if (saveTimeout) clearTimeout(saveTimeout);
     const t = setTimeout(async () => {
       try {
+        const editedToPersist = edited || editedAfterAi;
         await fetch(`/api/engagements/${engagementId}/permanent-file`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -375,6 +397,7 @@ function StructuredScheduleTab({ engagementId, templateType, title, showAutoComp
               answerSources: srcs || answerSources,
               customSections: cs || customSections,
               customQuestions: cq || customQuestions,
+              editedAfterAi: Array.from(editedToPersist),
             } },
           }),
         });
@@ -623,7 +646,16 @@ function StructuredScheduleTab({ engagementId, templateType, title, showAutoComp
         nextSources = { ...answerSources, [cellKey]: { kind: 'ref', tab: r.tab, anchor: r.anchor, label: r.label || r.tab } };
         setAnswerSources(nextSources);
       }
-      debounceSave(nextAnswers, undefined, nextSources);
+      // AI re-populated this cell — clear the "edited after AI" mark
+      // so the red dashed border goes away. The next manual edit will
+      // re-apply it.
+      let nextEdited = editedAfterAi;
+      if (editedAfterAi.has(cellKey)) {
+        nextEdited = new Set(editedAfterAi);
+        nextEdited.delete(cellKey);
+        setEditedAfterAi(nextEdited);
+      }
+      debounceSave(nextAnswers, undefined, nextSources, undefined, undefined, nextEdited);
       return true;
     } catch {
       return false;
@@ -945,6 +977,12 @@ function StructuredScheduleTab({ engagementId, templateType, title, showAutoComp
                       {headers.slice(1).map((_, ci) => {
                         const cellKey = `${q.id}_col${ci + 1}`;
                         const cellSource = answerSources[cellKey];
+                        const wasEditedAfterAi = editedAfterAi.has(cellKey);
+                        // Red dashed border = "AI-populated then edited
+                        // by a user". Surfaces the override to reviewers
+                        // without obscuring the field. Takes precedence
+                        // over the yellow AI background.
+                        const editedClass = wasEditedAfterAi ? 'border-2 border-dashed border-red-400' : '';
                         return (
                           <td key={ci} className="px-1 py-0.5">
                             {q.isBold ? null : (
@@ -954,7 +992,8 @@ function StructuredScheduleTab({ engagementId, templateType, title, showAutoComp
                                     <select
                                       value={answers[cellKey] || ''}
                                       onChange={e => updateAnswer(q.id, `col${ci + 1}`, e.target.value)}
-                                      className="w-full border border-slate-200 rounded px-1.5 py-1 text-[10px] focus:outline-none focus:border-blue-300"
+                                      className={`w-full border border-slate-200 rounded px-1.5 py-1 text-[10px] focus:outline-none focus:border-blue-300 ${editedClass}`}
+                                      title={wasEditedAfterAi ? 'Edited after AI populate — review the change' : undefined}
                                     >
                                       <option value="">Select...</option>
                                       {q.dropdownOptions.map(opt => <option key={opt} value={opt}>{opt}</option>)}
@@ -964,9 +1003,10 @@ function StructuredScheduleTab({ engagementId, templateType, title, showAutoComp
                                       value={answers[cellKey] || ''}
                                       onChange={e => updateAnswer(q.id, `col${ci + 1}`, e.target.value)}
                                       rows={1}
+                                      title={wasEditedAfterAi ? 'Edited after AI populate — review the change' : undefined}
                                       className={`w-full border border-slate-200 rounded px-1.5 py-1 text-[10px] focus:outline-none focus:border-blue-300 min-h-[28px] resize-y ${
                                         cellSource ? 'bg-yellow-50' : ''
-                                      }`}
+                                      } ${editedClass}`}
                                     />
                                   )}
                                 </div>
@@ -1018,6 +1058,8 @@ function StructuredScheduleTab({ engagementId, templateType, title, showAutoComp
                   }
                   const cellKey = `${q.id}_col1`;
                   const cellSource = answerSources[cellKey];
+                  const wasEditedAfterAi = editedAfterAi.has(cellKey);
+                  const editedClass = wasEditedAfterAi ? 'border-2 border-dashed border-red-400' : '';
                   return (
                   <div key={q.id} className="p-3 space-y-1.5">
                     {isUserAdded ? (
@@ -1047,7 +1089,8 @@ function StructuredScheduleTab({ engagementId, templateType, title, showAutoComp
                             <select
                               value={answers[cellKey] || ''}
                               onChange={e => updateAnswer(q.id, 'col1', e.target.value)}
-                              className="w-full border border-slate-200 rounded px-2 py-1.5 text-xs focus:outline-none focus:border-blue-300"
+                              className={`w-full border border-slate-200 rounded px-2 py-1.5 text-xs focus:outline-none focus:border-blue-300 ${editedClass}`}
+                              title={wasEditedAfterAi ? 'Edited after AI populate — review the change' : undefined}
                             >
                               <option value="">Select...</option>
                               {q.dropdownOptions.map(opt => <option key={opt} value={opt}>{opt}</option>)}
@@ -1057,7 +1100,8 @@ function StructuredScheduleTab({ engagementId, templateType, title, showAutoComp
                               value={answers[cellKey] || ''}
                               onChange={e => updateAnswer(q.id, 'col1', e.target.value)}
                               placeholder="Enter response..."
-                              className={`w-full border border-slate-200 rounded px-2 py-1.5 text-xs min-h-[40px] focus:outline-none focus:border-blue-300 ${cellSource ? 'bg-yellow-50' : ''}`}
+                              title={wasEditedAfterAi ? 'Edited after AI populate — review the change' : undefined}
+                              className={`w-full border border-slate-200 rounded px-2 py-1.5 text-xs min-h-[40px] focus:outline-none focus:border-blue-300 ${cellSource ? 'bg-yellow-50' : ''} ${editedClass}`}
                             />
                           )}
                         </div>
