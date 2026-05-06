@@ -131,7 +131,127 @@ function trimContextForPrompt(ctx: TemplateContext): unknown {
   // who want prior-period answers can run the bot against the prior
   // engagement directly.
   const { priorPeriod: _drop, ...rest } = ctx as TemplateContext & { priorPeriod?: unknown };
-  return rest;
+  return pruneEmpty(rest);
+}
+
+/**
+ * Recursively strip null/undefined/blank-string/empty-array/empty-object
+ * leaves so the JSON the model sees is dense with real signal. The
+ * citation paths remain valid because we never rename keys — we only
+ * drop sub-trees that carry no information. "—" (the project's
+ * em-dash blank placeholder) is treated as blank.
+ */
+function pruneEmpty(value: unknown): unknown {
+  if (value === null || value === undefined) return undefined;
+  if (typeof value === 'string') {
+    const t = value.trim();
+    if (t === '' || t === '—' || t === '-') return undefined;
+    return value;
+  }
+  if (Array.isArray(value)) {
+    const out: unknown[] = [];
+    for (const v of value) {
+      const pruned = pruneEmpty(v);
+      if (pruned !== undefined) out.push(pruned);
+    }
+    return out.length === 0 ? undefined : out;
+  }
+  if (typeof value === 'object') {
+    const out: Record<string, unknown> = {};
+    let kept = 0;
+    for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
+      const pruned = pruneEmpty(v);
+      if (pruned !== undefined) { out[k] = pruned; kept++; }
+    }
+    return kept === 0 ? undefined : out;
+  }
+  return value;
+}
+
+/**
+ * Heuristic char→token ratio for the Llama 3 family. Empirically ~3.6
+ * chars per token on dense JSON. We use 3.5 as a conservative floor so
+ * the budget check trips a touch early rather than blowing past the
+ * model limit.
+ */
+const CHARS_PER_TOKEN_ESTIMATE = 3.5;
+
+/** Llama 3.3 70B Turbo on Together has a 131,072 token context. We
+ *  reserve room for the system prompt skeleton + history + max_tokens
+ *  output and leave a comfort buffer below the hard limit. */
+const MODEL_CONTEXT_TOKENS = 131_072;
+const MAX_OUTPUT_TOKENS = 1024;
+const PROMPT_OVERHEAD_TOKENS = 4_000; // system rules, history, headers
+const AUDIT_FILE_TOKEN_BUDGET = MODEL_CONTEXT_TOKENS - MAX_OUTPUT_TOKENS - PROMPT_OVERHEAD_TOKENS;
+
+/**
+ * Build the JSON string for the audit file payload. Always compact
+ * (JSON.stringify without indent — the `null, 2` form was costing
+ * ~25–30% of the token budget on pure whitespace). When even the
+ * compact form exceeds the model context, drop the heaviest fields in
+ * order until it fits, and prefix a one-line note so the model knows
+ * something was dropped (and can cite that in its answer if relevant).
+ *
+ * Drop order is the most-voluminous-and-least-question-relevant first:
+ *   1. trialBalance rows (most queries are "how was X assessed", not
+ *      "what's the GL balance for code 4001")
+ *   2. questionnaires.*.asList mirrors (the same data is exposed at
+ *      questionnaires.<name>.<question_slug> — asList is just a
+ *      structured re-render for templates)
+ *   3. Anything else over the budget — keep dropping the largest top-
+ *      level keys until we fit.
+ */
+function buildAuditFileJson(trimmed: unknown): { json: string; droppedKeys: string[] } {
+  const droppedKeys: string[] = [];
+  const fits = (s: string) => s.length / CHARS_PER_TOKEN_ESTIMATE <= AUDIT_FILE_TOKEN_BUDGET;
+  let working: any = trimmed;
+  let json = JSON.stringify(working);
+  if (fits(json)) return { json, droppedKeys };
+
+  // Drop trialBalance.rows
+  if (working?.trialBalance?.rows) {
+    droppedKeys.push('trialBalance.rows');
+    working = { ...working, trialBalance: { ...working.trialBalance, rows: '[dropped: too large for prompt]' } };
+    json = JSON.stringify(working);
+    if (fits(json)) return { json, droppedKeys };
+  }
+
+  // Drop questionnaires.*.asList — keep the keyed-by-slug version
+  if (working?.questionnaires && typeof working.questionnaires === 'object') {
+    const nextQ: Record<string, unknown> = {};
+    let droppedAny = false;
+    for (const [name, body] of Object.entries(working.questionnaires)) {
+      if (body && typeof body === 'object' && 'asList' in (body as object)) {
+        const { asList: _drop, ...rest } = body as Record<string, unknown>;
+        nextQ[name] = rest;
+        droppedAny = true;
+      } else {
+        nextQ[name] = body;
+      }
+    }
+    if (droppedAny) {
+      droppedKeys.push('questionnaires.*.asList');
+      working = { ...working, questionnaires: nextQ };
+      json = JSON.stringify(working);
+      if (fits(json)) return { json, droppedKeys };
+    }
+  }
+
+  // Last resort: drop the largest top-level keys until we fit.
+  while (working && typeof working === 'object' && !fits(json)) {
+    const entries = Object.entries(working as Record<string, unknown>)
+      .map(([k, v]) => ({ k, size: JSON.stringify(v).length }))
+      .sort((a, b) => b.size - a.size);
+    if (entries.length === 0) break;
+    const heaviest = entries[0];
+    droppedKeys.push(heaviest.k);
+    const next: Record<string, unknown> = { ...(working as Record<string, unknown>) };
+    delete next[heaviest.k];
+    working = next;
+    json = JSON.stringify(working);
+  }
+
+  return { json, droppedKeys };
 }
 
 /**
@@ -145,13 +265,23 @@ export async function askInterrogateBot(
   question: string,
   history: InterrogateMessage[] = [],
 ): Promise<InterrogateResponse> {
-  const auditFileJson = JSON.stringify(trimContextForPrompt(ctx), null, 2);
+  const trimmed = trimContextForPrompt(ctx);
+  const { json: auditFileJson, droppedKeys } = buildAuditFileJson(trimmed);
+  if (droppedKeys.length > 0) {
+    console.warn(`[interrogate] audit file too large for prompt — dropped: ${droppedKeys.join(', ')}`);
+  }
 
   // Audit file goes inside the system message so it's grouped with the
   // rules — keeping rules + grounding in one block tightens compliance
-  // with the "use only this" instruction.
+  // with the "use only this" instruction. When fields had to be dropped
+  // to fit the context window, tell the model so it can cite that in
+  // refusals ("the trial balance was not included in this prompt").
+  const droppedNote = droppedKeys.length > 0
+    ? `\n\nNote: the following fields were omitted from AUDIT_FILE because the engagement file exceeded the prompt size budget: ${droppedKeys.join(', ')}. If a question requires those fields, reply that they were not included in this prompt and recommend re-running with a smaller engagement scope or a model with a larger context window.`
+    : '';
   const systemContent =
     SYSTEM_PROMPT
+    + droppedNote
     + '\n\n=== AUDIT_FILE (JSON) ===\n'
     + auditFileJson
     + '\n=== END AUDIT_FILE ===';
