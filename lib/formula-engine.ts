@@ -229,50 +229,77 @@ function resolveReferences(
   });
 }
 
+/**
+ * True when the expression IS a single function call to `fn` spanning
+ * the whole string — i.e. the matching close paren of the leading
+ * `fn(` sits at the very end. Used by parseExpression so that
+ * `IF(a,0,1)+IF(b,1,0)` falls through to parseArithmetic (which
+ * handles the top-level `+`) instead of being eaten by parseIF after
+ * the first `IF(...)` closes.
+ */
+function isTopLevelCall(expr: string, fn: string): boolean {
+  const upper = expr.toUpperCase();
+  const fnU = fn.toUpperCase();
+  if (!upper.startsWith(fnU + '(')) return false;
+  let depth = 0;
+  let inQuote = false;
+  for (let i = fn.length; i < expr.length; i++) {
+    const ch = expr[i];
+    if (ch === '"' && expr[i - 1] !== '\\') { inQuote = !inQuote; continue; }
+    if (inQuote) continue;
+    if (ch === '(') depth++;
+    else if (ch === ')') {
+      depth--;
+      if (depth === 0) return i === expr.length - 1;
+    }
+  }
+  return false;
+}
+
 /** Simple recursive descent parser */
 function parseExpression(expr: string): string | number | boolean | null {
   expr = expr.trim();
 
   // IF function
-  if (expr.toUpperCase().startsWith('IF(')) {
+  if (isTopLevelCall(expr, 'IF')) {
     return parseIF(expr);
   }
 
   // SUM function
-  if (expr.toUpperCase().startsWith('SUM(')) {
+  if (isTopLevelCall(expr, 'SUM')) {
     return parseSUM(expr);
   }
 
   // ROUND function
-  if (expr.toUpperCase().startsWith('ROUND(')) {
+  if (isTopLevelCall(expr, 'ROUND')) {
     return parseROUND(expr);
   }
 
   // OR function
-  if (expr.toUpperCase().startsWith('OR(')) {
+  if (isTopLevelCall(expr, 'OR')) {
     return parseOR(expr);
   }
 
   // AVG / AVERAGE — mean of numeric args (blank args ignored so an
   // unanswered question doesn't drag the average towards zero).
-  if (expr.toUpperCase().startsWith('AVG(') || expr.toUpperCase().startsWith('AVERAGE(')) {
+  if (isTopLevelCall(expr, 'AVG') || isTopLevelCall(expr, 'AVERAGE')) {
     return parseAverage(expr);
   }
 
   // MIN / MAX — smallest / largest numeric arg.
-  if (expr.toUpperCase().startsWith('MIN(')) return parseMinMax(expr, 'MIN');
-  if (expr.toUpperCase().startsWith('MAX(')) return parseMinMax(expr, 'MAX');
+  if (isTopLevelCall(expr, 'MIN')) return parseMinMax(expr, 'MIN');
+  if (isTopLevelCall(expr, 'MAX')) return parseMinMax(expr, 'MAX');
 
   // COUNT — number of non-blank / non-null args.
-  if (expr.toUpperCase().startsWith('COUNT(')) return parseCount(expr);
+  if (isTopLevelCall(expr, 'COUNT')) return parseCount(expr);
 
   // ABS — absolute value. Handy for variance calcs.
-  if (expr.toUpperCase().startsWith('ABS(')) return parseAbs(expr);
+  if (isTopLevelCall(expr, 'ABS')) return parseAbs(expr);
 
   // PERCENT(numerator, denominator [, decimals]) / PCT(...)
   // One-shot "num / den × 100" with zero-division returning 0 so you
   // don't get "Infinity" or "NaN" in a schedule field.
-  if (expr.toUpperCase().startsWith('PERCENT(') || expr.toUpperCase().startsWith('PCT(')) {
+  if (isTopLevelCall(expr, 'PERCENT') || isTopLevelCall(expr, 'PCT')) {
     return parsePercent(expr);
   }
 
