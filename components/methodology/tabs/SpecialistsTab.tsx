@@ -135,6 +135,30 @@ function aggregateAcrossSubTabs(states: AggregateState[]): AggregateState {
   return 'none';
 }
 
+// ─── Role label ────────────────────────────────────────────────────
+//
+// Maps the firm-wide role keys (stored in template config + the
+// items blob) to user-friendly sub-tab labels. The roles align with
+// SCHEDULE_ACTIONS in lib/schedule-actions.ts. Unknown keys fall
+// back to a title-cased version of the underscore-split key so
+// custom firm roles still render readably.
+const ROLE_LABELS: Record<string, string> = {
+  tax_technical: 'Taxation',
+  ethics_partner: 'Ethics',
+  mrlo: 'MLRO',
+  it_specialist: 'IT',
+  actuarial: 'Actuarial',
+  valuation: 'Valuations',
+};
+function roleLabel(roleKey: string): string {
+  if (ROLE_LABELS[roleKey]) return ROLE_LABELS[roleKey];
+  return roleKey
+    .split('_')
+    .filter(Boolean)
+    .map(part => part.charAt(0).toUpperCase() + part.slice(1).toLowerCase())
+    .join(' ');
+}
+
 // ─── Component ─────────────────────────────────────────────────────
 
 export function SpecialistsTab({ engagementId, specialists, teamMembers, currentUserId, currentUserName }: Props) {
@@ -169,13 +193,41 @@ export function SpecialistsTab({ engagementId, specialists, teamMembers, current
     return () => { cancelled = true; };
   }, [engagementId]);
 
-  // Pick the first specialist as active on mount / when the list
-  // first lands.
-  useEffect(() => {
-    if (!activeRoleKey && specialists.length > 0) {
-      setActiveRoleKey(specialists[0].specialistType);
+  // Sub-tabs are the union of:
+  //   - specialists assigned on the Opening tab (always shown, even
+  //     with zero items, so the team has somewhere to add reports)
+  //   - role keys that have items in the data blob (so a chat created
+  //     by a fired schedule action — e.g. consult_tax_technical — is
+  //     visible even when no specialist of that role has been added
+  //     to the engagement yet)
+  //
+  // Order: assigned specialists first (in their assignment order),
+  // then any extra item-only roles in alphabetical order so the
+  // layout is stable across renders.
+  const subTabs = useMemo(() => {
+    const out: { roleKey: string; specialistName?: string; specialistEmail?: string }[] = [];
+    const seen = new Set<string>();
+    for (const s of specialists) {
+      if (seen.has(s.specialistType)) continue;
+      seen.add(s.specialistType);
+      out.push({ roleKey: s.specialistType, specialistName: s.name, specialistEmail: s.email });
     }
-  }, [specialists, activeRoleKey]);
+    const extraKeys = Object.keys(state)
+      .filter(k => !seen.has(k) && (state[k]?.items?.length || 0) > 0)
+      .sort();
+    for (const k of extraKeys) out.push({ roleKey: k });
+    return out;
+  }, [specialists, state]);
+
+  // Pick the first sub-tab as active on mount / when the list
+  // first lands. Tracks subTabs (not just specialists) so a fired
+  // schedule action that creates the only sub-tab is selected
+  // automatically.
+  useEffect(() => {
+    if (!activeRoleKey && subTabs.length > 0) {
+      setActiveRoleKey(subTabs[0].roleKey);
+    }
+  }, [subTabs, activeRoleKey]);
 
   // Debounced auto-save. We also write a derived blob to
   // `tax_technical_overall_signoffs` so the EngagementTabs tab-bar
@@ -352,40 +404,44 @@ export function SpecialistsTab({ engagementId, specialists, teamMembers, current
   if (loading) {
     return <div className="py-10 text-center text-xs text-slate-400 animate-pulse">Loading specialists…</div>;
   }
-  if (specialists.length === 0) {
+  if (subTabs.length === 0) {
     return (
       <div className="py-12 text-center">
-        <p className="text-sm text-slate-500 mb-1">No specialists assigned yet</p>
-        <p className="text-xs text-slate-400">Add specialists on the Opening tab to populate this section.</p>
+        <p className="text-sm text-slate-500 mb-1">No specialist activity yet</p>
+        <p className="text-xs text-slate-400">Add specialists on the Opening tab to populate this section, or trigger a schedule action that consults a specialist (e.g. Tax Technical) to start a chat here.</p>
       </div>
     );
   }
 
-  const activeRole = specialists.find(s => s.specialistType === activeRoleKey) || specialists[0];
-  const activeItems = getItemsFor(activeRole.specialistType);
+  const activeRole = subTabs.find(s => s.roleKey === activeRoleKey) || subTabs[0];
+  const activeItems = getItemsFor(activeRole.roleKey);
 
   return (
     <div className="space-y-4">
-      {/* Sub-tab strip — one tab per assigned specialist. Each
+      {/* Sub-tab strip — one tab per assigned specialist OR per role
+          that has items even without a specialist assigned. Each
           carries Reviewer + RI aggregate dots. */}
       <div className="flex flex-wrap gap-1 border-b border-slate-200">
-        {specialists.map(spec => {
-          const items = getItemsFor(spec.specialistType);
+        {subTabs.map(sub => {
+          const items = getItemsFor(sub.roleKey);
           const reviewer = aggregateForRole(items, 'reviewer');
           const ri = aggregateForRole(items, 'ri');
-          const isActive = spec.specialistType === activeRole.specialistType;
+          const isActive = sub.roleKey === activeRole.roleKey;
           return (
             <button
-              key={spec.id || spec.specialistType}
-              onClick={() => setActiveRoleKey(spec.specialistType)}
+              key={sub.roleKey}
+              onClick={() => setActiveRoleKey(sub.roleKey)}
               className={`px-3 py-1.5 text-xs font-medium border-b-2 inline-flex items-center gap-1.5 transition-colors ${
                 isActive
                   ? 'border-blue-500 text-blue-700'
                   : 'border-transparent text-slate-500 hover:text-slate-700 hover:border-slate-300'
               }`}
             >
-              <span>{spec.specialistType.replace(/_/g, ' ')}</span>
-              {spec.name && <span className="text-[10px] text-slate-400">· {spec.name}</span>}
+              <span>{roleLabel(sub.roleKey)}</span>
+              {sub.specialistName && <span className="text-[10px] text-slate-400">· {sub.specialistName}</span>}
+              {items.length > 0 && (
+                <span className="text-[10px] text-slate-400">({items.length})</span>
+              )}
               <span className="inline-flex items-center gap-0.5 ml-1" title={`Reviewer: ${reviewer} · RI: ${ri}`}>
                 {renderAggregateDot(reviewer)}
                 {renderAggregateDot(ri)}
@@ -399,14 +455,16 @@ export function SpecialistsTab({ engagementId, specialists, teamMembers, current
       <div>
         <div className="flex items-center justify-between mb-3">
           <div>
-            <h3 className="text-sm font-semibold text-slate-800">{activeRole.specialistType.replace(/_/g, ' ')}</h3>
+            <h3 className="text-sm font-semibold text-slate-800">{roleLabel(activeRole.roleKey)}</h3>
             <p className="text-xs text-slate-500">
-              {activeRole.name}{activeRole.email ? ` · ${activeRole.email}` : ''} —
+              {activeRole.specialistName
+                ? <>{activeRole.specialistName}{activeRole.specialistEmail ? ` · ${activeRole.specialistEmail}` : ''} — </>
+                : <em className="not-italic text-amber-600">No specialist assigned for this role — </em>}
               <span className="ml-1">{activeItems.length} item{activeItems.length === 1 ? '' : 's'}</span>
             </p>
           </div>
           <button
-            onClick={() => setShowNewItemFor(showNewItemFor === activeRole.specialistType ? null : activeRole.specialistType)}
+            onClick={() => setShowNewItemFor(showNewItemFor === activeRole.roleKey ? null : activeRole.roleKey)}
             className="text-xs px-3 py-1.5 bg-blue-50 text-blue-700 border border-blue-200 rounded hover:bg-blue-100 inline-flex items-center gap-1"
           >
             <Plus className="h-3 w-3" /> Add item
@@ -414,7 +472,7 @@ export function SpecialistsTab({ engagementId, specialists, teamMembers, current
         </div>
 
         {/* Add-item form */}
-        {showNewItemFor === activeRole.specialistType && (
+        {showNewItemFor === activeRole.roleKey && (
           <div className="mb-3 border border-blue-200 bg-blue-50/40 rounded-lg p-3 space-y-2">
             <div className="flex items-center gap-2">
               <label className="text-[10px] font-medium text-slate-600">Type:</label>
@@ -452,7 +510,7 @@ export function SpecialistsTab({ engagementId, specialists, teamMembers, current
                 className="text-xs px-3 py-1 text-slate-500 hover:text-slate-700"
               >Cancel</button>
               <button
-                onClick={() => addItem(activeRole.specialistType)}
+                onClick={() => addItem(activeRole.roleKey)}
                 disabled={!newItemTitle.trim()}
                 className="text-xs px-3 py-1 bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50"
               >Add</button>
@@ -491,12 +549,12 @@ export function SpecialistsTab({ engagementId, specialists, teamMembers, current
                       signOffs={item.signOffs}
                       teamMembers={teamMembers}
                       currentUserId={currentUserId}
-                      onToggle={role => toggleSignOff(activeRole.specialistType, item.id, role)}
+                      onToggle={role => toggleSignOff(activeRole.roleKey, item.id, role)}
                       size="sm"
                       hideRoleLabels
                     />
                     <button
-                      onClick={() => removeItem(activeRole.specialistType, item.id)}
+                      onClick={() => removeItem(activeRole.roleKey, item.id)}
                       className="text-slate-400 hover:text-red-600"
                       title="Remove item"
                     >
@@ -513,10 +571,10 @@ export function SpecialistsTab({ engagementId, specialists, teamMembers, current
                       {item.kind === 'chat' && item.status === 'open' && (
                         <ChatPanel
                           engagementId={engagementId}
-                          roleKey={activeRole.specialistType}
+                          roleKey={activeRole.roleKey}
                           messages={item.messages}
-                          onSend={(msg, extras) => appendChatMessage(activeRole.specialistType, item.id, msg, extras)}
-                          onComplete={() => completeChat(activeRole.specialistType, item.id)}
+                          onSend={(msg, extras) => appendChatMessage(activeRole.roleKey, item.id, msg, extras)}
+                          onComplete={() => completeChat(activeRole.roleKey, item.id)}
                         />
                       )}
                       {item.kind === 'chat' && item.status === 'completed' && item.messages.length > 0 && (
