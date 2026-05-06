@@ -14,6 +14,7 @@ import type {
 } from '@/types/methodology';
 import type { FirmAuditType } from '@/lib/firm-audit-types';
 import { defaultAuditTypes } from '@/lib/firm-audit-types';
+import type { FirmVatRate, FirmVatThreshold } from '@/lib/vat-reconciliation';
 
 interface Props {
   firmId: string;
@@ -48,6 +49,9 @@ interface Props {
    *  Null when the firm hasn't configured anything yet (treated as
    *  "nothing brought forward" — opt-in). */
   initialCarryForward?: Record<string, Record<string, boolean>> | null;
+  /** Firm-wide VAT config — rates + registration / deregistration thresholds.
+   *  Consumed by the VAT Reconciliation calculator on each engagement. */
+  initialVatConfig?: { rates?: FirmVatRate[]; thresholds?: FirmVatThreshold[] } | null;
 }
 
 // The catalogue of items the carry-forward matrix offers. Each row in
@@ -153,6 +157,7 @@ export function FirmAssumptionsClient({
   initialMinAvgFeePerHour,
   initialAuditTypes,
   initialCarryForward,
+  initialVatConfig,
 }: Props) {
   const [inherentRisk, setInherentRisk] = useState<InherentRiskTable>(() => {
     const t = initialInherentRisk;
@@ -232,6 +237,18 @@ export function FirmAssumptionsClient({
   // by silently copying data they may not want carried over.
   const [carryForward, setCarryForward] = useState<Record<string, Record<string, boolean>>>(
     () => initialCarryForward || {},
+  );
+
+  // Firm-wide VAT config — rates + registration / deregistration thresholds.
+  // Consumed by the VAT Reconciliation calculator on every engagement.
+  // Each rate: { id, label, jurisdiction, ratePercent }.
+  // Each threshold: { id, kind, amount, dateFrom, dateTo } where dateTo
+  // null = current/open-ended.
+  const [vatRates, setVatRates] = useState<FirmVatRate[]>(
+    Array.isArray(initialVatConfig?.rates) ? initialVatConfig!.rates! : []
+  );
+  const [vatThresholds, setVatThresholds] = useState<FirmVatThreshold[]>(
+    Array.isArray(initialVatConfig?.thresholds) ? initialVatConfig!.thresholds! : []
   );
 
   /** Toggle whether `itemKey` is brought forward for `auditTypeCode`.
@@ -385,6 +402,7 @@ export function FirmAssumptionsClient({
         ['fxProvider', { provider: fxProvider }],
         ['riskClassification', riskClassification ?? {}],
         ['carryForward', { matrix: carryForward }],
+        ['firm_vat_config', { rates: vatRates, thresholds: vatThresholds }],
         ['large_unusual_scoring', {
           descriptionPatterns: luPatterns,
           thresholds: luThresholds,
@@ -1034,6 +1052,232 @@ export function FirmAssumptionsClient({
               }
               return null;
             })()}
+          </div>
+        )}
+      </div>
+
+      {/* VAT — firm-wide VAT rates + registration / deregistration thresholds.
+          Read by the VAT Reconciliation calculator on every engagement.
+          Rates: label, jurisdiction, rate %. Thresholds: amount with
+          a date-from/date-to applicability range so changes over time
+          are preserved (date-to blank = current). */}
+      <div className="border rounded-lg">
+        <button
+          onClick={() => toggleSection('vat')}
+          className="w-full flex items-center justify-between px-4 py-3 bg-slate-50 rounded-t-lg"
+        >
+          <h2 className="text-lg font-semibold text-slate-900">VAT</h2>
+          {expandedSections.vat ? <ChevronUp className="h-5 w-5" /> : <ChevronDown className="h-5 w-5" />}
+        </button>
+        {expandedSections.vat && (
+          <div className="p-4 space-y-6">
+            {/* VAT Rates */}
+            <div className="space-y-2">
+              <div>
+                <h3 className="text-sm font-semibold text-slate-800">VAT Rates</h3>
+                <p className="text-xs text-slate-500">
+                  Label, jurisdiction and numerical rate. Used in the VAT Reconciliation calculator's
+                  per-revenue-code mapping pop-up.
+                </p>
+              </div>
+              <div className="border border-slate-200 rounded-lg overflow-hidden">
+                <table className="w-full text-sm">
+                  <thead className="bg-slate-50">
+                    <tr className="text-left text-xs text-slate-500 uppercase">
+                      <th className="px-3 py-2 font-semibold">Label</th>
+                      <th className="px-3 py-2 font-semibold w-32">Jurisdiction</th>
+                      <th className="px-3 py-2 font-semibold w-28 text-right">Rate %</th>
+                      <th className="px-3 py-2 w-8"></th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100">
+                    {vatRates.length === 0 && (
+                      <tr>
+                        <td colSpan={4} className="px-3 py-4 text-center text-xs text-slate-400 italic">
+                          No VAT rates yet. Click &quot;Add Rate&quot; to create one (e.g. Standard / Reduced / Zero / Exempt).
+                        </td>
+                      </tr>
+                    )}
+                    {vatRates.map((r, idx) => (
+                      <tr key={r.id || idx} className="hover:bg-slate-50">
+                        <td className="px-3 py-2">
+                          <input
+                            type="text"
+                            value={r.label}
+                            onChange={(e) => {
+                              setVatRates(prev => prev.map((x, i) => i === idx ? { ...x, label: e.target.value } : x));
+                              setSaved(false);
+                            }}
+                            placeholder="Standard rate"
+                            className="w-full border border-slate-300 rounded px-2 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                          />
+                        </td>
+                        <td className="px-3 py-2">
+                          <input
+                            type="text"
+                            value={r.jurisdiction}
+                            onChange={(e) => {
+                              setVatRates(prev => prev.map((x, i) => i === idx ? { ...x, jurisdiction: e.target.value } : x));
+                              setSaved(false);
+                            }}
+                            placeholder="UK"
+                            className="w-full border border-slate-300 rounded px-2 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                          />
+                        </td>
+                        <td className="px-3 py-2">
+                          <input
+                            type="number"
+                            step="0.01"
+                            value={r.ratePercent}
+                            onChange={(e) => {
+                              setVatRates(prev => prev.map((x, i) => i === idx ? { ...x, ratePercent: Number(e.target.value) || 0 } : x));
+                              setSaved(false);
+                            }}
+                            className="w-full border border-slate-300 rounded px-2 py-1 text-sm text-right focus:outline-none focus:ring-2 focus:ring-blue-500"
+                          />
+                        </td>
+                        <td className="px-3 py-2 text-center">
+                          <button
+                            onClick={() => {
+                              setVatRates(prev => prev.filter((_, i) => i !== idx));
+                              setSaved(false);
+                            }}
+                            className="text-slate-400 hover:text-red-500"
+                            aria-label="Remove rate"
+                            title="Remove rate"
+                          >
+                            <X className="h-4 w-4" />
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              <button
+                onClick={() => {
+                  setVatRates(prev => [
+                    ...prev,
+                    { id: `vr-${Date.now()}`, label: '', jurisdiction: 'UK', ratePercent: 0 },
+                  ]);
+                  setSaved(false);
+                }}
+                className="inline-flex items-center gap-1 px-3 py-1.5 text-xs font-medium bg-blue-600 text-white rounded hover:bg-blue-700"
+              >
+                <Plus className="h-3 w-3" /> Add Rate
+              </button>
+            </div>
+
+            {/* VAT Thresholds */}
+            <div className="space-y-2">
+              <div>
+                <h3 className="text-sm font-semibold text-slate-800">Registration &amp; Deregistration Thresholds</h3>
+                <p className="text-xs text-slate-500">
+                  Thresholds change over time, so each entry has a <strong>Date From</strong> and
+                  <strong> Date To</strong>. Leave Date To blank for the current threshold.
+                </p>
+              </div>
+              <div className="border border-slate-200 rounded-lg overflow-hidden">
+                <table className="w-full text-sm">
+                  <thead className="bg-slate-50">
+                    <tr className="text-left text-xs text-slate-500 uppercase">
+                      <th className="px-3 py-2 font-semibold w-44">Type</th>
+                      <th className="px-3 py-2 font-semibold w-40 text-right">Amount</th>
+                      <th className="px-3 py-2 font-semibold w-44">Date From</th>
+                      <th className="px-3 py-2 font-semibold w-44">Date To</th>
+                      <th className="px-3 py-2 w-8"></th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100">
+                    {vatThresholds.length === 0 && (
+                      <tr>
+                        <td colSpan={5} className="px-3 py-4 text-center text-xs text-slate-400 italic">
+                          No thresholds yet. Add a Registration threshold and a Deregistration threshold (with date-from/to history).
+                        </td>
+                      </tr>
+                    )}
+                    {vatThresholds.map((t, idx) => (
+                      <tr key={t.id || idx} className="hover:bg-slate-50">
+                        <td className="px-3 py-2">
+                          <select
+                            value={t.kind}
+                            onChange={(e) => {
+                              const k = e.target.value as 'registration' | 'deregistration';
+                              setVatThresholds(prev => prev.map((x, i) => i === idx ? { ...x, kind: k } : x));
+                              setSaved(false);
+                            }}
+                            className="w-full border border-slate-300 rounded px-2 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                          >
+                            <option value="registration">Registration</option>
+                            <option value="deregistration">Deregistration</option>
+                          </select>
+                        </td>
+                        <td className="px-3 py-2">
+                          <input
+                            type="number"
+                            step="0.01"
+                            value={t.amount}
+                            onChange={(e) => {
+                              setVatThresholds(prev => prev.map((x, i) => i === idx ? { ...x, amount: Number(e.target.value) || 0 } : x));
+                              setSaved(false);
+                            }}
+                            className="w-full border border-slate-300 rounded px-2 py-1 text-sm text-right focus:outline-none focus:ring-2 focus:ring-blue-500"
+                          />
+                        </td>
+                        <td className="px-3 py-2">
+                          <input
+                            type="date"
+                            value={t.dateFrom || ''}
+                            onChange={(e) => {
+                              setVatThresholds(prev => prev.map((x, i) => i === idx ? { ...x, dateFrom: e.target.value || null } : x));
+                              setSaved(false);
+                            }}
+                            className="w-full border border-slate-300 rounded px-2 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                          />
+                        </td>
+                        <td className="px-3 py-2">
+                          <input
+                            type="date"
+                            value={t.dateTo || ''}
+                            onChange={(e) => {
+                              setVatThresholds(prev => prev.map((x, i) => i === idx ? { ...x, dateTo: e.target.value || null } : x));
+                              setSaved(false);
+                            }}
+                            placeholder="(current)"
+                            className="w-full border border-slate-300 rounded px-2 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                          />
+                        </td>
+                        <td className="px-3 py-2 text-center">
+                          <button
+                            onClick={() => {
+                              setVatThresholds(prev => prev.filter((_, i) => i !== idx));
+                              setSaved(false);
+                            }}
+                            className="text-slate-400 hover:text-red-500"
+                            aria-label="Remove threshold"
+                            title="Remove threshold"
+                          >
+                            <X className="h-4 w-4" />
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              <button
+                onClick={() => {
+                  setVatThresholds(prev => [
+                    ...prev,
+                    { id: `vt-${Date.now()}`, kind: 'registration', amount: 0, dateFrom: null, dateTo: null },
+                  ]);
+                  setSaved(false);
+                }}
+                className="inline-flex items-center gap-1 px-3 py-1.5 text-xs font-medium bg-blue-600 text-white rounded hover:bg-blue-700"
+              >
+                <Plus className="h-3 w-3" /> Add Threshold
+              </button>
+            </div>
           </div>
         )}
       </div>
