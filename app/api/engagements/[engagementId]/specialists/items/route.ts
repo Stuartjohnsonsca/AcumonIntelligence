@@ -3,6 +3,8 @@ import { auth } from '@/lib/auth';
 import { prisma } from '@/lib/db';
 import { assertEngagementWriteAccess } from '@/lib/auth/engagement-auth';
 import { findScheduleAction, renderOpeningMessage } from '@/lib/schedule-actions';
+import { buildPortalUrl } from '@/lib/specialist-portal-token';
+import { sendEmail } from '@/lib/email';
 
 /**
  * Specialists items — server-side helper for creating items in
@@ -113,6 +115,80 @@ export async function POST(
       create: { engagementId, sectionKey: SECTION_KEY, data: nextBlob as any },
       update: { data: nextBlob as any },
     });
+
+    // Notify the specialist by email — the message includes a
+    // magic-link to the External Specialist Portal scoped to this
+    // engagement + role. Resolve the recipient from the firm's
+    // specialist_roles config (Lead first, fall back to the first
+    // member). Best-effort: an email failure logs but doesn't roll
+    // back the chat creation, because the auditor can resend or
+    // share the URL by hand if the provider is briefly down.
+    try {
+      const engagement = await prisma.auditEngagement.findUnique({
+        where: { id: engagementId },
+        select: {
+          firmId: true,
+          client: { select: { clientName: true } },
+          period: { select: { endDate: true } },
+        },
+      });
+      if (engagement) {
+        const rolesRow = await prisma.methodologyTemplate.findUnique({
+          where: {
+            firmId_templateType_auditType: {
+              firmId: engagement.firmId,
+              templateType: 'specialist_roles',
+              auditType: 'ALL',
+            },
+          },
+        });
+        const rolesList = Array.isArray(rolesRow?.items) ? (rolesRow!.items as any[]) : [];
+        const role = rolesList.find(r => r.key === action.specialistRoleKey && r.isActive !== false);
+        const lead = role?.email ? { name: role.name || '', email: String(role.email).toLowerCase() } : null;
+        const firstMember = Array.isArray(role?.members)
+          ? role.members.find((m: any) => m?.email)
+          : null;
+        const recipient = lead || (firstMember ? { name: firstMember.name || '', email: String(firstMember.email).toLowerCase() } : null);
+        if (recipient?.email) {
+          const baseUrl = (process.env.NEXTAUTH_URL || 'https://acumon-website.vercel.app').replace(/\/+$/, '');
+          const portalUrl = buildPortalUrl(baseUrl, {
+            engagementId,
+            roleKey: action.specialistRoleKey,
+            email: recipient.email,
+          });
+          const periodEnd = engagement.period?.endDate
+            ? new Date(engagement.period.endDate).toLocaleDateString('en-GB')
+            : '';
+          const subject = `Specialist input requested — ${engagement.client.clientName}`;
+          const html = `
+            <div style="font-family:Arial,sans-serif;max-width:560px;margin:0 auto;padding:20px;color:#334155">
+              <h2 style="color:#1e40af;margin-bottom:4px">Specialist input requested</h2>
+              <p>Hi ${escapeHtml(recipient.name || recipient.email)},</p>
+              <p>
+                The audit team for <strong>${escapeHtml(engagement.client.clientName)}</strong>${periodEnd ? ` (period ended ${escapeHtml(periodEnd)})` : ''}
+                has opened a chat with you for the <strong>${escapeHtml(action.specialistRoleKey.replace(/_/g, ' '))}</strong> role.
+              </p>
+              <p><strong>Action:</strong> ${escapeHtml(action.label)}</p>
+              <blockquote style="border-left:3px solid #cbd5e1;padding:8px 12px;color:#475569;margin:16px 0">
+                ${escapeHtml(opening).replace(/\n/g, '<br>')}
+              </blockquote>
+              <p>Click below to open your scoped portal — read the question, reply, and attach files:</p>
+              <p style="text-align:center;margin:24px 0">
+                <a href="${portalUrl}" style="background:#2563eb;color:#fff;padding:10px 20px;border-radius:6px;text-decoration:none;font-weight:600">Open specialist portal</a>
+              </p>
+              <p style="font-size:12px;color:#94a3b8">
+                This link is private — it gives you access to this engagement and this role only. Do not forward it.
+              </p>
+            </div>`;
+          await sendEmail(recipient.email, subject, html, { displayName: recipient.name });
+        }
+      }
+    } catch (emailErr: any) {
+      console.error('[specialists/items] portal email failed:', emailErr?.message || emailErr);
+      // Swallow — the chat is created and the auditor can still
+      // share the URL manually or trigger again.
+    }
+
     return NextResponse.json({ created: true, item });
   }
 
@@ -140,4 +216,12 @@ export async function POST(
   }
 
   return NextResponse.json({ error: 'Provide either scheduleActionKey + question fields, or roleKey + item' }, { status: 400 });
+}
+
+function escapeHtml(s: string): string {
+  return String(s ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
 }

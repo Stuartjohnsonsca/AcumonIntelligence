@@ -8,6 +8,7 @@ import { slugifyQuestionText } from '@/lib/formula-engine';
 import { DISPLAY_FORMAT_OPTIONS } from '@/lib/format-display';
 import { PlaceholderBadge } from '@/components/methodology/PlaceholderBadge';
 import type { TemplateQuestion, QuestionInputType, TemplateSectionMeta, SectionLayout } from '@/types/methodology';
+import { SCHEDULE_ACTIONS } from '@/lib/schedule-actions';
 
 /**
  * Convert a methodology template's `templateType` to the
@@ -1341,6 +1342,69 @@ export function AppendixTemplateEditor({ firmId, templateType, auditType, initia
                                   </label>
                                 );
                               })()}
+
+                              {/* Schedule Action — fire a catalogued
+                                  action (e.g. "Consult Tax Technical
+                                  specialist") when the auditor's
+                                  answer matches the trigger value.
+                                  The action POSTs to the Specialists
+                                  items endpoint, opening a chat
+                                  with the configured specialist
+                                  role and emailing them an external
+                                  portal link. Picking "(none)" wipes
+                                  the config back to undefined. */}
+                              <div
+                                className="col-span-2 w-full flex items-center gap-2 pt-2 mt-1 border-t border-slate-100 flex-wrap"
+                                title={
+                                  'Fire a Schedule Action when this question is answered with the trigger value. ' +
+                                  'The action opens a chat in the engagement\'s Specialists tab with the action\'s role, ' +
+                                  'and emails the specialist a magic-link to the External Specialist Portal.'
+                                }
+                              >
+                                <span className="text-[10px] uppercase tracking-wide text-slate-500 font-semibold w-28 shrink-0">Schedule Action</span>
+                                <select
+                                  value={q.scheduleAction?.key || ''}
+                                  onChange={e => {
+                                    const v = e.target.value;
+                                    if (!v) {
+                                      updateQuestion(q.id, { scheduleAction: undefined });
+                                      return;
+                                    }
+                                    updateQuestion(q.id, {
+                                      scheduleAction: {
+                                        key: v,
+                                        triggerValue: q.scheduleAction?.triggerValue || '',
+                                      },
+                                    });
+                                  }}
+                                  className="border border-slate-200 rounded px-2 py-1 text-xs"
+                                >
+                                  <option value="">(none — no action fires)</option>
+                                  {SCHEDULE_ACTIONS.map(a => (
+                                    <option key={a.key} value={a.key}>{a.label}</option>
+                                  ))}
+                                </select>
+                                {q.scheduleAction?.key && (
+                                  <>
+                                    <span className="text-[10px] text-slate-500">when answer equals</span>
+                                    <input
+                                      type="text"
+                                      value={q.scheduleAction.triggerValue}
+                                      onChange={e => updateQuestion(q.id, {
+                                        scheduleAction: {
+                                          key: q.scheduleAction!.key,
+                                          triggerValue: e.target.value,
+                                        },
+                                      })}
+                                      className="border border-slate-200 rounded px-2 py-1 text-xs w-40"
+                                      placeholder="e.g. Yes"
+                                    />
+                                    <span className="text-[10px] text-slate-400 italic flex-1 min-w-0 truncate">
+                                      {SCHEDULE_ACTIONS.find(a => a.key === q.scheduleAction!.key)?.description}
+                                    </span>
+                                  </>
+                                )}
+                              </div>
                             </div>
                           </div>
                         </div>

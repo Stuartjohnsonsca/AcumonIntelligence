@@ -27,7 +27,7 @@
  */
 
 import { useState, useEffect, useCallback, useRef, useMemo, type ReactNode } from 'react';
-import { Plus, ChevronDown, ChevronRight, MessageSquare, FileText, CheckCircle2, Trash2, Send } from 'lucide-react';
+import { Plus, ChevronDown, ChevronRight, MessageSquare, FileText, CheckCircle2, Trash2, Send, Paperclip, Phone, X, Loader2 } from 'lucide-react';
 import { SignOffDots } from '../SignOffDots';
 import type { TeamMemberLite } from '@/lib/sign-off-helpers';
 
@@ -44,6 +44,13 @@ interface EngagementSpecialistRef {
 interface SignOffRecord { userId?: string; userName?: string; timestamp?: string }
 type SignOffMap = Record<string, SignOffRecord | undefined>;
 
+interface ChatAttachment {
+  id: string;          // blob path — also the lookup key for the attachments GET endpoint
+  name: string;        // user-visible filename
+  blobName?: string;   // full blob path (same as id for new uploads; kept for clarity)
+  mimeType?: string | null;
+  size?: number;
+}
 interface ChatMessage {
   id: string;
   userId: string;
@@ -51,7 +58,12 @@ interface ChatMessage {
   role: string;
   message: string;
   createdAt: string;
-  attachments?: { id: string; name: string; url?: string }[];
+  attachments?: ChatAttachment[];
+  // When set, the message represents a call link the user shared
+  // (Teams / Zoom / Google Meet etc.). The chat renders a
+  // dedicated "Join call" button instead of a plain link, so the
+  // recipient can spot it without scrolling through prose.
+  callLink?: { label?: string; url: string };
 }
 
 type ItemKind = 'chat' | 'report' | 'conclusion';
@@ -266,8 +278,13 @@ export function SpecialistsTab({ engagementId, specialists, teamMembers, current
     applyState({ ...state, [roleKey]: { items: nextItems } });
   }
 
-  function appendChatMessage(roleKey: string, itemId: string, message: string) {
-    if (!message.trim() || !currentUserId) return;
+  function appendChatMessage(
+    roleKey: string,
+    itemId: string,
+    message: string,
+    extras?: { attachments?: ChatAttachment[]; callLink?: { label?: string; url: string } },
+  ) {
+    if ((!message.trim() && !(extras?.attachments?.length) && !extras?.callLink) || !currentUserId) return;
     const items = state[roleKey]?.items || [];
     const idx = items.findIndex(i => i.id === itemId);
     if (idx < 0) return;
@@ -282,6 +299,8 @@ export function SpecialistsTab({ engagementId, specialists, teamMembers, current
         role: teamRole,
         message: message.trim(),
         createdAt: new Date().toISOString(),
+        attachments: extras?.attachments,
+        callLink: extras?.callLink,
       }],
     };
     const nextItems = items.slice();
@@ -493,8 +512,10 @@ export function SpecialistsTab({ engagementId, specialists, teamMembers, current
                       )}
                       {item.kind === 'chat' && item.status === 'open' && (
                         <ChatPanel
+                          engagementId={engagementId}
+                          roleKey={activeRole.specialistType}
                           messages={item.messages}
-                          onSend={msg => appendChatMessage(activeRole.specialistType, item.id, msg)}
+                          onSend={(msg, extras) => appendChatMessage(activeRole.specialistType, item.id, msg, extras)}
                           onComplete={() => completeChat(activeRole.specialistType, item.id)}
                         />
                       )}
@@ -517,8 +538,84 @@ export function SpecialistsTab({ engagementId, specialists, teamMembers, current
 
 // ─── Chat panel (open-state only) ──────────────────────────────────
 
-function ChatPanel({ messages, onSend, onComplete }: { messages: ChatMessage[]; onSend: (msg: string) => void; onComplete: () => void }) {
+function ChatPanel({
+  engagementId,
+  roleKey,
+  messages,
+  onSend,
+  onComplete,
+}: {
+  engagementId: string;
+  roleKey: string;
+  messages: ChatMessage[];
+  onSend: (msg: string, extras?: { attachments?: ChatAttachment[]; callLink?: { label?: string; url: string } }) => void;
+  onComplete: () => void;
+}) {
   const [draft, setDraft] = useState('');
+  const [pendingAttachments, setPendingAttachments] = useState<ChatAttachment[]>([]);
+  const [uploading, setUploading] = useState(false);
+  const [uploadError, setUploadError] = useState<string | null>(null);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+
+  // Upload one or more files to the specialists/attachments
+  // endpoint, then stage them for the next message. We stage
+  // rather than send-immediately so the user can add a covering
+  // note and call link in the same message.
+  async function handleFiles(files: FileList | null) {
+    if (!files || files.length === 0) return;
+    setUploadError(null);
+    setUploading(true);
+    try {
+      const uploaded: ChatAttachment[] = [];
+      for (let i = 0; i < files.length; i++) {
+        const file = files[i];
+        const fd = new FormData();
+        fd.append('file', file);
+        fd.append('roleKey', roleKey);
+        const res = await fetch(`/api/engagements/${engagementId}/specialists/attachments`, {
+          method: 'POST',
+          body: fd,
+        });
+        if (!res.ok) {
+          const err = await res.json().catch(() => ({}));
+          setUploadError(err?.error || `Upload failed (${res.status})`);
+          break;
+        }
+        const data = await res.json();
+        uploaded.push({
+          id: data.id,
+          name: data.name,
+          blobName: data.blobName,
+          mimeType: data.mimeType ?? null,
+          size: data.size,
+        });
+      }
+      if (uploaded.length > 0) setPendingAttachments(prev => [...prev, ...uploaded]);
+    } finally {
+      setUploading(false);
+      if (fileInputRef.current) fileInputRef.current.value = '';
+    }
+  }
+
+  function addCallLink() {
+    const url = window.prompt('Paste a Teams / Zoom / Google Meet link to share:');
+    if (!url) return;
+    const trimmed = url.trim();
+    if (!/^https?:\/\//i.test(trimmed)) {
+      alert('Please paste a full URL beginning with https://.');
+      return;
+    }
+    onSend(draft || 'Joining a call:', { callLink: { url: trimmed } });
+    setDraft('');
+  }
+
+  function send() {
+    if (!draft.trim() && pendingAttachments.length === 0) return;
+    onSend(draft, pendingAttachments.length > 0 ? { attachments: pendingAttachments } : undefined);
+    setDraft('');
+    setPendingAttachments([]);
+  }
+
   return (
     <div className="space-y-2">
       <div className="space-y-1.5 max-h-[300px] overflow-auto border border-slate-200 rounded p-2 bg-white">
@@ -531,10 +628,58 @@ function ChatPanel({ messages, onSend, onComplete }: { messages: ChatMessage[]; 
               <span className="text-[9px] text-slate-400">{m.role}</span>
               <span className="text-[9px] text-slate-400 ml-auto">{new Date(m.createdAt).toLocaleString('en-GB')}</span>
             </div>
-            <p className="text-slate-700 whitespace-pre-wrap break-words ml-1 mt-0.5">{m.message}</p>
+            {m.message && <p className="text-slate-700 whitespace-pre-wrap break-words ml-1 mt-0.5">{m.message}</p>}
+            {m.callLink && (
+              <a
+                href={m.callLink.url}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="ml-1 mt-1 inline-flex items-center gap-1 text-[11px] px-2 py-1 bg-emerald-50 text-emerald-700 border border-emerald-200 rounded hover:bg-emerald-100"
+              >
+                <Phone className="h-3 w-3" /> {m.callLink.label || 'Join call'}
+              </a>
+            )}
+            {m.attachments && m.attachments.length > 0 && (
+              <ul className="ml-1 mt-1 space-y-0.5">
+                {m.attachments.map(a => (
+                  <li key={a.id}>
+                    <a
+                      href={`/api/engagements/${engagementId}/specialists/attachments?blob=${encodeURIComponent(a.blobName || a.id)}&roleKey=${encodeURIComponent(roleKey)}`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="inline-flex items-center gap-1 text-[11px] text-blue-600 hover:underline"
+                    >
+                      <Paperclip className="h-3 w-3" /> {a.name}
+                      {typeof a.size === 'number' && <span className="text-slate-400">({Math.round(a.size / 1024)} KB)</span>}
+                    </a>
+                  </li>
+                ))}
+              </ul>
+            )}
           </div>
         ))}
       </div>
+
+      {/* Pending attachments — files queued for the next send. */}
+      {pendingAttachments.length > 0 && (
+        <div className="flex flex-wrap items-center gap-1">
+          {pendingAttachments.map(a => (
+            <span key={a.id} className="inline-flex items-center gap-1 text-[10px] px-2 py-0.5 bg-slate-100 border border-slate-200 rounded">
+              <Paperclip className="h-3 w-3 text-slate-500" />
+              {a.name}
+              <button
+                onClick={() => setPendingAttachments(prev => prev.filter(p => p.id !== a.id))}
+                className="text-slate-400 hover:text-red-600"
+                title="Remove from this message"
+              >
+                <X className="h-3 w-3" />
+              </button>
+            </span>
+          ))}
+        </div>
+      )}
+      {uploadError && <p className="text-[10px] text-red-600">{uploadError}</p>}
+
       <div className="flex gap-2">
         <textarea
           value={draft}
@@ -545,14 +690,30 @@ function ChatPanel({ messages, onSend, onComplete }: { messages: ChatMessage[]; 
           onKeyDown={e => {
             if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
               e.preventDefault();
-              if (draft.trim()) { onSend(draft); setDraft(''); }
+              send();
             }
           }}
         />
         <div className="flex flex-col gap-1">
           <button
-            onClick={() => { if (draft.trim()) { onSend(draft); setDraft(''); } }}
-            disabled={!draft.trim()}
+            onClick={() => fileInputRef.current?.click()}
+            disabled={uploading}
+            className="text-[10px] px-2 py-1 bg-slate-50 text-slate-600 border border-slate-200 rounded hover:bg-slate-100 disabled:opacity-50 inline-flex items-center gap-1"
+            title="Attach a file"
+          >
+            {uploading ? <Loader2 className="h-3 w-3 animate-spin" /> : <Paperclip className="h-3 w-3" />}
+            Attach
+          </button>
+          <button
+            onClick={addCallLink}
+            className="text-[10px] px-2 py-1 bg-emerald-50 text-emerald-700 border border-emerald-200 rounded hover:bg-emerald-100 inline-flex items-center gap-1"
+            title="Share a Teams / Zoom / Google Meet link"
+          >
+            <Phone className="h-3 w-3" /> Call
+          </button>
+          <button
+            onClick={send}
+            disabled={!draft.trim() && pendingAttachments.length === 0}
             className="text-xs px-3 py-1 bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50 inline-flex items-center gap-1"
           >
             <Send className="h-3 w-3" /> Send
@@ -565,6 +726,13 @@ function ChatPanel({ messages, onSend, onComplete }: { messages: ChatMessage[]; 
             Complete
           </button>
         </div>
+        <input
+          ref={fileInputRef}
+          type="file"
+          multiple
+          className="hidden"
+          onChange={e => handleFiles(e.target.files)}
+        />
       </div>
     </div>
   );

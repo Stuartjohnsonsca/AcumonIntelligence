@@ -20,6 +20,13 @@ const SECTION_KEY = 'specialists_items';
 
 interface Ctx { params: Promise<{ engagementId: string; roleKey: string }> }
 
+interface ChatAttachment {
+  id: string;
+  name: string;
+  blobName?: string;
+  mimeType?: string | null;
+  size?: number;
+}
 interface ChatMessage {
   id: string;
   userId: string;
@@ -27,7 +34,8 @@ interface ChatMessage {
   role: string;
   message: string;
   createdAt: string;
-  attachments?: { id: string; name: string; url?: string }[];
+  attachments?: ChatAttachment[];
+  callLink?: { label?: string; url: string };
 }
 
 interface SpecialistItem {
@@ -99,8 +107,26 @@ export async function POST(req: NextRequest, ctx: Ctx) {
   const body = await req.json().catch(() => null);
   const itemId = String(body?.itemId || '').trim();
   const message = String(body?.message || '').trim();
-  if (!itemId || !message) {
-    return NextResponse.json({ error: 'itemId and message required' }, { status: 400 });
+  // Optional attachments / call link in the same payload — let
+  // the external specialist post a message with files or a meeting
+  // URL in one round-trip. Files must already be uploaded via the
+  // attachments endpoint; only the metadata is sent here.
+  const attachments: ChatAttachment[] = Array.isArray(body?.attachments)
+    ? body.attachments
+        .filter((a: any) => a && typeof a === 'object' && a.id && a.name)
+        .map((a: any) => ({
+          id: String(a.id),
+          name: String(a.name),
+          blobName: a.blobName ? String(a.blobName) : undefined,
+          mimeType: a.mimeType ?? null,
+          size: typeof a.size === 'number' ? a.size : undefined,
+        }))
+    : [];
+  const callLink = body?.callLink && typeof body.callLink === 'object' && typeof body.callLink.url === 'string' && /^https?:\/\//i.test(body.callLink.url)
+    ? { url: String(body.callLink.url), label: body.callLink.label ? String(body.callLink.label) : undefined }
+    : undefined;
+  if (!itemId || (!message && attachments.length === 0 && !callLink)) {
+    return NextResponse.json({ error: 'itemId and at least a message, attachment, or callLink required' }, { status: 400 });
   }
 
   const section = await prisma.auditPermanentFile.findUnique({
@@ -123,6 +149,8 @@ export async function POST(req: NextRequest, ctx: Ctx) {
     role: 'External Specialist',
     message,
     createdAt: new Date().toISOString(),
+    attachments: attachments.length > 0 ? attachments : undefined,
+    callLink,
   };
   const next: SpecialistItem = {
     ...role.items[idx],

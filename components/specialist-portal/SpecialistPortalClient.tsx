@@ -1,7 +1,7 @@
 'use client';
 
-import { useEffect, useState } from 'react';
-import { Loader2, Send, MessageSquare, FileText, CheckCircle2 } from 'lucide-react';
+import { useEffect, useRef, useState } from 'react';
+import { Loader2, Send, MessageSquare, FileText, CheckCircle2, Paperclip, Phone, X } from 'lucide-react';
 
 /**
  * External Specialist Portal — client component.
@@ -20,6 +20,13 @@ import { Loader2, Send, MessageSquare, FileText, CheckCircle2 } from 'lucide-rea
  * or the URL was edited.
  */
 
+interface ChatAttachment {
+  id: string;
+  name: string;
+  blobName?: string;
+  mimeType?: string | null;
+  size?: number;
+}
 interface ChatMessage {
   id: string;
   userId: string;
@@ -27,6 +34,8 @@ interface ChatMessage {
   role: string;
   message: string;
   createdAt: string;
+  attachments?: ChatAttachment[];
+  callLink?: { label?: string; url: string };
 }
 
 interface SpecialistItem {
@@ -59,10 +68,63 @@ export function SpecialistPortalClient({ engagementId, roleKey, email, sig }: Pr
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [drafts, setDrafts] = useState<Record<string, string>>({});
+  const [pendingAttachments, setPendingAttachments] = useState<Record<string, ChatAttachment[]>>({});
+  const [uploadingFor, setUploadingFor] = useState<string | null>(null);
   const [sending, setSending] = useState<string | null>(null);
+  const fileInputs = useRef<Record<string, HTMLInputElement | null>>({});
 
   const baseQs = new URLSearchParams({ email, sig }).toString();
   const apiUrl = `/api/specialist-portal/${encodeURIComponent(engagementId)}/${encodeURIComponent(roleKey)}?${baseQs}`;
+  // Attachments use the engagement-side endpoint with the same
+  // (email, sig) auth — that route validates the HMAC against the
+  // role + engagement so the firm's own session isn't required.
+  const attachmentsUrl = `/api/engagements/${encodeURIComponent(engagementId)}/specialists/attachments?roleKey=${encodeURIComponent(roleKey)}&${baseQs}`;
+
+  async function handleFiles(itemId: string, files: FileList | null) {
+    if (!files || files.length === 0) return;
+    setUploadingFor(itemId);
+    try {
+      const uploaded: ChatAttachment[] = [];
+      for (let i = 0; i < files.length; i++) {
+        const file = files[i];
+        const fd = new FormData();
+        fd.append('file', file);
+        fd.append('roleKey', roleKey);
+        const res = await fetch(attachmentsUrl, { method: 'POST', body: fd });
+        if (!res.ok) {
+          const err = await res.json().catch(() => ({}));
+          setError(err?.error || `Upload failed (${res.status})`);
+          break;
+        }
+        const data = await res.json();
+        uploaded.push({
+          id: data.id,
+          name: data.name,
+          blobName: data.blobName,
+          mimeType: data.mimeType ?? null,
+          size: data.size,
+        });
+      }
+      if (uploaded.length > 0) {
+        setPendingAttachments(prev => ({ ...prev, [itemId]: [...(prev[itemId] || []), ...uploaded] }));
+      }
+    } finally {
+      setUploadingFor(null);
+      const inp = fileInputs.current[itemId];
+      if (inp) inp.value = '';
+    }
+  }
+
+  function removePending(itemId: string, attId: string) {
+    setPendingAttachments(prev => ({
+      ...prev,
+      [itemId]: (prev[itemId] || []).filter(a => a.id !== attId),
+    }));
+  }
+
+  function attachmentDownloadUrl(att: ChatAttachment): string {
+    return `/api/engagements/${encodeURIComponent(engagementId)}/specialists/attachments?blob=${encodeURIComponent(att.blobName || att.id)}&roleKey=${encodeURIComponent(roleKey)}&${baseQs}`;
+  }
 
   async function load() {
     setLoading(true);
@@ -89,18 +151,25 @@ export function SpecialistPortalClient({ engagementId, roleKey, email, sig }: Pr
 
   useEffect(() => { void load(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [engagementId, roleKey, email, sig]);
 
-  async function sendMessage(itemId: string) {
-    const message = drafts[itemId]?.trim();
-    if (!message) return;
+  async function sendMessage(itemId: string, callLink?: { url: string; label?: string }) {
+    const message = (drafts[itemId] || '').trim();
+    const atts = pendingAttachments[itemId] || [];
+    if (!message && atts.length === 0 && !callLink) return;
     setSending(itemId);
     try {
       const res = await fetch(apiUrl, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ itemId, message }),
+        body: JSON.stringify({
+          itemId,
+          message: message || (callLink ? 'Joining a call:' : ''),
+          attachments: atts.length > 0 ? atts : undefined,
+          callLink,
+        }),
       });
       if (res.ok) {
         setDrafts(prev => ({ ...prev, [itemId]: '' }));
+        setPendingAttachments(prev => ({ ...prev, [itemId]: [] }));
         await load();
       } else {
         const e = await res.json().catch(() => ({}));
@@ -109,6 +178,17 @@ export function SpecialistPortalClient({ engagementId, roleKey, email, sig }: Pr
     } finally {
       setSending(null);
     }
+  }
+
+  function shareCallLink(itemId: string) {
+    const url = window.prompt('Paste a Teams / Zoom / Google Meet link to share:');
+    if (!url) return;
+    const trimmed = url.trim();
+    if (!/^https?:\/\//i.test(trimmed)) {
+      alert('Please paste a full URL beginning with https://.');
+      return;
+    }
+    void sendMessage(itemId, { url: trimmed });
   }
 
   if (loading) {
@@ -190,27 +270,98 @@ export function SpecialistPortalClient({ engagementId, roleKey, email, sig }: Pr
                               <span className="text-[10px] text-slate-400">{m.role}</span>
                               <span className="text-[10px] text-slate-400 ml-auto">{new Date(m.createdAt).toLocaleString('en-GB')}</span>
                             </div>
-                            <p className="text-slate-700 whitespace-pre-wrap break-words mt-0.5">{m.message}</p>
+                            {m.message && <p className="text-slate-700 whitespace-pre-wrap break-words mt-0.5">{m.message}</p>}
+                            {m.callLink && (
+                              <a
+                                href={m.callLink.url}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="mt-1 inline-flex items-center gap-1 text-[11px] px-2 py-1 bg-emerald-50 text-emerald-700 border border-emerald-200 rounded hover:bg-emerald-100"
+                              >
+                                <Phone className="h-3 w-3" /> {m.callLink.label || 'Join call'}
+                              </a>
+                            )}
+                            {m.attachments && m.attachments.length > 0 && (
+                              <ul className="mt-1 space-y-0.5">
+                                {m.attachments.map(a => (
+                                  <li key={a.id}>
+                                    <a
+                                      href={attachmentDownloadUrl(a)}
+                                      target="_blank"
+                                      rel="noopener noreferrer"
+                                      className="inline-flex items-center gap-1 text-[11px] text-blue-600 hover:underline"
+                                    >
+                                      <Paperclip className="h-3 w-3" /> {a.name}
+                                      {typeof a.size === 'number' && <span className="text-slate-400">({Math.round(a.size / 1024)} KB)</span>}
+                                    </a>
+                                  </li>
+                                ))}
+                              </ul>
+                            )}
                           </div>
                         ))}
                       </div>
                       {item.status === 'open' ? (
-                        <div className="flex gap-2">
-                          <textarea
-                            value={drafts[item.id] || ''}
-                            onChange={e => setDrafts(prev => ({ ...prev, [item.id]: e.target.value }))}
-                            placeholder="Type a message…"
-                            rows={2}
-                            className="flex-1 text-xs border border-slate-300 rounded px-2 py-1 resize-y"
-                          />
-                          <button
-                            onClick={() => void sendMessage(item.id)}
-                            disabled={sending === item.id || !drafts[item.id]?.trim()}
-                            className="text-xs px-3 py-1 bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50 inline-flex items-center gap-1 self-start"
-                          >
-                            {sending === item.id ? <Loader2 className="h-3 w-3 animate-spin" /> : <Send className="h-3 w-3" />}
-                            Send
-                          </button>
+                        <div className="space-y-2">
+                          {pendingAttachments[item.id]?.length > 0 && (
+                            <div className="flex flex-wrap items-center gap-1">
+                              {pendingAttachments[item.id].map(a => (
+                                <span key={a.id} className="inline-flex items-center gap-1 text-[10px] px-2 py-0.5 bg-slate-100 border border-slate-200 rounded">
+                                  <Paperclip className="h-3 w-3 text-slate-500" />
+                                  {a.name}
+                                  <button
+                                    onClick={() => removePending(item.id, a.id)}
+                                    className="text-slate-400 hover:text-red-600"
+                                    title="Remove from this message"
+                                  >
+                                    <X className="h-3 w-3" />
+                                  </button>
+                                </span>
+                              ))}
+                            </div>
+                          )}
+                          <div className="flex gap-2">
+                            <textarea
+                              value={drafts[item.id] || ''}
+                              onChange={e => setDrafts(prev => ({ ...prev, [item.id]: e.target.value }))}
+                              placeholder="Type a message…"
+                              rows={2}
+                              className="flex-1 text-xs border border-slate-300 rounded px-2 py-1 resize-y"
+                            />
+                            <div className="flex flex-col gap-1">
+                              <button
+                                onClick={() => fileInputs.current[item.id]?.click()}
+                                disabled={uploadingFor === item.id}
+                                className="text-[10px] px-2 py-1 bg-slate-50 text-slate-600 border border-slate-200 rounded hover:bg-slate-100 disabled:opacity-50 inline-flex items-center gap-1"
+                                title="Attach a file"
+                              >
+                                {uploadingFor === item.id ? <Loader2 className="h-3 w-3 animate-spin" /> : <Paperclip className="h-3 w-3" />}
+                                Attach
+                              </button>
+                              <button
+                                onClick={() => shareCallLink(item.id)}
+                                className="text-[10px] px-2 py-1 bg-emerald-50 text-emerald-700 border border-emerald-200 rounded hover:bg-emerald-100 inline-flex items-center gap-1"
+                                title="Share a Teams / Zoom / Google Meet link"
+                              >
+                                <Phone className="h-3 w-3" /> Call
+                              </button>
+                              <button
+                                onClick={() => void sendMessage(item.id)}
+                                disabled={sending === item.id || (!drafts[item.id]?.trim() && (pendingAttachments[item.id]?.length || 0) === 0)}
+                                className="text-xs px-3 py-1 bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50 inline-flex items-center gap-1"
+                              >
+                                {sending === item.id ? <Loader2 className="h-3 w-3 animate-spin" /> : <Send className="h-3 w-3" />}
+                                Send
+                              </button>
+                            </div>
+                            <input
+                              ref={el => { fileInputs.current[item.id] = el; }}
+                              type="file"
+                              multiple
+                              className="hidden"
+                              onChange={e => handleFiles(item.id, e.target.files)}
+                            />
+                          </div>
                         </div>
                       ) : (
                         <p className="text-[11px] text-slate-400 italic">This conversation has been closed by the audit team.</p>
