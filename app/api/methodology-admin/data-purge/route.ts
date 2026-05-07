@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 import { auth } from '@/lib/auth';
 import { prisma } from '@/lib/db';
-import { TAB_PURGE_DEFS, findPurgeTabDef } from '@/lib/data-purge-registry';
+import { TAB_PURGE_DEFS, findPurgeTabDef, resolveTargetsWithCascade } from '@/lib/data-purge-registry';
 import { logEngagementAction } from '@/lib/engagement-action-log';
 
 /**
@@ -38,6 +38,10 @@ export async function GET() {
       key: t.key,
       label: t.label,
       description: t.description,
+      cascade: t.cascade || [],
+      // Pre-resolved expansion so the UI can display "purging this
+      // also wipes …" without re-implementing the cascade walker.
+      expandedKeys: resolveTargetsWithCascade(t.key).expandedKeys,
     })),
   });
 }
@@ -75,16 +79,22 @@ export async function POST(req: Request) {
   });
   const engagementIds = engagements.map(e => e.id);
 
-  const perTargetCounts: Array<{ model: string; count: number }> = [];
+  // Resolve cascades — the registry lets a tab's purge sweep up the
+  // artifacts it spawned via triggers (Specialist chats, Schedule
+  // Specialist Reviews, Outstanding Items, etc.) so resetting a tab
+  // genuinely returns the engagement to a clean state.
+  const { targets, expandedKeys } = resolveTargetsWithCascade(def.key);
+
+  const perTargetCounts: Array<{ model: string; count: number; extraWhere?: Record<string, unknown> }> = [];
   if (engagementIds.length > 0) {
-    for (const target of def.targets) {
+    for (const target of targets) {
       // Type-erase to call deleteMany on the chosen model. The
       // Prisma client surfaces every model as a property on the
       // client; we look it up by name from the registry so adding
       // a new tab is a one-line change in the registry.
       const model = (prisma as any)[target.model];
       if (!model || typeof model.deleteMany !== 'function') {
-        perTargetCounts.push({ model: target.model, count: -1 });
+        perTargetCounts.push({ model: target.model, count: -1, extraWhere: target.extraWhere });
         continue;
       }
       const where: Record<string, unknown> = {
@@ -93,10 +103,10 @@ export async function POST(req: Request) {
       };
       try {
         const result = await model.deleteMany({ where });
-        perTargetCounts.push({ model: target.model, count: result?.count ?? 0 });
+        perTargetCounts.push({ model: target.model, count: result?.count ?? 0, extraWhere: target.extraWhere });
       } catch (err: any) {
         console.error(`[data-purge] ${target.model} deleteMany failed:`, err?.message || err);
-        perTargetCounts.push({ model: target.model, count: -1 });
+        perTargetCounts.push({ model: target.model, count: -1, extraWhere: target.extraWhere });
       }
     }
   }
@@ -121,6 +131,7 @@ export async function POST(req: Request) {
       metadata: {
         tabKey: def.key,
         tabLabel: def.label,
+        cascadedKeys: expandedKeys,
         targets: perTargetCounts,
         totalDeleted,
         engagementCount: engagementIds.length,
@@ -128,11 +139,12 @@ export async function POST(req: Request) {
     });
   }
 
-  console.log(`[data-purge] firm=${firmId} tab=${def.key} deleted=${totalDeleted} byUser=${session.user.id} (${session.user.email})`);
+  console.log(`[data-purge] firm=${firmId} tab=${def.key} cascaded=[${expandedKeys.join(',')}] deleted=${totalDeleted} byUser=${session.user.id} (${session.user.email})`);
   return NextResponse.json({
     ok: true,
     tab: def.key,
     label: def.label,
+    cascadedKeys: expandedKeys,
     targets: perTargetCounts,
     totalDeleted,
     engagementCount: engagementIds.length,

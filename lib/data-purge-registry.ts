@@ -40,6 +40,16 @@ export interface PurgeTabDef {
   description: string;
   /** One or more model deletes that together wipe the tab's data. */
   targets: PurgeTarget[];
+  /**
+   * Other tab keys whose targets are also wiped when this tab is
+   * purged. Lets a single click cascade a tab's purge through the
+   * artifacts that tab spawned via triggers — e.g. purging the
+   * Permanent File also wipes the specialist chats and Schedule
+   * Specialist Reviews fired from those answers, so the engagement
+   * is genuinely back to a clean slate. The API resolves cascades
+   * recursively with cycle protection.
+   */
+  cascade?: string[];
 }
 
 export const TAB_PURGE_DEFS: PurgeTabDef[] = [
@@ -47,15 +57,17 @@ export const TAB_PURGE_DEFS: PurgeTabDef[] = [
     key: 'permanent_file',
     label: 'Permanent File',
     description:
-      'Deletes every Permanent File answer across all engagements (Entity Details, Understanding the Entity, IT Environment, Taxation, etc.). Section-specific sub-tabs below let you wipe just one slice.',
+      'Deletes every Permanent File answer across all engagements (Entity Details, Understanding the Entity, IT Environment, Taxation, etc.). Also cascades to clear the specialist chats and Schedule Specialist Reviews fired from those answers, so the engagement is genuinely back to a clean slate and triggers can refire.',
     targets: [{ model: 'auditPermanentFile' }],
+    cascade: ['schedule_specialist_reviews'],
   },
   {
     key: 'permanent_file_specialists_chats',
     label: 'Specialists chats only (within Permanent File)',
     description:
-      'Deletes only the schedule-action / specialist chats stored under the permanent_file section "specialists_items". Does NOT touch the rest of the Permanent File.',
+      'Deletes only the schedule-action / specialist chats stored under the permanent_file section "specialists_items". Does NOT touch the rest of the Permanent File. After this, the next time a trigger value matches its action will refire and create a fresh chat.',
     targets: [{ model: 'auditPermanentFile', extraWhere: { sectionKey: 'specialists_items' } }],
+    cascade: ['permanent_file_overall_signoffs'],
   },
   {
     key: 'permanent_file_overall_signoffs',
@@ -202,7 +214,84 @@ export const TAB_PURGE_DEFS: PurgeTabDef[] = [
     description: 'Deletes every engagement-level Team Member row (Junior / Manager / RI / EQR assignments).',
     targets: [{ model: 'auditTeamMember' }],
   },
+
+  // ─── Trigger-related artifacts ────────────────────────────────────
+  // Things engagements accumulate as a side-effect of schedule
+  // actions, audit-test execution, and the "Send for specialist
+  // review" button. These are the "etc." in the user request — when
+  // an admin resets a tab they usually want the downstream artifacts
+  // gone too, not just the tab's primary content.
+  {
+    key: 'schedule_specialist_reviews',
+    label: 'Schedule Specialist Reviews',
+    description: 'Deletes every "Send for specialist review" row across all engagements (sent reviews + their decisions, comments, attachments). The send-email side-effect is not undone.',
+    targets: [{ model: 'scheduleSpecialistReview' }],
+  },
+  {
+    key: 'outstanding_items',
+    label: 'Outstanding Items',
+    description: 'Deletes every Outstanding Item row across all engagements (flow tasks, portal requests, evidence requests, review points spawned by tests / pipelines).',
+    targets: [{ model: 'outstandingItem' }],
+  },
+  {
+    key: 'test_executions',
+    label: 'Test Executions',
+    description: 'Deletes every audit-test execution record across all engagements (results of tests run via the Audit Plan / pipelines).',
+    targets: [{ model: 'testExecution' }],
+  },
+  {
+    key: 'journal_risk_runs',
+    label: 'Journal Risk Runs',
+    description: 'Deletes every Journal Risk run across all engagements (frozen Config snapshots, population evidence, selection summary).',
+    targets: [{ model: 'journalRiskRun' }],
+  },
+  {
+    key: 'all_triggered_artifacts',
+    label: 'ALL trigger-fired artifacts (combo)',
+    description: 'Wipes every artifact engagements accumulated via triggers: specialist chats, schedule specialist reviews, outstanding items, test executions, journal risk runs. Does NOT touch the tab content that triggered them — pick the relevant tab(s) separately for that.',
+    targets: [],
+    cascade: [
+      'permanent_file_specialists_chats',
+      'permanent_file_overall_signoffs',
+      'schedule_specialist_reviews',
+      'outstanding_items',
+      'test_executions',
+      'journal_risk_runs',
+    ],
+  },
 ];
+
+// ─── Cascade-aware target resolver ────────────────────────────────
+//
+// Walks a tab's `cascade` list recursively, deduplicating models +
+// extraWhere combos so the same deleteMany never fires twice in one
+// purge. Cycle-safe via a visited set keyed by tab key.
+export function resolveTargetsWithCascade(rootKey: string): {
+  targets: PurgeTarget[];
+  expandedKeys: string[];
+} {
+  const visited = new Set<string>();
+  const collected: PurgeTarget[] = [];
+  const seenKey = new Set<string>();
+  function visit(key: string) {
+    if (visited.has(key)) return;
+    visited.add(key);
+    const def = findPurgeTabDef(key);
+    if (!def) return;
+    for (const t of def.targets) {
+      const dedupKey = `${t.model}|${JSON.stringify(t.extraWhere || {})}`;
+      if (seenKey.has(dedupKey)) continue;
+      seenKey.add(dedupKey);
+      collected.push(t);
+    }
+    for (const next of def.cascade || []) visit(next);
+  }
+  visit(rootKey);
+  return {
+    targets: collected,
+    expandedKeys: Array.from(visited),
+  };
+}
 
 export function findPurgeTabDef(key: string): PurgeTabDef | undefined {
   return TAB_PURGE_DEFS.find(t => t.key === key);

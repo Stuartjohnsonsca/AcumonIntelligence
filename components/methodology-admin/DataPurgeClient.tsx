@@ -21,13 +21,16 @@ interface TabOption {
   key: string;
   label: string;
   description: string;
+  cascade: string[];
+  expandedKeys: string[];
 }
 
 interface PurgeResult {
   ok: boolean;
   tab: string;
   label: string;
-  targets: Array<{ model: string; count: number }>;
+  cascadedKeys: string[];
+  targets: Array<{ model: string; count: number; extraWhere?: Record<string, unknown> }>;
   totalDeleted: number;
   engagementCount: number;
 }
@@ -114,7 +117,19 @@ export function DataPurgeClient() {
           ))}
         </select>
         {selectedTab && (
-          <p className="text-xs text-slate-600 mt-1.5 leading-relaxed">{selectedTab.description}</p>
+          <div className="mt-1.5 space-y-1.5">
+            <p className="text-xs text-slate-600 leading-relaxed">{selectedTab.description}</p>
+            {selectedTab.expandedKeys.length > 1 && (
+              <div className="text-[11px] text-amber-800 bg-amber-50 border border-amber-200 rounded px-2 py-1.5">
+                <strong>Cascade:</strong> this purge also wipes data for {selectedTab.expandedKeys.length - 1} dependent tab{selectedTab.expandedKeys.length === 2 ? '' : 's'} so triggers can refire cleanly:
+                <ul className="list-disc ml-4 mt-1 space-y-0.5">
+                  {selectedTab.expandedKeys.filter(k => k !== selectedTab.key).map(k => (
+                    <li key={k}><code className="bg-white px-1 rounded">{k}</code></li>
+                  ))}
+                </ul>
+              </div>
+            )}
+          </div>
         )}
       </div>
 
@@ -168,13 +183,23 @@ export function DataPurgeClient() {
           <div className="text-xs text-slate-700">
             <strong>Per-table breakdown:</strong>
             <ul className="mt-1 space-y-0.5 ml-4 list-disc">
-              {result.targets.map(t => (
-                <li key={t.model}>
-                  <code className="bg-white px-1 rounded">{t.model}</code> — {t.count >= 0 ? `${t.count} row${t.count === 1 ? '' : 's'}` : <span className="text-red-700">failed</span>}
-                </li>
-              ))}
+              {result.targets.map((t, i) => {
+                const extraSuffix = t.extraWhere && Object.keys(t.extraWhere).length > 0
+                  ? ` (where ${Object.entries(t.extraWhere).map(([k, v]) => `${k}=${JSON.stringify(v)}`).join(', ')})`
+                  : '';
+                return (
+                  <li key={`${t.model}-${i}`}>
+                    <code className="bg-white px-1 rounded">{t.model}</code>{extraSuffix} — {t.count >= 0 ? `${t.count} row${t.count === 1 ? '' : 's'}` : <span className="text-red-700">failed</span>}
+                  </li>
+                );
+              })}
             </ul>
           </div>
+          {result.cascadedKeys && result.cascadedKeys.length > 1 && (
+            <div className="text-xs text-slate-600">
+              <strong>Cascaded tabs purged:</strong> {result.cascadedKeys.join(', ')}
+            </div>
+          )}
         </div>
       )}
     </div>
