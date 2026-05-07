@@ -39,6 +39,16 @@ const DEFAULT_SOURCES = ['Client', 'Bank', 'Solicitor', 'HMRC', 'Companies House
 const DEFAULT_USAGE_LOCATIONS = ['Opening', 'Prior Period', 'Permanent File', 'Ethics', 'Continuance', 'Trial Balance', 'Materiality', 'PAR', 'Walkthroughs', 'RMM', 'Audit Plan', 'Completion', 'General'];
 const DEFAULT_DOCUMENT_TYPES = ['Bank Statement', 'Bank Confirmation', 'Invoice', 'Contract', 'Lease Agreement', 'Board Minutes', 'Financial Statements', 'Tax Return', 'Payroll Report', 'Fixed Asset Register', 'Debtor Listing', 'Creditor Listing', 'Stock Listing', 'Management Accounts', 'Letter of Representation', 'Letter of Comment', 'Engagement Letter', 'Solicitor Confirmation', 'Other'];
 
+// Documents arriving from the Import Options pop-up (uploaded prior
+// audit file or carried-forward documents) are tagged with these
+// markers in their `mappedItems` array. The Documents tab renders them
+// in a separate "Prior Period Documents" collapsible folder.
+const PRIOR_PERIOD_TAGS = ['__prior_period_archive__', '__prior_period_carried__'];
+function isPriorPeriodFolderDoc(doc: AuditDocument): boolean {
+  const tags = Array.isArray(doc.mappedItems) ? doc.mappedItems : [];
+  return tags.some(t => PRIOR_PERIOD_TAGS.includes(t));
+}
+
 function fmtDate(d: string | null) { return d ? new Date(d).toLocaleDateString('en-GB') : '—'; }
 function fmtDateTime(d: string | null) { return d ? new Date(d).toLocaleDateString('en-GB') + ' ' + new Date(d).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' }) : '—'; }
 
@@ -78,6 +88,10 @@ export function DocumentRepositoryTab({ engagementId }: Props) {
   const [filterSource, setFilterSource] = useState('');
   const [filterLocation, setFilterLocation] = useState('');
   const [filterDocType, setFilterDocType] = useState('');
+
+  // Prior Period Documents folder is collapsed by default and only
+  // rendered when at least one document carries a prior-period tag.
+  const [priorPeriodFolderOpen, setPriorPeriodFolderOpen] = useState(false);
 
   // Derive all available types (defaults + customs from data + customs added this session)
   const allDocTypes = [...new Set([...DEFAULT_DOCUMENT_TYPES, ...customDocTypes, ...documents.map(d => d.documentType).filter(Boolean) as string[]])].sort();
@@ -390,12 +404,63 @@ export function DocumentRepositoryTab({ engagementId }: Props) {
       )}
 
       {/* Documents List */}
-      <div className="space-y-2">
-        {filtered.length === 0 ? (
-          <div className="text-center py-12 text-slate-400 text-sm italic border border-slate-200 rounded-lg">
-            {hasActiveFilters ? 'No documents match the current filters.' : 'No documents. Click "Request Document" to begin.'}
-          </div>
-        ) : filtered.map(doc => {
+      {(() => {
+        const priorPeriodDocs = filtered.filter(isPriorPeriodFolderDoc);
+        const otherDocs = filtered.filter(d => !isPriorPeriodFolderDoc(d));
+        return (
+          <div className="space-y-2">
+            {priorPeriodDocs.length > 0 && (
+              <div className="border border-amber-200 rounded-lg overflow-hidden bg-amber-50/30">
+                <button
+                  type="button"
+                  onClick={() => setPriorPeriodFolderOpen(prev => !prev)}
+                  className="w-full flex items-center justify-between px-3 py-2 hover:bg-amber-50 text-left"
+                >
+                  <div className="flex items-center gap-2">
+                    <span className="text-sm">{priorPeriodFolderOpen ? '📂' : '📁'}</span>
+                    <span className="text-xs font-semibold text-amber-800">Prior Period Documents</span>
+                    <span className="text-[10px] bg-amber-100 text-amber-700 px-1.5 py-0.5 rounded font-medium">
+                      {priorPeriodDocs.length} item{priorPeriodDocs.length !== 1 ? 's' : ''}
+                    </span>
+                  </div>
+                  <span className="text-[10px] text-amber-700 italic">
+                    Carried forward from prior audit file
+                  </span>
+                </button>
+                {priorPeriodFolderOpen && (
+                  <div className="border-t border-amber-200 px-2 py-2 space-y-1.5 bg-white/60">
+                    {priorPeriodDocs.map(doc => (
+                      <div key={doc.id} className="flex items-center gap-2 px-2 py-1.5 bg-white border border-amber-100 rounded">
+                        <span className="text-amber-500 text-xs">📄</span>
+                        <div className="flex-1 min-w-0">
+                          <p className="text-xs font-medium text-slate-700 truncate">{doc.documentName}</p>
+                          <p className="text-[10px] text-slate-400">
+                            {doc.uploadedDate ? fmtDate(doc.uploadedDate) : '—'}
+                            {doc.fileSize ? ` • ${(doc.fileSize / 1024).toFixed(0)} KB` : ''}
+                            {doc.documentType ? ` • ${doc.documentType}` : ''}
+                          </p>
+                        </div>
+                        {doc.storagePath && (
+                          <a
+                            href={`/api/documents/preview?docId=${doc.id}`}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="text-[10px] text-blue-600 hover:text-blue-800 underline"
+                          >
+                            Open
+                          </a>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+            {otherDocs.length === 0 && priorPeriodDocs.length === 0 ? (
+              <div className="text-center py-12 text-slate-400 text-sm italic border border-slate-200 rounded-lg">
+                {hasActiveFilters ? 'No documents match the current filters.' : 'No documents. Click "Request Document" to begin.'}
+              </div>
+            ) : otherDocs.map(doc => {
           const isExpanded = expandedDoc === doc.id;
           const mappedItems = Array.isArray(doc.mappedItems) ? doc.mappedItems : [];
 
@@ -539,7 +604,9 @@ export function DocumentRepositoryTab({ engagementId }: Props) {
             </div>
           );
         })}
-      </div>
+          </div>
+        );
+      })()}
 
       {/* Hidden file input */}
       <input ref={fileInputRef} type="file" accept="*,.zip" className="hidden" onChange={async e => {

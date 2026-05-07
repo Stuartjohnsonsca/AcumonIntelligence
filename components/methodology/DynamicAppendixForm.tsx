@@ -230,6 +230,47 @@ export function DynamicAppendixForm({
   // failing silently is fine — no highlights is a sensible default.
   const [referencedPaths, setReferencedPaths] = useState<Set<string>>(new Set());
   const [referencedByPath, setReferencedByPath] = useState<Record<string, Array<{ templateId: string; templateName: string; kind: string }>>>({});
+
+  // ── AI-populated field provenance ──────────────────────────────────
+  // Fields written by the Import Options pop-up (prior-period AI) or by
+  // the current-year AI populate flow are tagged in __fieldmeta with
+  // source='prior_period_ai' or 'current_year_ai'. Renders with an
+  // orange dashed surround that sits *outside* any existing ring/border
+  // (Tailwind outline utilities — additive, never over- or under-write).
+  const [aiPopulatedFieldIds, setAiPopulatedFieldIds] = useState<Set<string>>(new Set());
+  const [aiFieldTooltips, setAiFieldTooltips] = useState<Record<string, string>>({});
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch(`/api/engagements/${engagementId}/${endpoint}?meta=signoffs`);
+        if (!res.ok) return;
+        const data = await res.json().catch(() => ({}));
+        const fm = (data?.fieldMeta || {}) as Record<string, { source?: string; byUserName?: string; at?: string; sourceLocation?: string }>;
+        if (cancelled) return;
+        const set = new Set<string>();
+        const tips: Record<string, string> = {};
+        for (const [k, v] of Object.entries(fm)) {
+          if (v && (v.source === 'prior_period_ai' || v.source === 'current_year_ai')) {
+            set.add(k);
+            const label = v.source === 'prior_period_ai' ? 'Prior period AI' : 'Current year AI';
+            const when = v.at ? ` on ${new Date(v.at).toLocaleDateString('en-GB')}` : '';
+            const who = v.byUserName ? ` (${v.byUserName})` : '';
+            const from = v.sourceLocation ? `\nFrom: ${v.sourceLocation}` : '';
+            tips[k] = `Populated by ${label}${who}${when}${from}`;
+          }
+        }
+        setAiPopulatedFieldIds(set);
+        setAiFieldTooltips(tips);
+      } catch { /* silent — no surround if meta fetch fails */ }
+    })();
+    return () => { cancelled = true; };
+  }, [engagementId, endpoint]);
+  function aiOutlineClass(fieldId: string): string {
+    return aiPopulatedFieldIds.has(fieldId)
+      ? 'outline outline-2 outline-dashed outline-orange-400 outline-offset-2 rounded'
+      : '';
+  }
   useEffect(() => {
     let cancelled = false;
     // Pulled out so the same fetch can run on mount AND on every
@@ -941,8 +982,11 @@ export function DynamicAppendixForm({
                             const colN = ci + 1;
                             const cellKey = `${q.id}_col${colN}`;
                             const colReferenced = isColumnReferenced(q, colN);
-                            const colTitle = colReferenced ? referencedByTooltip(q, colN) : undefined;
-                            const refClass = colReferenced ? 'ring-2 ring-red-500 ring-offset-1' : '';
+                            const colTitle = aiPopulatedFieldIds.has(cellKey)
+                              ? aiFieldTooltips[cellKey]
+                              : (colReferenced ? referencedByTooltip(q, colN) : undefined);
+                            // Both classes are additive — ring sits inside, outline sits outside.
+                            const refClass = `${colReferenced ? 'ring-2 ring-red-500 ring-offset-1' : ''} ${aiOutlineClass(cellKey)}`.trim();
                             // Per-cell conditional — e.g. col2 is only
                             // relevant when col1 is 'Y'. When the
                             // condition fails we render an empty
@@ -1261,8 +1305,12 @@ export function DynamicAppendixForm({
                       )}
                     </div>
                     <div
-                      className={`flex-1 px-2 py-1.5 ${outline} relative ${isQuestionReferenced(q) ? 'ring-2 ring-red-500 ring-offset-0 rounded' : ''}`}
-                      title={isQuestionReferenced(q) ? referencedByTooltip(q) : undefined}
+                      className={`flex-1 px-2 py-1.5 ${outline} relative ${isQuestionReferenced(q) ? 'ring-2 ring-red-500 ring-offset-0 rounded' : ''} ${aiOutlineClass(q.id)}`}
+                      title={
+                        aiPopulatedFieldIds.has(q.id) ? aiFieldTooltips[q.id]
+                        : isQuestionReferenced(q) ? referencedByTooltip(q)
+                        : undefined
+                      }
                     >
                       <FormField
                         questionId={q.id}

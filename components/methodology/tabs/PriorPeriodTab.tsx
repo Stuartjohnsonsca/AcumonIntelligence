@@ -24,8 +24,17 @@ interface SignOff { userId: string; userName: string; timestamp: string; }
 interface OBRow { account: string; amount: number | null; fsLineItem: string; }
 interface FSMapping { fsLineItem: string; accounts: string[]; }
 
+interface ArchiveDoc {
+  id: string;
+  documentName: string;
+  storagePath: string | null;
+  fileSize: number | null;
+  uploadedDate: string | null;
+}
+
 const REVIEWABLE = ['pp_letter_of_comment', 'pp_letter_of_representation', 'pp_financial_statements'];
 const ROLE_MAP: Record<string, string> = { Junior: 'operator', Manager: 'reviewer', RI: 'partner' };
+const PRIOR_PERIOD_ARCHIVE_TAG = '__prior_period_archive__';
 
 export function PriorPeriodTab({ engagementId, teamMembers = [] }: Props) {
   const { data: session } = useSession();
@@ -50,12 +59,20 @@ export function PriorPeriodTab({ engagementId, teamMembers = [] }: Props) {
   const [pasteText, setPasteText] = useState('');
   const fileInputRef = useRef<HTMLInputElement>(null);
 
+  // Prior Period Archive — files uploaded / fetched via the Import
+  // Options pop-up at audit start. Tagged with PRIOR_PERIOD_ARCHIVE_TAG.
+  const [archiveDocs, setArchiveDocs] = useState<ArchiveDoc[]>([]);
+  const [archiveExpanded, setArchiveExpanded] = useState(true);
+
   const currentUserId = session?.user?.id;
   const canSignAs = (role: string) => currentUserId && teamMembers.some(m => ROLE_MAP[m.role] === role && m.userId === currentUserId);
 
   const loadData = useCallback(async () => {
     try {
-      const res = await fetch(`/api/engagements/${engagementId}/prior-period`);
+      const [res, archiveRes] = await Promise.all([
+        fetch(`/api/engagements/${engagementId}/prior-period`),
+        fetch(`/api/engagements/${engagementId}/documents`),
+      ]);
       if (res.ok) {
         const json = await res.json();
         setDocStatus(json.docStatus || []);
@@ -64,6 +81,13 @@ export function PriorPeriodTab({ engagementId, teamMembers = [] }: Props) {
         setSummaries(json.summaries || {});
         if (json.openingBalances?.rows) setObRows(json.openingBalances.rows);
         if (json.obMapping?.mapping) setObMapping(json.obMapping.mapping);
+      }
+      if (archiveRes.ok) {
+        const archiveJson = await archiveRes.json();
+        const docs: ArchiveDoc[] = ((archiveJson.documents || []) as { id: string; documentName: string; storagePath: string | null; fileSize: number | null; uploadedDate: string | null; mappedItems?: unknown }[])
+          .filter(d => Array.isArray(d.mappedItems) && (d.mappedItems as string[]).includes(PRIOR_PERIOD_ARCHIVE_TAG))
+          .map(d => ({ id: d.id, documentName: d.documentName, storagePath: d.storagePath, fileSize: d.fileSize, uploadedDate: d.uploadedDate }));
+        setArchiveDocs(docs);
       }
     } catch (err) { console.error('Failed to load:', err); }
     finally { setLoading(false); }
@@ -425,6 +449,59 @@ export function PriorPeriodTab({ engagementId, teamMembers = [] }: Props) {
           </div>
         );
       })}
+
+      {/* Prior Period Archive — files uploaded / fetched via the Import
+          Options pop-up. Collapsible. Empty by default if the user
+          skipped the import or hasn't uploaded anything yet. */}
+      {archiveDocs.length > 0 && (
+        <div className="border border-slate-200 rounded-lg overflow-hidden">
+          <button
+            type="button"
+            onClick={() => setArchiveExpanded(prev => !prev)}
+            className="w-full flex items-center justify-between px-4 py-3 bg-amber-50 border-b border-amber-100 hover:bg-amber-100/60 text-left"
+          >
+            <div className="flex items-center gap-3">
+              <span className="text-sm">{archiveExpanded ? '▼' : '▶'}</span>
+              <h3 className="text-sm font-semibold text-amber-800">Prior Period Archive</h3>
+              <span className="text-[10px] text-amber-700 bg-amber-100 px-1.5 py-0.5 rounded font-medium">
+                {archiveDocs.length} file{archiveDocs.length !== 1 ? 's' : ''}
+              </span>
+            </div>
+            <p className="text-[10px] text-amber-700 italic">
+              Uploaded / fetched via Import Options at audit start
+            </p>
+          </button>
+          {archiveExpanded && (
+            <div className="px-4 py-3 space-y-2 bg-amber-50/30">
+              {archiveDocs.map(doc => (
+                <div key={doc.id} className="flex items-center gap-3 px-3 py-2 bg-white border border-amber-100 rounded">
+                  <span className="text-amber-500">📦</span>
+                  <div className="flex-1 min-w-0">
+                    <p className="text-xs font-medium text-slate-800 truncate">{doc.documentName}</p>
+                    <p className="text-[10px] text-slate-400">
+                      {doc.uploadedDate ? new Date(doc.uploadedDate).toLocaleDateString('en-GB') : '—'}
+                      {doc.fileSize ? ` • ${(doc.fileSize / 1024).toFixed(0)} KB` : ''}
+                    </p>
+                  </div>
+                  <a
+                    href={`/api/documents/preview?docId=${doc.id}`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-xs text-blue-600 hover:text-blue-800 underline"
+                  >
+                    Open
+                  </a>
+                </div>
+              ))}
+              <p className="text-[10px] text-slate-500 italic mt-1">
+                These files were extracted (where text was readable) and proposed as field
+                mappings during the Import Options flow. Approved values are highlighted on
+                each tab with an orange dashed surround.
+              </p>
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Opening Balances Section */}
       <div className="border border-slate-200 rounded-lg overflow-hidden">

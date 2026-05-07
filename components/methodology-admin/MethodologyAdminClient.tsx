@@ -1,7 +1,7 @@
 'use client';
 
 import Link from 'next/link';
-import { BookOpen, Settings, FileText, ClipboardCheck, Users, FileStack, Mail, AlertTriangle, ShieldAlert, Brain, ShieldCheck, ShieldOff, Search, Gauge, Trash2 } from 'lucide-react';
+import { BookOpen, Settings, FileText, ClipboardCheck, Users, FileStack, Mail, AlertTriangle, ShieldAlert, Brain, ShieldCheck, ShieldOff, Search, Gauge, Trash2, Cloud } from 'lucide-react';
 
 // Map href → registry howto-id so the global guide can point at any tile.
 // Keep these in sync with HOWTO_ELEMENTS in lib/howto/registry.ts.
@@ -152,6 +152,14 @@ const tiles = [
     icon: Trash2,
     color: 'bg-red-50 border-red-200 hover:bg-red-100',
     iconColor: 'text-red-600',
+  },
+  {
+    title: 'Cloud Audit Connectors',
+    description: 'Connection recipes for fetching prior audit files from MyWorkPapers and other cloud audit software during the Import Options flow.',
+    href: '/methodology-admin/cloud-audit-connectors',
+    icon: Cloud,
+    color: 'bg-sky-50 border-sky-200 hover:bg-sky-100',
+    iconColor: 'text-sky-600',
   },
 ];
 

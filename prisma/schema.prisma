@@ -103,6 +103,9 @@ model Firm {
   perfAiTools               PerfAiTool[]
   perfAiUsage               PerfAiUsage[]
   perfAiValidations         PerfAiValidation[]
+  // Cloud audit-software connectors registered for this firm. Seeded
+  // with MyWorkPapers as a built-in entry; admins can register more.
+  cloudAuditConnectors      CloudAuditConnector[]
 
   @@map("firms")
 }
@@ -173,6 +176,8 @@ model User {
   // Self-healing error system
   errorReports              ErrorAutoFix[]             @relation("ErrorReporter")
   errorReverts              ErrorAutoFix[]             @relation("ErrorReverter")
+  // Cloud audit-software connectors created by this user
+  cloudConnectorsCreated    CloudAuditConnector[]      @relation("CloudConnectorCreator")
 
   @@map("users")
 }
@@ -2007,6 +2012,19 @@ model AuditEngagement {
   // Null = setup incomplete → no staff member can log in yet.
   portalSetupCompletedAt DateTime? @map("portal_setup_completed_at")
 
+  // Selections recorded by the Import Options pop-up shown when the
+  // engagement is first opened. Shape:
+  //   {
+  //     prompted: boolean,            // pop-up has been answered (proceed or cancel)
+  //     selections: string[],         // any of: import_data, copy_documents, ai_populate_current
+  //     source?: { type: 'upload' | 'cloud' | 'cloud_other', connectorId?, sourceFileDocumentId?, vendorLabel? },
+  //     byUserId, byUserName, at,     // who answered + when
+  //     status: 'pending' | 'extracted' | 'applied' | 'cancelled',
+  //     extractionId?,                // FK-by-string to the most-recent ImportExtractionProposal row
+  //     history: [{ event, at, by, note? }]
+  //   }
+  importOptions Json? @map("import_options")
+
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
 
@@ -2050,12 +2068,96 @@ model AuditEngagement {
   actionLogs            EngagementActionLog[]
   vatReconciliation     AuditVatReconciliation?
   taxOnProfits          AuditTaxOnProfits?
+  importProposals       ImportExtractionProposal[]
 
   @@unique([clientId, periodId, auditType])
   @@index([firmId])
   @@index([createdById])
   @@index([priorPeriodEngagementId])
   @@map("audit_engagements")
+}
+
+/// Firm-scoped registry of cloud audit-software connectors a firm can
+/// pull a prior audit file from at the start of a new engagement.
+/// "MyWorkPapers" is seeded as an entry with a stub adapter; new
+/// vendors are added via the Import Options pop-up's "Other Cloud
+/// Audit Software" path which writes a row here. Credentials are NOT
+/// stored on this row — only the connection recipe (base URL, auth
+/// scheme, endpoint paths). End-user credentials are entered per
+/// connection attempt and never persisted.
+model CloudAuditConnector {
+  id           String   @id @default(uuid())
+  firmId       String   @map("firm_id")
+  vendorKey    String   @map("vendor_key") // slug: 'my_workpapers' | user-defined slug
+  label        String   // display name in dropdown
+  // Connector recipe — how to talk to the vendor's API.
+  //   {
+  //     baseUrl: string,
+  //     authScheme: 'bearer' | 'basic' | 'api_key' | 'oauth2',
+  //     authConfig: { headerName?: string, oauth2: {...} },   // shape varies by scheme
+  //     endpoints: {
+  //       listClients?: { method, path, jsonPath? },
+  //       listPeriods?: { method, path, jsonPath? },
+  //       fetchEngagement?: { method, path, jsonPath? },
+  //       downloadArchive?: { method, path },
+  //     },
+  //     fieldHints?: { ...optional vendor-specific tweaks }
+  //   }
+  config       Json
+  isBuiltIn    Boolean  @default(false) @map("is_built_in") // true for the seeded MyWorkPapers entry
+  isActive     Boolean  @default(true) @map("is_active")
+  createdById  String   @map("created_by_id")
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
+
+  firm      Firm @relation(fields: [firmId], references: [id], onDelete: Cascade)
+  createdBy User @relation("CloudConnectorCreator", fields: [createdById], references: [id])
+
+  @@unique([firmId, vendorKey])
+  @@index([firmId])
+  @@map("cloud_audit_connectors")
+}
+
+/// Per-engagement scratchpad of an AI-extracted "proposed mapping" of
+/// prior-audit-file data → current-engagement tab fields. Created when
+/// the user uploads or pulls a prior file, edited row-by-row in the
+/// Review pop-up, then collapsed into the engagement's tab JSON blobs
+/// when the user clicks Approve. Kept after approval purely as audit
+/// trail (status='applied'); a fresh extraction creates a new row
+/// rather than mutating in place.
+model ImportExtractionProposal {
+  id            String   @id @default(uuid())
+  engagementId  String   @map("engagement_id")
+  // Where the data came from — mirrors AuditEngagement.importOptions.source.
+  sourceType    String   @map("source_type") // upload | cloud | cloud_other
+  sourceLabel   String?  @map("source_label") // e.g. file name or 'MyWorkPapers — XYZ Ltd 2025'
+  sourceArchiveDocumentId String? @map("source_archive_document_id")
+  // The proposed rows. Shape:
+  //   [{
+  //     id: string,                   // stable row id for delete/edit
+  //     tabKey: string,               // 'ethics' | 'materiality' | ...
+  //     destination: { kind: 'json_blob' | 'row_table', section?, fieldKey?, rowId?, column? },
+  //     fieldLabel: string,           // human-readable label of destination
+  //     sourceLocation: string,       // hover-over: e.g. "Ethics > Independence > Q3"
+  //     proposedValue: any,           // editable
+  //     deleted: boolean,             // soft-delete in the Review pop-up
+  //     applied?: boolean
+  //   }]
+  proposals     Json     @default("[]")
+  // Captured AI-generation metadata for audit trail.
+  aiModel       String?  @map("ai_model")
+  rawAiResponse String?  @map("raw_ai_response") @db.Text
+  status        String   @default("pending") // pending | applied | cancelled
+  createdById   String   @map("created_by_id")
+  createdAt     DateTime @default(now()) @map("created_at")
+  appliedAt     DateTime? @map("applied_at")
+  appliedById   String?  @map("applied_by_id")
+
+  engagement AuditEngagement @relation(fields: [engagementId], references: [id], onDelete: Cascade)
+
+  @@index([engagementId])
+  @@index([status])
+  @@map("import_extraction_proposals")
 }
 
 /// Methodology-admin generated PDF snapshot of an engagement file.

@@ -30,6 +30,8 @@ export interface EngagementData {
   contacts: ContactData[];
   agreedDates: AgreedDateData[];
   informationRequests: InfoRequestData[];
+  /** Selections from the Import Options pop-up shown on first open. */
+  importOptions?: import('@/lib/import-options/types').ImportOptionsState | null;
 }
 
 export interface TeamMemberData {

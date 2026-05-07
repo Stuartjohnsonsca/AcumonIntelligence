@@ -6,6 +6,8 @@ import { useSearchParams } from 'next/navigation';
 import { EngagementTabs } from '@/components/methodology/EngagementTabs';
 import { IndependenceGate } from '@/components/methodology/IndependenceGate';
 import { ReadOnlyBanner } from '@/components/methodology/panels/ReadOnlyBanner';
+import { ImportOptionsModal } from '@/components/methodology/ImportOptionsModal';
+import { ImportReviewModal } from '@/components/methodology/ImportReviewModal';
 import { AUDIT_TYPE_LABELS } from '@/types/methodology';
 import type { AuditType } from '@/types/methodology';
 import type { EngagementData } from '@/hooks/useEngagement';
@@ -54,6 +56,12 @@ export function AuditEngagementPage({ auditType }: Props) {
   const [periodLabel, setPeriodLabel] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+
+  // Import Options pop-up — shown the first time an engagement is opened
+  // (importOptions.prompted falsy + status === 'pre_start'). Once
+  // proceeded/cancelled the pop-up never re-opens for this engagement.
+  const [importOptionsExtractionId, setImportOptionsExtractionId] = useState<string | null>(null);
+  const [showReviewModal, setShowReviewModal] = useState(false);
 
   const isEngagementPhase = !!engagement;
 
@@ -486,6 +494,63 @@ export function AuditEngagementPage({ auditType }: Props) {
               currentUserId={session?.user?.id || ''}
             />
           </IndependenceGate>
+        )}
+
+        {/* Import Options pop-up — shown the first time the engagement
+            is opened. Identified by importOptions.prompted falsy. */}
+        {isEngagementPhase && engagement && !engagement.importOptions?.prompted && (
+          <ImportOptionsModal
+            engagementId={engagement.id}
+            clientName={clientName}
+            onComplete={async (state, opts) => {
+              // Update local state so the modal does not re-open.
+              setEngagement(prev => prev ? { ...prev, importOptions: state } : prev);
+              if (opts.extractionId) {
+                setImportOptionsExtractionId(opts.extractionId);
+                setShowReviewModal(true);
+                return;
+              }
+              // No extraction (user skipped 'import_data') but may still
+              // have selected 'ai_populate_current'. Fire it now.
+              if (state.selections.includes('ai_populate_current')) {
+                try {
+                  await fetch(`/api/engagements/${engagement.id}/ai-populate-current`, { method: 'POST' });
+                  if (selectedPeriodId) handleOpenAuditFile(selectedPeriodId);
+                } catch (err) {
+                  console.warn('current-year AI populate failed:', err);
+                }
+              }
+            }}
+          />
+        )}
+
+        {/* Review Proposed Imports — opens after upload/cloud-fetch
+            produces an extraction the user must approve. */}
+        {showReviewModal && importOptionsExtractionId && engagement && (
+          <ImportReviewModal
+            engagementId={engagement.id}
+            extractionId={importOptionsExtractionId}
+            onApplied={async () => {
+              setShowReviewModal(false);
+              setImportOptionsExtractionId(null);
+              // If the user opted in to current-year AI population, fire
+              // it now — the prior-period data is freshly applied so the
+              // AI has the most context to work with.
+              if (engagement.importOptions?.selections?.includes('ai_populate_current')) {
+                try {
+                  await fetch(`/api/engagements/${engagement.id}/ai-populate-current`, { method: 'POST' });
+                } catch (err) {
+                  console.warn('current-year AI populate failed:', err);
+                }
+              }
+              // Re-load the engagement to pick up applied changes.
+              if (selectedPeriodId) handleOpenAuditFile(selectedPeriodId);
+            }}
+            onCancelled={() => {
+              setShowReviewModal(false);
+              setImportOptionsExtractionId(null);
+            }}
+          />
         )}
       </div>
     </div>
