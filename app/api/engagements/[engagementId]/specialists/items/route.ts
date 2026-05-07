@@ -123,10 +123,20 @@ export async function POST(
       if (dupe) return NextResponse.json({ created: false, item: dupe });
     }
 
-    const opening = renderOpeningMessage(action, {
+    // Prefer the auditor-facing context body the form constructs
+    // — it walks the trigger's sub-heading and lists every Q+A in
+    // that block, giving the specialist full context. Falls back
+    // to the action's hardcoded openingMessage template (single
+    // Q+A) when the caller didn't supply one (legacy callers, or
+    // edge cases where the form couldn't build it).
+    const contextBody = typeof body.contextBody === 'string' ? body.contextBody.trim() : '';
+    const renderedTemplate = renderOpeningMessage(action, {
       questionText: typeof body.questionText === 'string' ? body.questionText : '',
       response: typeof body.response === 'string' ? body.response : '',
     });
+    const opening = contextBody
+      ? `${action.label}\n\n${contextBody}`
+      : renderedTemplate;
     const item: SpecialistItem = {
       id: `it_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
       kind: 'chat',

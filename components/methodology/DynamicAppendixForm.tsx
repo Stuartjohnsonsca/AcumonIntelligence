@@ -65,6 +65,83 @@ interface Props {
   sectionMeta?: Record<string, TemplateSectionMeta>;
 }
 
+/**
+ * Build a chat-friendly context body for a fired schedule action.
+ * Returns a multi-line string capturing the sub-heading the
+ * triggering question sits under, plus every question + current
+ * answer in that sub-heading (in sortOrder).
+ *
+ * "Sub-heading" boundary rules — questions are sorted by sortOrder;
+ * we walk back from the triggering question to the most recent
+ * inputType==='subheader' row (or start of the section if none),
+ * and forward to the next subheader row (or section end).
+ *
+ * Empty answers are still listed (with "—") so the specialist can
+ * see the structure of what was asked, not just what was filled in.
+ * For multi-column rows, col1's value is preferred when the row
+ * has no row-level value.
+ */
+function buildSubsectionContextBody(
+  triggering: { id: string; sectionKey?: string },
+  allQuestions: TemplateQuestion[],
+  values: Record<string, any>,
+  computedValues: Record<string, any>,
+): string {
+  // questions are already sortOrder-ordered upstream — but be defensive.
+  const ordered = [...allQuestions].sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0));
+  const idx = ordered.findIndex(q => q.id === triggering.id);
+  if (idx < 0) return '';
+  const section = triggering.sectionKey || '';
+
+  // Walk back to find sub-heading start.
+  let startIdx = idx;
+  let heading = section;
+  for (let i = idx - 1; i >= 0; i--) {
+    const qq = ordered[i];
+    if ((qq.sectionKey || '') !== section) break;
+    if (qq.inputType === 'subheader') {
+      heading = qq.questionText || section;
+      startIdx = i + 1; // questions begin AFTER the heading row
+      break;
+    }
+    startIdx = i;
+  }
+  // Walk forward to find next subheader (exclusive end).
+  let endIdx = idx;
+  for (let i = idx + 1; i < ordered.length; i++) {
+    const qq = ordered[i];
+    if ((qq.sectionKey || '') !== section) break;
+    if (qq.inputType === 'subheader') break;
+    endIdx = i;
+  }
+
+  // Helper: read the effective answer for a question, preferring
+  // the computed value (formula cells) and falling back to col1 for
+  // multi-column rows whose row-level value is empty.
+  const readAnswer = (q: TemplateQuestion): string => {
+    let v: any = computedValues[q.id] ?? values[q.id];
+    if ((v === undefined || v === null || v === '') && Array.isArray(q.columns) && q.columns.length > 0) {
+      const col1Key = `${q.id}_col1`;
+      v = computedValues[col1Key] ?? values[col1Key];
+    }
+    if (v === null || v === undefined || v === '') return '—';
+    return String(v).trim();
+  };
+
+  const lines: string[] = [];
+  lines.push(`Section: ${section}`);
+  if (heading && heading !== section) lines.push(`Sub-heading: ${heading}`);
+  lines.push('');
+  for (let i = startIdx; i <= endIdx; i++) {
+    const q = ordered[i];
+    if (q.inputType === 'subheader') continue; // already shown as heading
+    if (!q.questionText) continue;
+    const marker = q.id === triggering.id ? ' ← triggered this referral' : '';
+    lines.push(`• ${q.questionText}: ${readAnswer(q)}${marker}`);
+  }
+  return lines.join('\n');
+}
+
 export function DynamicAppendixForm({
   engagementId,
   endpoint,
@@ -577,6 +654,13 @@ export function DynamicAppendixForm({
       // Fire only on transition into the trigger value.
       if (now === want && before !== want) {
         const actionKey = q.scheduleAction.key;
+        // Build a sub-heading-scoped context body so the specialist
+        // sees the full block of questions + responses that frame
+        // the trigger, not just the single triggering question.
+        // Walks back from the triggering question to the previous
+        // 'subheader' row (or the start of the section) and forward
+        // to the next 'subheader' row, collecting Q+A pairs in order.
+        const contextBody = buildSubsectionContextBody(q, questions, values, computedValues);
         fetch(`/api/engagements/${engagementId}/specialists/items`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -585,6 +669,7 @@ export function DynamicAppendixForm({
             questionId: q.id,
             questionText: q.questionText,
             response: now,
+            contextBody,
           }),
         }).catch(() => { /* fire-and-forget; server is idempotent */ });
       }
