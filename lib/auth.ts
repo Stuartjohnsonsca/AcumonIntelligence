@@ -171,6 +171,85 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
     }),
   ],
   callbacks: {
+    /**
+     * Hard gate at the sign-in boundary — runs BEFORE jwt/session.
+     *
+     * For Microsoft Entra ID: the email returned by Entra must
+     * resolve to an active, non-expired user in our `users` table.
+     * If it doesn't, sign-in is rejected (NextAuth redirects to the
+     * error page) and no JWT is issued.
+     *
+     * Why: Microsoft SSO will happily authenticate ANY tenant user
+     * (anyone with a Microsoft account at any firm). Without this
+     * gate, signing in via Entra granted `twoFactorVerified: true`
+     * to anyone, who could then access pages that only check
+     * `session.user.twoFactorVerified`. Specialist Portal users
+     * (external email holders authenticated via magic-link) hit
+     * this when their browser also had a generic Microsoft session
+     * — they could click into the main site and the Entra flow
+     * would let them in.
+     *
+     * The credentials provider already validates against the users
+     * table inside `authorize()`, so this gate intentionally only
+     * applies to the Microsoft provider.
+     */
+    async signIn({ user, account, profile }) {
+      if (account?.provider !== 'microsoft-entra-id') return true;
+
+      const email = (profile?.email || (user as any)?.email || '') as string;
+      if (!email) return false;
+
+      const entraObjId: string | null = (account as any)?.providerAccountId
+        || (profile as any)?.sub
+        || (profile as any)?.oid
+        || null;
+
+      // Mirror the three-strategy lookup the jwt callback uses so
+      // sign-in succeeds for the same set of users that the jwt
+      // callback would have populated. Re-running the queries here
+      // is cheap (the jwt callback runs another lookup right after)
+      // but keeps the gate explicit and testable.
+      let dbUser: { id: string; isActive: boolean; expiryDate: Date | null } | null = null;
+      if (entraObjId) {
+        try {
+          dbUser = await prisma.user.findUnique({
+            where: { entraObjectId: entraObjId },
+            select: { id: true, isActive: true, expiryDate: true },
+          });
+        } catch { /* try next strategy */ }
+      }
+      if (!dbUser) {
+        try {
+          dbUser = await prisma.user.findFirst({
+            where: { email: { equals: email, mode: 'insensitive' } },
+            select: { id: true, isActive: true, expiryDate: true },
+          });
+        } catch { /* try next strategy */ }
+      }
+      if (!dbUser) {
+        try {
+          dbUser = await prisma.user.findUnique({
+            where: { email },
+            select: { id: true, isActive: true, expiryDate: true },
+          });
+        } catch { /* fall through to reject */ }
+      }
+
+      if (!dbUser) {
+        console.warn(`[auth] Microsoft sign-in rejected for ${email} — no matching user in our database. Super Admin must pre-provision the user before they can sign in.`);
+        return false;
+      }
+      if (!dbUser.isActive) {
+        console.warn(`[auth] Microsoft sign-in rejected for ${email} — account is inactive.`);
+        return false;
+      }
+      if (dbUser.expiryDate && dbUser.expiryDate < new Date()) {
+        console.warn(`[auth] Microsoft sign-in rejected for ${email} — account expired on ${dbUser.expiryDate.toISOString()}.`);
+        return false;
+      }
+      return true;
+    },
+
     async jwt({ token, user, account, profile }) {
       // Microsoft Entra ID sign-in — look up or create user in our DB
       if (account?.provider === 'microsoft-entra-id' && profile?.email) {
@@ -222,15 +301,18 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
           } catch { /* strategy 3 failed — fall through to pending-setup */ }
         }
 
-        // Auto-create user if they exist in Azure AD but not yet in our DB
-        // (Super Admin can pre-register them, or we create a pending account)
+        // Defence-in-depth: if for any reason the signIn gate above
+        // didn't reject and we still have no matching user row, do
+        // NOT grant twoFactorVerified. Pages that gate on it will
+        // redirect to /login. Returning the token with an error
+        // flag lets the session callback surface the issue to the
+        // UI without ever issuing a usable session.
         if (!dbUser) {
-          // Find a firm to attach them to — default to the first firm or leave firmId null
-          // Super Admin will need to assign them to a firm afterwards
+          token.error = 'AccountNotProvisioned';
           token.msalPendingSetup = true;
           token.email = email;
           token.name = (profile.name as string) || email;
-          token.twoFactorVerified = true; // Microsoft auth counts as verified
+          token.twoFactorVerified = false; // explicit — no main-site access without a user row
           token.twoFactorPending = false;
           token.isSuperAdmin = false;
           token.isFirmAdmin = false;
