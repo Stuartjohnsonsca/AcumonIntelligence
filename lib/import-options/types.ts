@@ -4,11 +4,11 @@
 
 export type ImportSelection = 'import_data' | 'copy_documents' | 'ai_populate_current';
 
-export type ImportSourceType = 'upload' | 'cloud' | 'cloud_other';
+export type ImportSourceType = 'upload' | 'cloud' | 'cloud_other' | 'claude_cowork';
 
 export interface ImportSource {
   type: ImportSourceType;
-  /** When type='upload': AuditDocument.id of the uploaded archive. */
+  /** When type='upload' | 'claude_cowork': AuditDocument.id of the resulting archive. */
   sourceFileDocumentId?: string;
   /** When type='cloud': CloudAuditConnector.id used to fetch. */
   connectorId?: string;

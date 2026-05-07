@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { expandZipFile } from '@/lib/client-unzip';
 import type {
   ImportOptionsState,
@@ -10,10 +10,14 @@ import type {
   CloudConnectorConfig,
 } from '@/lib/import-options/types';
 import { emptyMyWorkpapersConfig } from '@/lib/import-options/types';
+import { buildCoworkPrompt } from '@/lib/import-options/cowork-prompt';
 
 interface Props {
   engagementId: string;
   clientName: string;
+  /** Optional — passed to the Claude Cowork prompt so Claude knows which period to find. */
+  periodEnd?: string;
+  auditTypeLabel?: string;
   /** Called once the user clicks Proceed (selections committed) OR Cancel (selections=[]). */
   onComplete: (state: ImportOptionsState, opts: { extractionId?: string }) => void;
   /** Called when the user dismisses the modal without proceeding. */
@@ -31,9 +35,9 @@ const CHECKBOX_OPTIONS: CheckboxOption[] = [
   { key: 'ai_populate_current', label: 'Use AI to populate current year' },
 ];
 
-type Step = 'select' | 'expand' | 'busy' | 'connect_credentials' | 'register_connector';
+type Step = 'select' | 'expand' | 'busy' | 'connect_credentials' | 'register_connector' | 'cowork';
 
-export function ImportOptionsModal({ engagementId, clientName, onComplete, onClose }: Props) {
+export function ImportOptionsModal({ engagementId, clientName, periodEnd, auditTypeLabel, onComplete, onClose }: Props) {
   const [step, setStep] = useState<Step>('select');
   const [selected, setSelected] = useState<Set<ImportSelection>>(new Set());
   const [sourceType, setSourceType] = useState<ImportSourceType | null>(null);
@@ -63,6 +67,28 @@ export function ImportOptionsModal({ engagementId, clientName, onComplete, onClo
 
   // Upload
   const [uploadFile, setUploadFile] = useState<File | null>(null);
+
+  // Claude Cowork mode — user runs a Claude prompt in their own browser
+  // (with the Claude in Chrome extension). Claude drives the user's tab,
+  // downloads the prior audit file, the user drags it back in here.
+  const [coworkVendorLabel, setCoworkVendorLabel] = useState('MyWorkPapers');
+  const [coworkFile, setCoworkFile] = useState<File | null>(null);
+  const [coworkPromptCopied, setCoworkPromptCopied] = useState(false);
+  const coworkPrompt = useMemo(() => buildCoworkPrompt({
+    vendorLabel: coworkVendorLabel || 'the cloud audit software',
+    clientName,
+    periodEnd,
+    auditTypeLabel,
+  }), [coworkVendorLabel, clientName, periodEnd, auditTypeLabel]);
+
+  function copyCoworkPrompt() {
+    if (typeof navigator !== 'undefined' && navigator.clipboard) {
+      navigator.clipboard.writeText(coworkPrompt).then(
+        () => { setCoworkPromptCopied(true); setTimeout(() => setCoworkPromptCopied(false), 2000); },
+        () => { /* clipboard may be unavailable in non-https; fallback is the visible textarea */ },
+      );
+    }
+  }
 
   useEffect(() => {
     if (step !== 'expand') return;
@@ -147,6 +173,39 @@ export function ImportOptionsModal({ engagementId, clientName, onComplete, onClo
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Upload failed');
       setStep('expand');
+    }
+  }
+
+  // Claude Cowork: file the user drags back in after Claude downloads it
+  // gets uploaded to the same endpoint as the regular Upload path, but with
+  // sourceType=claude_cowork and the vendor label so the audit-trail history
+  // records what produced the file.
+  async function handleCoworkUploadProceed() {
+    if (!coworkFile) { setError('Drop the file Claude downloaded'); return; }
+    setStep('busy');
+    setBusyMessage('Uploading file from Claude Cowork...');
+    setError(null);
+    try {
+      const file = await expandZipFile(coworkFile) || coworkFile;
+      const formData = new FormData();
+      formData.append('file', file);
+      formData.append('originalName', coworkFile.name);
+      formData.append('selections', JSON.stringify(Array.from(selected)));
+      formData.append('sourceType', 'claude_cowork');
+      formData.append('vendorLabel', coworkVendorLabel);
+
+      const res = await fetch(`/api/engagements/${engagementId}/import-options/upload`, {
+        method: 'POST', body: formData,
+      });
+      if (!res.ok) {
+        const j = await res.json().catch(() => ({}));
+        throw new Error(j.error || `Upload failed (${res.status})`);
+      }
+      const json = await res.json();
+      onComplete(json.importOptions as ImportOptionsState, { extractionId: json.extractionId });
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Upload failed');
+      setStep('cowork');
     }
   }
 
@@ -258,7 +317,7 @@ export function ImportOptionsModal({ engagementId, clientName, onComplete, onClo
           {step === 'expand' && (
             <>
               <p className="text-sm text-slate-700 mb-3">Where is the source audit file?</p>
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-5">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-5">
                 <button
                   onClick={() => setSourceType('upload')}
                   className={`text-left p-3 border-2 rounded-lg ${sourceType === 'upload' ? 'border-blue-500 bg-blue-50' : 'border-slate-200 hover:border-slate-300'}`}
@@ -267,18 +326,28 @@ export function ImportOptionsModal({ engagementId, clientName, onComplete, onClo
                   <p className="text-xs text-slate-500 mt-1">Browse for a local file (zip or PDF).</p>
                 </button>
                 <button
+                  onClick={() => { setSourceType('claude_cowork'); setStep('cowork'); }}
+                  className={`text-left p-3 border-2 rounded-lg ${sourceType === 'claude_cowork' ? 'border-purple-500 bg-purple-50' : 'border-slate-200 hover:border-slate-300'}`}
+                >
+                  <div className="text-sm font-semibold text-slate-800">🤖 Use Claude Cowork</div>
+                  <p className="text-xs text-slate-500 mt-1">
+                    You log in to MyWorkPapers / another vendor in your own browser; Claude (with the
+                    Chrome extension) drives the tab and downloads the prior audit file.
+                  </p>
+                </button>
+                <button
                   onClick={() => setSourceType('cloud')}
                   className={`text-left p-3 border-2 rounded-lg ${sourceType === 'cloud' ? 'border-blue-500 bg-blue-50' : 'border-slate-200 hover:border-slate-300'}`}
                 >
-                  <div className="text-sm font-semibold text-slate-800">☁ Connect to Cloud Audit Software</div>
-                  <p className="text-xs text-slate-500 mt-1">Fetch from MyWorkPapers or another configured vendor.</p>
+                  <div className="text-sm font-semibold text-slate-800">☁ Connect via API</div>
+                  <p className="text-xs text-slate-500 mt-1">Fetch from a configured vendor connector (admin sets up the API recipe).</p>
                 </button>
                 <button
                   onClick={() => setSourceType('cloud_other')}
                   className={`text-left p-3 border-2 rounded-lg ${sourceType === 'cloud_other' ? 'border-blue-500 bg-blue-50' : 'border-slate-200 hover:border-slate-300'}`}
                 >
-                  <div className="text-sm font-semibold text-slate-800">＋ Other Cloud Audit Software</div>
-                  <p className="text-xs text-slate-500 mt-1">Register a new connector. The recipe is saved firm-wide.</p>
+                  <div className="text-sm font-semibold text-slate-800">＋ Register New API Connector</div>
+                  <p className="text-xs text-slate-500 mt-1">Add a vendor API recipe — saved firm-wide for reuse.</p>
                 </button>
               </div>
 
@@ -470,6 +539,75 @@ export function ImportOptionsModal({ engagementId, clientName, onComplete, onClo
             </>
           )}
 
+          {step === 'cowork' && (
+            <>
+              <p className="text-sm text-slate-700 mb-3">
+                Claude Cowork drives <em>your</em> browser tab — your credentials never leave your machine, and
+                acumon never connects to {coworkVendorLabel || 'the vendor'} directly.
+              </p>
+
+              <ol className="text-xs text-slate-600 space-y-1 list-decimal list-inside mb-4">
+                <li>Open the cloud audit software in a new tab and log in (with MFA if you use it).</li>
+                <li>Open Claude Cowork (with the Claude in Chrome extension installed) and paste the prompt below.</li>
+                <li>Claude will navigate the open tab, find the prior period, and download the audit archive to your Downloads folder.</li>
+                <li>Drop the downloaded file here — acumon will extract proposals and you&apos;ll review them on the next screen.</li>
+              </ol>
+
+              <div className="space-y-3 mb-4">
+                <div>
+                  <label className="block text-xs font-medium text-slate-600 mb-1">Vendor</label>
+                  <input
+                    type="text"
+                    value={coworkVendorLabel}
+                    onChange={e => setCoworkVendorLabel(e.target.value)}
+                    placeholder="e.g. MyWorkPapers, CaseWare Cloud"
+                    className="w-full border border-slate-200 rounded px-3 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-purple-400"
+                  />
+                  <p className="text-[10px] text-slate-400 italic mt-1">Used in the prompt below — change this if you&apos;re using a different vendor.</p>
+                </div>
+
+                <div>
+                  <div className="flex items-center justify-between mb-1">
+                    <label className="block text-xs font-medium text-slate-600">Prompt for Claude Cowork</label>
+                    <button
+                      onClick={copyCoworkPrompt}
+                      className="text-[11px] px-2 py-0.5 bg-purple-600 text-white rounded hover:bg-purple-700 font-medium"
+                    >
+                      {coworkPromptCopied ? '✓ Copied' : '📋 Copy'}
+                    </button>
+                  </div>
+                  <textarea
+                    value={coworkPrompt}
+                    readOnly
+                    rows={8}
+                    className="w-full border border-purple-200 rounded px-3 py-2 text-[11px] font-mono bg-purple-50/30 focus:outline-none focus:ring-1 focus:ring-purple-400"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-medium text-slate-600 mb-1">File Claude downloaded (.zip or .pdf)</label>
+                  <input
+                    type="file"
+                    accept=".zip,.pdf"
+                    onChange={e => setCoworkFile(e.target.files?.[0] || null)}
+                    className="block text-sm"
+                  />
+                  {coworkFile && (
+                    <p className="text-[11px] text-slate-500 mt-2">
+                      Selected: <span className="font-medium">{coworkFile.name}</span> ({(coworkFile.size / 1024).toFixed(0)} KB)
+                    </p>
+                  )}
+                </div>
+              </div>
+
+              <div className="border border-amber-200 bg-amber-50 rounded p-3 text-[11px] text-amber-800">
+                <strong>Reminder:</strong> The prompt explicitly tells Claude not to enter passwords, MFA codes, or
+                click destructive buttons. Read what Claude is about to do before approving its actions in the
+                Chrome extension — anything other than read-only navigation + the download click is suspicious.
+              </div>
+            </>
+          )}
+
           {step === 'connect_credentials' && (
             <>
               <p className="text-sm text-slate-700 mb-3">Enter your credentials for this connection. Credentials are sent only for this fetch and are not stored.</p>
@@ -575,6 +713,22 @@ export function ImportOptionsModal({ engagementId, clientName, onComplete, onClo
               </button>
             </>
           )}
+          {step === 'cowork' && (
+            <>
+              <button onClick={() => setStep('expand')} className="text-sm px-4 py-2 text-slate-600 hover:text-slate-800">← Back</button>
+              <div className="flex gap-2">
+                <button onClick={handleCancel} className="text-sm px-4 py-2 text-slate-600 hover:text-slate-800">Cancel</button>
+                <button
+                  disabled={!coworkFile}
+                  onClick={handleCoworkUploadProceed}
+                  className="text-sm px-4 py-2 bg-purple-600 text-white rounded-md hover:bg-purple-700 disabled:opacity-50 font-medium"
+                >
+                  Upload &amp; Continue
+                </button>
+              </div>
+            </>
+          )}
+
           {step === 'connect_credentials' && (
             <>
               <button onClick={() => setStep('expand')} className="text-sm px-4 py-2 text-slate-600 hover:text-slate-800">← Back</button>

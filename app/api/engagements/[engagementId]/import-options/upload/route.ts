@@ -44,6 +44,11 @@ export async function POST(
   const file = formData.get('file') as File | null;
   const originalName = (formData.get('originalName') as string) || file?.name || 'prior-audit-file';
   const selectionsRaw = (formData.get('selections') as string) || '[]';
+  // sourceType: 'upload' (default — direct local file) | 'claude_cowork' (file
+  // produced by a Claude Cowork session driving the user's browser).
+  const sourceTypeRaw = (formData.get('sourceType') as string) || 'upload';
+  const sourceType: 'upload' | 'claude_cowork' = sourceTypeRaw === 'claude_cowork' ? 'claude_cowork' : 'upload';
+  const vendorLabel = (formData.get('vendorLabel') as string) || '';
   let selections: ImportSelection[] = [];
   try { selections = JSON.parse(selectionsRaw) as ImportSelection[]; } catch { /* ignore */ }
   if (!file) return NextResponse.json({ error: 'file is required' }, { status: 400 });
@@ -54,21 +59,27 @@ export async function POST(
   await uploadToInbox(blobName, buffer, file.type || 'application/octet-stream');
 
   // Tag the document so the Prior Period tab + Documents tab can find it.
+  // For Claude Cowork the documentName carries the vendor label so the
+  // audit trail makes the source clear ("Prior Period Archive — Claude
+  // Cowork (MyWorkPapers) — engagement.zip").
+  const docNamePrefix = sourceType === 'claude_cowork' && vendorLabel
+    ? `Prior Period Archive — Claude Cowork (${vendorLabel})`
+    : `Prior Period Archive`;
   const archiveDoc = await prisma.auditDocument.create({
     data: {
       engagementId,
-      documentName: `Prior Period Archive — ${originalName}`,
+      documentName: `${docNamePrefix} — ${originalName}`,
       storagePath: blobName,
       uploadedDate: new Date(),
       uploadedById: session.user.id,
       fileSize: file.size,
       mimeType: file.type || null,
-      receivedByName: session.user.name || session.user.email,
+      receivedByName: sourceType === 'claude_cowork' && vendorLabel ? `Claude Cowork (${vendorLabel})` : (session.user.name || session.user.email),
       receivedAt: new Date(),
       mappedItems: [PRIOR_PERIOD_ARCHIVE_TAG],
       usageLocation: 'Prior Period',
       documentType: 'Prior Period Audit File',
-      source: 'Team',
+      source: sourceType === 'claude_cowork' ? 'Third Party' : 'Team',
     },
   });
 
@@ -96,13 +107,16 @@ export async function POST(
 
   let extractionId: string | undefined;
   if (selections.includes('import_data') && textContent) {
+    const proposalSourceLabel = sourceType === 'claude_cowork' && vendorLabel
+      ? `${vendorLabel} (via Claude Cowork) — ${originalName}`
+      : originalName;
     try {
       const result = await aiExtractProposals({ textContent, allowedTabKeys });
       const proposal = await prisma.importExtractionProposal.create({
         data: {
           engagementId,
-          sourceType: 'upload',
-          sourceLabel: originalName,
+          sourceType,
+          sourceLabel: proposalSourceLabel,
           sourceArchiveDocumentId: archiveDoc.id,
           proposals: result.proposals as unknown as object,
           aiModel: result.model,
@@ -119,8 +133,8 @@ export async function POST(
       const proposal = await prisma.importExtractionProposal.create({
         data: {
           engagementId,
-          sourceType: 'upload',
-          sourceLabel: originalName,
+          sourceType,
+          sourceLabel: proposalSourceLabel,
           sourceArchiveDocumentId: archiveDoc.id,
           proposals: [],
           status: 'pending',
@@ -138,7 +152,11 @@ export async function POST(
   const next: ImportOptionsState = {
     prompted: true,
     selections,
-    source: { type: 'upload', sourceFileDocumentId: archiveDoc.id, vendorLabel: originalName },
+    source: {
+      type: sourceType,
+      sourceFileDocumentId: archiveDoc.id,
+      vendorLabel: sourceType === 'claude_cowork' && vendorLabel ? vendorLabel : originalName,
+    },
     byUserId: me.userId,
     byUserName: me.userName,
     at,
@@ -146,7 +164,12 @@ export async function POST(
     extractionId,
     history: [
       ...(prev?.history || []),
-      { event: 'uploaded', at, by: me, note: originalName },
+      {
+        event: 'uploaded',
+        at,
+        by: me,
+        note: sourceType === 'claude_cowork' ? `Claude Cowork (${vendorLabel || 'unspecified vendor'}) — ${originalName}` : originalName,
+      },
       ...(extractionId ? [{ event: 'extracted' as const, at, by: me }] : []),
     ],
   };

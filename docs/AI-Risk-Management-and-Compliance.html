@@ -1,0 +1,721 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>Acumon — AI Risk Management & Compliance Memo</title>
+<style>
+  @page {
+    size: A4;
+    margin: 22mm 18mm 22mm 18mm;
+    @top-left {
+      content: element(pageHeader);
+    }
+    @bottom-left {
+      content: "Acumon — AI Risk Management & Compliance — Confidential";
+      font-family: "Inter", "Segoe UI", system-ui, sans-serif;
+      font-size: 8pt;
+      color: #6b7280;
+    }
+    @bottom-right {
+      content: "Page " counter(page) " of " counter(pages);
+      font-family: "Inter", "Segoe UI", system-ui, sans-serif;
+      font-size: 8pt;
+      color: #6b7280;
+    }
+  }
+  @page :first {
+    margin: 0;
+    @top-left { content: none; }
+    @bottom-left { content: none; }
+    @bottom-right { content: none; }
+  }
+  :root {
+    --navy: #1e3a5f;
+    --navy-soft: #2c4e7a;
+    --ink: #111827;
+    --muted: #4b5563;
+    --line: #e5e7eb;
+    --line-strong: #d1d5db;
+    --bg-soft: #f8fafc;
+    --bg-callout: #f1f5f9;
+    --accent: #c97a1f;
+  }
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0;
+    padding: 0;
+    color: var(--ink);
+    font-family: "Inter", "Segoe UI", system-ui, -apple-system, sans-serif;
+    font-size: 10.5pt;
+    line-height: 1.5;
+  }
+  /* ---------- Cover ---------- */
+  .cover {
+    page-break-after: always;
+    height: 297mm;
+    width: 210mm;
+    padding: 30mm 24mm;
+    color: white;
+    background:
+      radial-gradient(1200px 600px at 20% 110%, rgba(255,255,255,0.06), transparent 60%),
+      radial-gradient(900px 500px at 90% -10%, rgba(255,255,255,0.08), transparent 60%),
+      linear-gradient(160deg, #0f1f33 0%, #1e3a5f 55%, #2c4e7a 100%);
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+    position: relative;
+  }
+  .cover-logo {
+    background: white;
+    border-radius: 14px;
+    padding: 16px 22px;
+    width: max-content;
+    box-shadow: 0 8px 24px rgba(0,0,0,0.18);
+  }
+  .cover-logo svg {
+    height: 44px;
+    display: block;
+  }
+  .cover-title {
+    margin-top: 60mm;
+  }
+  .cover-eyebrow {
+    text-transform: uppercase;
+    letter-spacing: 0.18em;
+    font-size: 10pt;
+    color: rgba(255,255,255,0.78);
+    margin-bottom: 14px;
+  }
+  .cover-title h1 {
+    font-size: 32pt;
+    line-height: 1.1;
+    margin: 0 0 10px 0;
+    font-weight: 700;
+    letter-spacing: -0.01em;
+  }
+  .cover-title h2 {
+    font-size: 16pt;
+    font-weight: 400;
+    color: rgba(255,255,255,0.85);
+    margin: 0;
+    line-height: 1.35;
+  }
+  .cover-meta {
+    border-top: 1px solid rgba(255,255,255,0.25);
+    padding-top: 18px;
+    display: grid;
+    grid-template-columns: 1fr 1fr 1fr;
+    gap: 24px;
+    font-size: 9.5pt;
+  }
+  .cover-meta .label {
+    text-transform: uppercase;
+    letter-spacing: 0.12em;
+    color: rgba(255,255,255,0.6);
+    font-size: 8pt;
+    margin-bottom: 4px;
+  }
+  .cover-meta .value {
+    color: white;
+    font-weight: 500;
+  }
+  .cover-classification {
+    position: absolute;
+    top: 18mm;
+    right: 18mm;
+    border: 1px solid rgba(255,255,255,0.5);
+    color: rgba(255,255,255,0.85);
+    padding: 5px 12px;
+    border-radius: 999px;
+    font-size: 8.5pt;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+  }
+
+  /* ---------- Running header (small mark) ---------- */
+  .page-header {
+    position: running(pageHeader);
+    font-family: "Inter", "Segoe UI", system-ui, sans-serif;
+    font-size: 8.5pt;
+    color: var(--muted);
+    border-bottom: 0.5pt solid var(--line);
+    padding-bottom: 4px;
+    width: 174mm;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .page-header svg {
+    height: 12px;
+    display: block;
+  }
+  .page-header .doc-name {
+    margin-left: auto;
+    color: #6b7280;
+  }
+
+  /* ---------- Body ---------- */
+  main {
+    counter-reset: section;
+  }
+  h1, h2, h3, h4 {
+    color: var(--navy);
+    font-weight: 700;
+    letter-spacing: -0.005em;
+  }
+  h1 {
+    font-size: 22pt;
+    margin: 0 0 6px 0;
+    line-height: 1.2;
+  }
+  h2 {
+    font-size: 15pt;
+    margin: 28px 0 8px 0;
+    padding-bottom: 6px;
+    border-bottom: 1.5pt solid var(--navy);
+    page-break-after: avoid;
+  }
+  h3 {
+    font-size: 12pt;
+    margin: 18px 0 6px 0;
+    color: var(--navy-soft);
+    page-break-after: avoid;
+  }
+  h4 {
+    font-size: 10.5pt;
+    margin: 14px 0 4px 0;
+    color: var(--navy-soft);
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    page-break-after: avoid;
+  }
+  p { margin: 0 0 8px 0; }
+  ul, ol { margin: 4px 0 10px 22px; padding: 0; }
+  li { margin-bottom: 3px; }
+  strong { color: var(--ink); }
+  code {
+    font-family: "Consolas", "Menlo", "Liberation Mono", monospace;
+    font-size: 9.2pt;
+    background: var(--bg-soft);
+    border: 0.5pt solid var(--line);
+    padding: 0.5px 4px;
+    border-radius: 3px;
+    color: #0b3b66;
+    word-break: break-word;
+  }
+  hr {
+    border: none;
+    border-top: 0.5pt solid var(--line);
+    margin: 22px 0;
+  }
+  a { color: var(--navy-soft); text-decoration: none; }
+
+  /* Lead-in under H1 */
+  .lead {
+    color: var(--muted);
+    font-size: 11pt;
+  }
+
+  /* Callouts */
+  .callout {
+    background: var(--bg-callout);
+    border-left: 3pt solid var(--navy);
+    padding: 10px 14px;
+    border-radius: 4px;
+    margin: 12px 0 16px;
+    font-size: 10pt;
+    color: #1f2937;
+  }
+  .callout strong { color: var(--navy); }
+
+  .meta-block {
+    background: var(--bg-soft);
+    border: 0.5pt solid var(--line);
+    border-radius: 6px;
+    padding: 10px 14px;
+    margin: 8px 0 14px;
+    font-size: 9.5pt;
+  }
+  .meta-block .row {
+    display: grid;
+    grid-template-columns: 130px 1fr;
+    gap: 6px;
+    padding: 3px 0;
+  }
+  .meta-block .row + .row { border-top: 0.25pt dashed var(--line); }
+  .meta-block .label {
+    color: var(--muted);
+    text-transform: uppercase;
+    font-size: 8pt;
+    letter-spacing: 0.08em;
+  }
+
+  /* Tables */
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    margin: 10px 0 16px;
+    font-size: 9.5pt;
+    page-break-inside: auto;
+  }
+  thead { display: table-header-group; }
+  tr { page-break-inside: avoid; page-break-after: auto; }
+  th, td {
+    text-align: left;
+    vertical-align: top;
+    padding: 7px 9px;
+    border-bottom: 0.5pt solid var(--line);
+  }
+  th {
+    background: var(--navy);
+    color: white;
+    font-weight: 600;
+    font-size: 9pt;
+    letter-spacing: 0.02em;
+  }
+  tbody tr:nth-child(even) td { background: #fafbfd; }
+  table.compact td, table.compact th { padding: 5px 7px; font-size: 9pt; }
+
+  /* Section numbering — only h2 in main */
+  main h2::before {
+    counter-increment: section;
+    content: counter(section) ".  ";
+    color: var(--navy-soft);
+    font-weight: 700;
+  }
+  main h2.no-number::before { content: none; counter-increment: none; }
+
+  /* TOC */
+  .toc {
+    border: 0.5pt solid var(--line);
+    border-radius: 6px;
+    padding: 14px 18px;
+    margin: 16px 0 4px;
+    background: #fcfdff;
+  }
+  .toc h3 {
+    margin: 0 0 8px 0;
+    color: var(--navy);
+    font-size: 11pt;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+  }
+  .toc ol {
+    margin: 0;
+    padding: 0 0 0 4px;
+    list-style: none;
+    counter-reset: toc;
+  }
+  .toc ol li {
+    display: flex;
+    justify-content: space-between;
+    border-bottom: 0.25pt dotted var(--line);
+    padding: 4px 0;
+    font-size: 10pt;
+  }
+  .toc ol li::before {
+    counter-increment: toc;
+    content: counter(toc) ". ";
+    color: var(--navy-soft);
+    font-weight: 600;
+    margin-right: 6px;
+    width: 18px;
+    flex: 0 0 auto;
+  }
+  .toc .title { flex: 1; }
+  .toc .pageref { color: var(--muted); font-variant-numeric: tabular-nums; }
+
+  /* Footnote-y micro text */
+  .micro { font-size: 8.5pt; color: var(--muted); }
+
+  /* Avoid orphan section title at bottom */
+  h1 + .lead, h2 + p, h3 + p { page-break-before: avoid; }
+
+  /* Keep code refs table tidy */
+  table.code-refs td:first-child { width: 38%; }
+  table.code-refs td:nth-child(2) {
+    font-family: "Consolas", "Menlo", monospace;
+    font-size: 9pt;
+    color: #0b3b66;
+    word-break: break-word;
+  }
+
+  /* Risk table */
+  table.risk td:first-child { width: 28px; text-align: center; font-weight: 700; color: var(--navy); }
+  table.risk td:nth-child(3) { width: 22%; }
+
+  /* Mapping table - compact */
+  table.mapping td:first-child {
+    width: 32%;
+    font-weight: 600;
+    color: var(--navy);
+  }
+
+  .pill {
+    display: inline-block;
+    background: var(--navy);
+    color: white;
+    border-radius: 999px;
+    padding: 2px 9px;
+    font-size: 8pt;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    font-weight: 600;
+  }
+  .pill.amber { background: var(--accent); }
+  .pill.outline {
+    background: transparent;
+    color: var(--navy);
+    border: 0.6pt solid var(--navy);
+  }
+
+  /* Page break helpers */
+  .page-break { page-break-before: always; }
+  .keep-together { page-break-inside: avoid; }
+</style>
+</head>
+<body>
+
+<!-- ============== Hidden running-header element ============== -->
+<div class="page-header">
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 283.5 90.7" aria-hidden="true">
+    <g>
+      <path style="fill:#1e3a5f" d="M38.8,45.2h-11.2c-1.1,0-2.1.9-2.1,2.1v11.3c0,1.1.9,2.1,2.1,2.1h11.2c1.1,0,2.1-.9,2.1-2.1v-11.3c0-1.1-.9-2.1-2.1-2.1Z"/>
+      <path style="fill:#1e3a5f" d="M54.1,29.8h-11.2c-1.1,0-2.1.9-2.1,2.1v11.3c0,1.1.9,2.1,2.1,2.1h11.2c1.1,0,2.1-.9,2.1-2.1v-11.3c0-1.1-.9-2.1-2.1-2.1Z"/>
+    </g>
+    <path style="fill:#1e3a5f" d="M73.8,61c-6.8,0-10.6-3.5-10.6-9.1s2.8-7.9,10.1-8.5l5.5-.5c4.1-.4,5.2-1.2,5.2-3.4,0-3.8-2.2-6.2-7.1-6.2s-7.1,2-7.4,6.2h-4.6c0-5.9,3.7-9.7,12-9.7s12,3.8,12,9.7v13.2c0,4.1.3,6.7.9,7.7h-4.2c-.9-1.3-1.3-2.5-1.3-5.7-1.6,4.2-5.2,6.3-10.4,6.3h0ZM75,57.6c5.9,0,8.9-4.7,8.9-10.3v-3c-.7.9-2.5,1.5-5.2,1.7l-4.1.4c-4.8.4-6.7,2.4-6.7,5.2s2.1,6,7.1,6h0ZM107.1,61c-8.9,0-14-5.9-14-15.6s5.1-15.6,14-15.6,13.1,6,13.1,11.3h-4.3c-.6-4-3-7.6-8.7-7.6s-9.2,4-9.2,11.9,3.5,11.9,9.2,11.9,8-2.7,8.7-7.8h4.3c0,5.9-4.2,11.5-13.1,11.5ZM135.3,61c-6.8,0-10-3.5-10-10.8v-19.9h4.8v19.1c0,5,1.8,7.6,6.6,7.6s8.2-3.9,8.2-10v-16.8h4.8v30.1h-4.6v-5.5c-1.7,3.7-4.8,6.1-9.9,6.1h0ZM194.8,60.4h-4.6v-19.2c0-5-1.5-7.5-5.5-7.5s-7.1,3.8-7.1,9.8v16.9h-4.6v-19.2c0-5-1.6-7.5-5.4-7.5s-7,3.8-7,9.8v16.9h-4.6v-30.1h4.6v5.5c1.4-3.7,4.4-6.1,8.5-6.1s7.2,2.2,8.2,6.5c1.5-4.2,4.8-6.5,8.9-6.5,6,0,8.8,3.5,8.8,10.8v19.9h-.2ZM214.1,61c-9.2,0-14.3-5.9-14.3-15.6s5.1-15.6,14.3-15.6,14.4,6,14.4,15.6-5.1,15.6-14.4,15.6h0ZM214.1,57.2c6.1,0,9.6-4,9.6-11.9s-3.5-11.9-9.6-11.9-9.5,4-9.5,11.9,3.5,11.9,9.5,11.9h0ZM258,60.4h-4.8v-19.1c0-5-1.8-7.6-6.6-7.6s-8.2,3.9-8.2,10v16.8h-4.8v-30.1h4.6v5.5c1.7-3.7,4.8-6.1,9.8-6.1s10.1,3.5,10.1,10.8v19.9h-.1Z"/>
+  </svg>
+  <span class="doc-name">AI Risk Management &amp; Compliance Memo</span>
+</div>
+
+<!-- ============== Cover ============== -->
+<section class="cover">
+  <span class="cover-classification">Confidential — Internal</span>
+
+  <div class="cover-logo">
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 283.5 90.7">
+      <g>
+        <path style="fill:#1e3a5f" d="M38.8,45.2h-11.2c-1.1,0-2.1.9-2.1,2.1v11.3c0,1.1.9,2.1,2.1,2.1h11.2c1.1,0,2.1-.9,2.1-2.1v-11.3c0-1.1-.9-2.1-2.1-2.1Z"/>
+        <path style="fill:#1e3a5f" d="M54.1,29.8h-11.2c-1.1,0-2.1.9-2.1,2.1v11.3c0,1.1.9,2.1,2.1,2.1h11.2c1.1,0,2.1-.9,2.1-2.1v-11.3c0-1.1-.9-2.1-2.1-2.1Z"/>
+      </g>
+      <path style="fill:#1e3a5f" d="M73.8,61c-6.8,0-10.6-3.5-10.6-9.1s2.8-7.9,10.1-8.5l5.5-.5c4.1-.4,5.2-1.2,5.2-3.4,0-3.8-2.2-6.2-7.1-6.2s-7.1,2-7.4,6.2h-4.6c0-5.9,3.7-9.7,12-9.7s12,3.8,12,9.7v13.2c0,4.1.3,6.7.9,7.7h-4.2c-.9-1.3-1.3-2.5-1.3-5.7-1.6,4.2-5.2,6.3-10.4,6.3h0ZM75,57.6c5.9,0,8.9-4.7,8.9-10.3v-3c-.7.9-2.5,1.5-5.2,1.7l-4.1.4c-4.8.4-6.7,2.4-6.7,5.2s2.1,6,7.1,6h0ZM107.1,61c-8.9,0-14-5.9-14-15.6s5.1-15.6,14-15.6,13.1,6,13.1,11.3h-4.3c-.6-4-3-7.6-8.7-7.6s-9.2,4-9.2,11.9,3.5,11.9,9.2,11.9,8-2.7,8.7-7.8h4.3c0,5.9-4.2,11.5-13.1,11.5ZM135.3,61c-6.8,0-10-3.5-10-10.8v-19.9h4.8v19.1c0,5,1.8,7.6,6.6,7.6s8.2-3.9,8.2-10v-16.8h4.8v30.1h-4.6v-5.5c-1.7,3.7-4.8,6.1-9.9,6.1h0ZM194.8,60.4h-4.6v-19.2c0-5-1.5-7.5-5.5-7.5s-7.1,3.8-7.1,9.8v16.9h-4.6v-19.2c0-5-1.6-7.5-5.4-7.5s-7,3.8-7,9.8v16.9h-4.6v-30.1h4.6v5.5c1.4-3.7,4.4-6.1,8.5-6.1s7.2,2.2,8.2,6.5c1.5-4.2,4.8-6.5,8.9-6.5,6,0,8.8,3.5,8.8,10.8v19.9h-.2ZM214.1,61c-9.2,0-14.3-5.9-14.3-15.6s5.1-15.6,14.3-15.6,14.4,6,14.4,15.6-5.1,15.6-14.4,15.6h0ZM214.1,57.2c6.1,0,9.6-4,9.6-11.9s-3.5-11.9-9.6-11.9-9.5,4-9.5,11.9,3.5,11.9,9.5,11.9h0ZM258,60.4h-4.8v-19.1c0-5-1.8-7.6-6.6-7.6s-8.2,3.9-8.2,10v16.8h-4.8v-30.1h4.6v5.5c1.7-3.7,4.8-6.1,9.8-6.1s10.1,3.5,10.1,10.8v19.9h-.1Z"/>
+    </svg>
+  </div>
+
+  <div class="cover-title">
+    <div class="cover-eyebrow">AI in Audit · Compliance Memorandum</div>
+    <h1>AI Risk Management<br/>&amp; Compliance</h1>
+    <h2>Import Options, Cloud Audit Connectors and AI-Populate — addressing the concerns raised by ICAEW and the FRC</h2>
+  </div>
+
+  <div class="cover-meta">
+    <div>
+      <div class="label">Document</div>
+      <div class="value">Risk &amp; Compliance Memo v1.0</div>
+    </div>
+    <div>
+      <div class="label">Date</div>
+      <div class="value">7 May 2026</div>
+    </div>
+    <div>
+      <div class="label">Prepared by</div>
+      <div class="value">Acumon — Methodology &amp; Engineering</div>
+    </div>
+    <div>
+      <div class="label">Audience</div>
+      <div class="value">RI / Audit Compliance Partner; ICAEW QAD; FRC AQR</div>
+    </div>
+    <div>
+      <div class="label">Status</div>
+      <div class="value">Issued for review</div>
+    </div>
+    <div>
+      <div class="label">Classification</div>
+      <div class="value">Confidential — Internal</div>
+    </div>
+  </div>
+</section>
+
+<!-- ============== Body ============== -->
+<main>
+
+  <h1 class="no-number" style="margin-top:0">AI Risk Management &amp; Compliance Memo</h1>
+  <p class="lead">A description of the AI-assisted features under development in worktree <code>confident-khayyam-dcd581</code>, the design controls that surround them, and how those controls map to the concerns raised by the ICAEW and the FRC for AI in audit work.</p>
+
+  <div class="meta-block">
+    <div class="row"><div class="label">Scope</div><div>Import Options modal · Cloud Audit Connector registry · AI Extractor · Review &amp; Apply flow · Current-Year AI Populate.</div></div>
+    <div class="row"><div class="label">Audience</div><div>Firm RI / Audit Compliance Partner; ICAEW QAD inspection; FRC AQR inspection; engineering team owning the feature.</div></div>
+    <div class="row"><div class="label">Anchors</div><div>ICAEW <em>Artificial intelligence in audit work: managing the risks</em>; FRC <em>Guidance on the use of AI in the audit of financial statements</em> (2025) and 2026 generative/agentic update; ISA (UK) 200, 220 (Revised), 230, 240, 315 (Revised), 500, 540; ISQM (UK) 1; UK GDPR / DPA 2018.</div></div>
+  </div>
+
+  <div class="callout">
+    <strong>Foundational position.</strong> The feature is positioned as <strong>prefill, not audit evidence</strong>. Nothing produced by the AI extractor or the Current-Year AI Populate flow is, on its own, sufficient appropriate audit evidence within the meaning of ISA (UK) 500. Auditors must obtain corroborating evidence in the normal way and exercise professional scepticism over every AI-suggested value.
+  </div>
+
+  <div class="toc keep-together">
+    <h3>Contents</h3>
+    <ol>
+      <li><span class="title">Summary of how the feature is designed to be safe</span></li>
+      <li><span class="title">ICAEW concerns addressed</span></li>
+      <li><span class="title">FRC concerns addressed</span></li>
+      <li><span class="title">Residual risks and watch-items</span></li>
+      <li><span class="title">Pointers for ICAEW QAD / FRC AQR inspection</span></li>
+      <li><span class="title">Appendix — Code references</span></li>
+      <li><span class="title">Sources / further reading</span></li>
+    </ol>
+  </div>
+
+  <h2>Summary of how the feature is designed to be safe</h2>
+  <p>The table below is a quick map from each headline AI-in-audit risk theme to the concrete control implemented in this feature. Each control is referenced by its file in §6.</p>
+
+  <table class="mapping">
+    <thead>
+      <tr><th>Risk theme</th><th>Design control in this feature</th></tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>Automation bias / over-reliance</td>
+        <td>Two-stage flow: AI proposes &rarr; reviewer ticks/edits/deletes &rarr; only then is anything written. Every AI-written field is rendered with an <strong>orange dashed surround</strong> driven by <code>__fieldmeta</code>, so the reviewer can never lose sight of which numbers/text came from a model.</td>
+      </tr>
+      <tr>
+        <td>Hallucination</td>
+        <td>Extractor system prompt explicitly forbids fabrication ("DO NOT fabricate values. If a field is blank in the source, skip it."). Unparseable model output yields zero proposals. Temperature 0.1. The applier silently drops rows where <code>fieldKey</code> is missing.</td>
+      </tr>
+      <tr>
+        <td>Professional scepticism</td>
+        <td>The reviewer must positively approve each row before it lands. Excluded tabs (see below) cannot be auto-populated under any circumstance.</td>
+      </tr>
+      <tr>
+        <td>Critical judgements</td>
+        <td>Risk of Material Misstatement (<code>rmm</code>) and Trial Balance (<code>tb</code>) are hard-coded as <code>AI_POPULATE_EXCLUDED_TABS</code>. The applier double-filters in <code>FORBIDDEN_TABS</code> even if the prompt is bypassed.</td>
+      </tr>
+      <tr>
+        <td>Confidentiality / data leakage</td>
+        <td>Cloud-connector <strong>credentials are never persisted</strong> — only the connection recipe is stored. The Current-Year AI Populate endpoint sends only in-tool engagement data to the model; <strong>no live web search</strong>. Source text is truncated to 60 000 characters before being sent to the model to bound exposure.</td>
+      </tr>
+      <tr>
+        <td>Sufficient appropriate audit evidence</td>
+        <td>AI output is treated as a working-paper <strong>prefill</strong>, not as evidence. Tabs that hold the auditor's risk assessment and the trial balance are excluded. Walkthrough conclusions, test conclusions and RI sign-offs remain manual.</td>
+      </tr>
+      <tr>
+        <td>Documentation &amp; traceability</td>
+        <td>Every populated field carries <code>__fieldmeta</code> ({source, byUserId, byUserName, at, sourceLocation}). The engagement's <code>importOptions.history</code> records <code>prompted</code>, <code>uploaded</code>, <code>cloud_fetched</code>, <code>extracted</code>, <code>applied</code>, <code>documents_copied</code>, <code>current_year_populated</code> events. Each extraction persists the raw model response and model name in <code>import_extraction_proposals</code>.</td>
+      </tr>
+      <tr>
+        <td>Governance &amp; change control</td>
+        <td>Cloud connectors are firm-scoped, admin-owned, and the seeded MyWorkPapers entry is intentionally <strong>empty</strong> until a firm admin completes the recipe — the system refuses to invent endpoint paths it has not been given.</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h2>ICAEW concerns addressed</h2>
+  <p>ICAEW's guidance for audit registered firms calls out a recognisable cluster of risks. Each is mapped below to the specific design control in the feature.</p>
+
+  <h3>2.1 &nbsp;Automation bias</h3>
+  <div class="callout"><em>"The human tendency to believe that machine-made outputs are correct."</em></div>
+  <p><strong>How the feature responds.</strong></p>
+  <ul>
+    <li>AI never writes directly to the engagement file. Outputs are surfaced in <code>ImportReviewModal.tsx</code> as proposals, with an explicit per-row checkbox / delete control. <code>applyProposals()</code> runs only on the rows the reviewer has not marked <code>deleted</code>.</li>
+    <li>Populated fields are visually marked: <code>FieldProvenance.source</code> is <code>'prior_period_ai'</code> or <code>'current_year_ai'</code>, and the form components render the orange dashed surround whenever such a marker is present. The marker survives across sessions, so a later reviewer (manager / RI) is alerted that an AI-derived value sits behind the field.</li>
+    <li>The marker is shed only when a human edits the value, ensuring professional judgement is recorded against any number that ends up in the final file.</li>
+  </ul>
+
+  <h3>2.2 &nbsp;Probabilistic / non-deterministic outputs (Generative AI)</h3>
+  <p>ICAEW's guidance (and the FRC's 2026 update on generative and agentic AI) stresses that GenAI is probabilistic, and that for anything requiring deterministic numerical processing, a rules-based component is required alongside.</p>
+  <p><strong>How the feature responds.</strong></p>
+  <ul>
+    <li>Numerical work is <strong>not</strong> delegated to the model. The trial balance (<code>tb</code>) and Risk of Material Misstatement (<code>rmm</code>) tabs — which drive materiality calculations, sample sizes and risk responses — are excluded by <code>AI_POPULATE_EXCLUDED_TABS</code>.</li>
+    <li>For PAR (Preliminary Analytical Review) rows, <code>applyParRows()</code> validates that the proposed value is numeric and rejects <code>NaN</code> rather than silently coercing.</li>
+    <li>Materiality, fundamental tests, and substantive procedures continue to use the existing rules-based formula engine and schedule-action pipeline; the AI feature is layered on top of that engine, never inside it.</li>
+  </ul>
+
+  <h3>2.3 &nbsp;Loss of professional judgement / scepticism</h3>
+  <ul>
+    <li>The <code>ImportReviewModal</code> is mandatory between extraction and apply. There is no "auto-apply" path.</li>
+    <li>Conclusions and sign-offs are out of scope: the AI is not permitted to set walkthrough conclusions, test conclusions, RI matters, or final review fields.</li>
+    <li>The reviewer's user identity is captured on every applied row (<code>buildProvenanceEntry</code>), making the chain of judgement reviewable downstream.</li>
+  </ul>
+
+  <h3>2.4 &nbsp;Confidentiality and data protection</h3>
+  <p>ICAEW expects firms to consider whether client data leaves the engagement, and on what terms.</p>
+  <ul>
+    <li><strong>Credentials never persisted.</strong> The Cloud Audit Connector record holds only the recipe; per-call credentials live only in memory for the duration of the request. There is no <code>password</code>, <code>token</code> or <code>client_secret</code> column on <code>cloud_audit_connectors</code>; migration <code>2026-05-07-import-options-and-cloud-connectors.sql</code> confirms this.</li>
+    <li><strong>No live web search in AI Populate.</strong> The Current-Year endpoint deliberately limits the model's input to the engagement's own data plus the prior-period engagement's permanent file. It does not call out to general web tools.</li>
+    <li><strong>Bounded prompt.</strong> Source content is truncated to 60 000 characters before being included in the model prompt, capping the volume of client data sent to the AI provider per call.</li>
+    <li><strong>Firm scoping.</strong> Engagement, connector and proposal access is gated by <code>session.user.firmId === engagement.firmId</code>; the Methodology Admin Cloud Connectors page is similarly firm-scoped.</li>
+    <li><strong>Data residency / vendor disclosure.</strong> The model used (<code>meta-llama/Llama-3.3-70B-Instruct-Turbo</code> via Together AI) is recorded against every extraction (<code>import_extraction_proposals.ai_model</code>) so the firm can evidence which sub-processor handled which engagement's data.</li>
+  </ul>
+
+  <h3>2.5 &nbsp;Explainability and auditability of AI outputs</h3>
+  <ul>
+    <li><code>import_extraction_proposals</code> persists the <strong>raw model response</strong> (<code>raw_ai_response</code>) and the <strong>model identifier</strong> (<code>ai_model</code>) for every extraction, so the firm can later reconstruct exactly what the model produced and why a given proposal landed.</li>
+    <li>Each proposal carries a <code>sourceLocation</code> (e.g. <code>"Ethics &gt; Independence &gt; Q3"</code>) which the reviewer sees as hover text in the Review modal and which is stored back into <code>__fieldmeta.sourceLocation</code>. This satisfies the "why this value?" question on review.</li>
+    <li>Proposals are kept after apply as an audit trail; new extractions are written as new rows rather than mutating existing ones (<code>status: 'pending' &rarr; 'applied' | 'cancelled'</code>).</li>
+  </ul>
+
+  <h3>2.6 &nbsp;Bias in training data and outputs</h3>
+  <p>The feature is not a model-training pipeline — it consumes a third-party foundation model — so the firm cannot directly audit its training corpus. Mitigations:</p>
+  <ul>
+    <li>The AI is restricted to <em>suggesting destination + value</em> mappings from material the firm itself supplies. It is not asked to opine on accounting treatment, judgement areas, or going concern.</li>
+    <li>Excluded tabs and "no-fabricate" prompt rules keep the model away from areas where bias would be most damaging (risk assessment, materiality).</li>
+    <li>The <code>proposedValue</code> field is preserved verbatim alongside the user-edited value so a later reviewer can see if the model's output was systematically wrong in a particular dimension.</li>
+  </ul>
+
+  <h3>2.7 &nbsp;Skills, training, competence (ISA (UK) 220 / ISQM (UK) 1)</h3>
+  <p>The firm's onboarding pack should be updated to cover:</p>
+  <ul>
+    <li>when each Import Options checkbox should be ticked, and what each does;</li>
+    <li>that the orange dashed marker means "AI-prefilled — review with scepticism";</li>
+    <li>that RMM and TB tabs are out of scope for AI population by design;</li>
+    <li>that the AI is <em>not</em> audit evidence and corroboration is still required.</li>
+  </ul>
+  <p>A pointer to this memo should be added to the firm's audit methodology manual and referenced in CPD records for staff using the tool.</p>
+
+  <h3>2.8 &nbsp;Agentic AI risks</h3>
+  <p>ICAEW (echoing the FRC 2026 generative/agentic update) flags that agents that <em>act</em> — not just suggest — amplify generative-AI risks. The feature in this worktree is deliberately <strong>not agentic</strong>:</p>
+  <ul>
+    <li>It does not call other systems autonomously.</li>
+    <li>It does not iterate over its own outputs.</li>
+    <li>It does not write to the engagement file without human review.</li>
+    <li>The Current-Year AI Populate endpoint is a <strong>one-shot, server-side</strong> call that returns proposals and an apply summary; there is no loop.</li>
+  </ul>
+  <p>If the firm later layers agent behaviour on top (e.g. "auto-attempt to clear outstanding matters"), this design must be re-reviewed against this memo and against the FRC's guardrails / human-in-the-loop expectations.</p>
+
+  <h2>FRC concerns addressed</h2>
+  <p>The FRC's 2025 guidance on AI in audit and its 2026 generative/agentic update raise a number of expectations of audit firms. Each is mapped below.</p>
+
+  <h3>3.1 &nbsp;Quality management (ISQM (UK) 1)</h3>
+  <p>The FRC expects AI to be brought inside the firm's quality management system, not run as a side-project.</p>
+  <ul>
+    <li>Cloud connector creation, edit, activation and deactivation flow through the <strong>Methodology Admin</strong> area (<code>components/methodology-admin/CloudAuditConnectorsAdmin.tsx</code>), which is gated to firm administrators. Connectors are firm-scoped (<code>firm_id</code> foreign key) and uniquely keyed <code>(firm_id, vendor_key)</code>.</li>
+    <li>Built-in vendors (e.g. MyWorkPapers) are seeded as <strong>stubs with empty endpoints</strong>: <code>emptyMyWorkpapersConfig()</code> deliberately yields <code>baseUrl: ''</code> and <code>endpoints: {}</code>, with a <code>notes</code> field instructing the admin to complete the recipe before use. The runtime refuses to call out without a configured base URL.</li>
+    <li>Activation toggles (<code>is_active</code>) allow the firm's quality team to disable a connector without deleting the recipe — useful where a vendor breach or a deprecation forces a pause.</li>
+  </ul>
+
+  <h3>3.2 &nbsp;Risk assessment of the AI tool itself</h3>
+  <p>The FRC expects firms to risk-assess each AI tool before use and on a continuing basis. This memo, plus the populated <code>cloud_audit_connectors</code> and <code>import_extraction_proposals</code> tables, gives the firm the evidence base for that assessment:</p>
+  <ul>
+    <li>Each extraction's model identifier and raw response are retained, so the firm can sample outputs and assess accuracy / bias trends.</li>
+    <li>The <code>importOptions.history</code> log on each engagement gives a per-engagement view; a firm-wide view can be obtained by joining <code>import_extraction_proposals</code> across engagements.</li>
+    <li>The applier reports <code>applied</code>, <code>skipped</code> and <code>warnings</code> per call, written into <code>importOptions.history.note</code> (e.g. <code>applied=12, skipped=3, model=meta-llama/Llama-3.3-70B-Instruct-Turbo</code>). Skip and warning rates are an early indicator of model drift.</li>
+  </ul>
+
+  <h3>3.3 &nbsp;Sufficient appropriate audit evidence (ISA (UK) 500)</h3>
+  <p>The FRC is explicit that AI output is <strong>not</strong> in itself audit evidence.</p>
+  <ul>
+    <li>The feature is <strong>prefill</strong>, not evidence. Documentation and conclusions reached on each tab still require the auditor to reference the underlying client document, system extract or third-party confirmation.</li>
+    <li>The orange dashed surround is intended to remind the reviewer at the moment of sign-off that the value originated as an AI suggestion, prompting them to confirm the underlying evidence is on file.</li>
+    <li>Excluded tabs (RMM and TB) keep the most evidence-sensitive areas — the trial balance the audit opinion attaches to, and the auditor's risk assessment — entirely out of the AI flow.</li>
+  </ul>
+
+  <h3>3.4 &nbsp;Documentation (ISA (UK) 230)</h3>
+  <ul>
+    <li>The <code>__fieldmeta</code> provenance map satisfies ISA 230's requirement that working papers identify <em>who</em> did <em>what</em>, <em>when</em>, and <em>on what basis</em> — extended to "via what AI tool".</li>
+    <li><code>import_extraction_proposals</code> retains the raw AI response, supporting subsequent re-performance of the firm's review.</li>
+    <li><code>importOptions.history</code> provides an immutable engagement-level audit trail of when AI was used and with what result.</li>
+  </ul>
+
+  <h3>3.5 &nbsp;Professional scepticism (ISA (UK) 200 / 240)</h3>
+  <ul>
+    <li>Mandatory human review of every proposal before apply.</li>
+    <li>Visual marking of every AI-touched field, both at apply time and on every subsequent render.</li>
+    <li>Hard-excluded tabs keep judgement-heavy areas out of the AI loop.</li>
+  </ul>
+
+  <h3>3.6 &nbsp;Confidentiality of client data (ISA (UK) 220 + UK GDPR)</h3>
+  <ul>
+    <li>No persistence of cloud-connector credentials.</li>
+    <li>No live web search in the AI populate flow.</li>
+    <li>Truncation of source content before model submission.</li>
+    <li>Firm-scoping of all data accessed by the feature (engagement, connector, proposal).</li>
+  </ul>
+
+  <h3>3.7 &nbsp;Cyber and access controls</h3>
+  <ul>
+    <li>2FA-verified session required (<code>session.user.twoFactorVerified</code>) before the AI Populate endpoint will run.</li>
+    <li>Connector credentials cannot be exfiltrated from the database because they are not in the database.</li>
+    <li>The OAuth2 client-credentials flow runs server-side only; tokens are never returned to the browser.</li>
+  </ul>
+
+  <h3>3.8 &nbsp;Vendor due diligence (third-party AI provider)</h3>
+  <ul>
+    <li>Provider: Together AI. Model: <code>meta-llama/Llama-3.3-70B-Instruct-Turbo</code>. Both are recorded per extraction.</li>
+    <li>The firm should hold Together AI's data-processing terms on file and confirm that submitted prompts are not used for model training. This memo flags that requirement; the contract review sits outside the tool.</li>
+  </ul>
+
+  <h3>3.9 &nbsp;Validation &amp; continuing monitoring</h3>
+  <ul>
+    <li>The <code>import_extraction_proposals.proposals</code> JSON, combined with the post-edit values in <code>__fieldmeta</code>, allows the firm to compare <em>what the AI proposed</em> against <em>what the auditor signed off on</em> — a natural validation dataset.</li>
+    <li>Skip-rate and warning-rate from the applier should be reviewed at each cold-file review or annual methodology refresh.</li>
+  </ul>
+
+  <h3>3.10 &nbsp;Generative- and agentic-AI specific concerns (FRC May 2026)</h3>
+  <ul>
+    <li><strong>Hallucination:</strong> mitigated by the system prompt's explicit no-fabrication rule, low temperature (0.1), and the human review gate.</li>
+    <li><strong>Probabilistic outputs:</strong> confined to <em>suggesting</em> prefills; deterministic computations remain in the rules-based formula engine.</li>
+    <li><strong>Agent autonomy:</strong> out of scope — see §2.8.</li>
+    <li><strong>Guardrails:</strong> allow-list of tab keys passed in the prompt and re-checked server-side; forbidden-tab list applied before any database write; per-row <code>fieldKey</code> validation; non-numeric guard on PAR rows.</li>
+  </ul>
+
+  <h2>Residual risks and watch-items</h2>
+  <table class="risk">
+    <thead>
+      <tr><th>#</th><th>Residual risk</th><th>Owner</th><th>Mitigation in flight / proposed</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>R1</td><td>A reviewer rubber-stamps AI proposals without checking source documents.</td><td>Engagement Partner / RI</td><td>Cold-file review programme tests that AI-marked fields trace to underlying evidence. Consider sampling 25% of AI-marked fields per cold review.</td></tr>
+      <tr><td>R2</td><td>Together AI's terms or location change unnoticed.</td><td>Firm Compliance</td><td>Annual sub-processor review; <code>import_extraction_proposals.ai_model</code> evidences which model handled which engagement.</td></tr>
+      <tr><td>R3</td><td>An admin configures a connector pointing outside the firm's stated processing region.</td><td>Firm Admin / DPO</td><td>Add an admin-side warning when the configured <code>baseUrl</code> host is outside an allow-list. Recommended follow-up.</td></tr>
+      <tr><td>R4</td><td>The 60 000-character truncation could silently drop material data.</td><td>Engineering</td><td>Surface a warning in <code>ImportReviewModal</code> whenever the source was truncated. Recommended follow-up.</td></tr>
+      <tr><td>R5</td><td>A future change accidentally removes RMM/TB from the exclusion lists.</td><td>Engineering</td><td>Lock the exclusion list with a unit test that asserts both <code>'rmm'</code> and <code>'tb'</code> are present in <code>AI_POPULATE_EXCLUDED_TABS</code> and <code>FORBIDDEN_TABS</code>.</td></tr>
+      <tr><td>R6</td><td>Reviewer edits an AI-prefilled value and the orange marker is shed before the manager has reviewed.</td><td>Methodology</td><td>Manager review tab to expose a "show all AI-prefilled fields, including those subsequently edited" lens, sourced from <code>__fieldmeta</code> history.</td></tr>
+      <tr><td>R7</td><td>A prompt-injection string in a prior audit file persuades the model to step outside the allow-list.</td><td>Engineering</td><td>Defensive double-filter is already in place (<code>safeProposals</code> re-applies the exclusion list, and the applier re-applies <code>FORBIDDEN_TABS</code>). System-prompt-only mitigation is not treated as load-bearing.</td></tr>
+      <tr><td>R8</td><td>Agentic / autonomous extension layered on top without re-doing the AI risk assessment.</td><td>Director of Audit</td><td>Any agentic capability must trigger a refresh of this memo before it goes live. Add this commitment to the firm's AI policy.</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Pointers for ICAEW QAD / FRC AQR inspection</h2>
+  <p>If asked at inspection how the firm discharges its duties when AI is used in audit, this memo plus the artefacts below should be made available:</p>
+  <ol>
+    <li>This memo (<code>docs/AI-Risk-Management-and-Compliance.md</code> / <code>.pdf</code>).</li>
+    <li>The firm's AI policy and CPD records covering the tool.</li>
+    <li>A query against <code>import_extraction_proposals</code> showing every AI-assisted engagement, the model used, and the apply / skip outcomes.</li>
+    <li>A query against any engagement's <code>importOptions.history</code> showing the lifecycle (<code>prompted &rarr; uploaded/cloud_fetched &rarr; extracted &rarr; applied / current_year_populated</code>).</li>
+    <li>A walkthrough of <code>__fieldmeta</code> on a sample engagement, demonstrating that AI-prefilled fields are visually flagged and individually attributable.</li>
+    <li>The Cloud Audit Connectors admin page (<code>/methodology-admin/cloud-audit-connectors</code>) showing recipe-only storage.</li>
+    <li>The Together AI / sub-processor due-diligence file.</li>
+  </ol>
+
+  <h2>Appendix &mdash; Code references</h2>
+  <table class="code-refs">
+    <thead><tr><th>Concern</th><th>File</th></tr></thead>
+    <tbody>
+      <tr><td>Excluded tabs (AI populate)</td><td>lib/import-options/types.ts &nbsp;&middot;&nbsp; AI_POPULATE_EXCLUDED_TABS</td></tr>
+      <tr><td>Forbidden tabs (apply)</td><td>lib/import-options/apply-proposals.ts &nbsp;&middot;&nbsp; FORBIDDEN_TABS</td></tr>
+      <tr><td>No-fabricate prompt</td><td>lib/import-options/ai-extractor.ts &nbsp;&middot;&nbsp; SYSTEM_PROMPT</td></tr>
+      <tr><td>Provenance</td><td>lib/import-options/types.ts (FieldProvenance, FieldMetaMap); lib/import-options/apply-proposals.ts (buildProvenanceEntry)</td></tr>
+      <tr><td>Engagement-level audit log</td><td>app/api/engagements/[engagementId]/ai-populate-current/route.ts &nbsp;&middot;&nbsp; importOptions.history</td></tr>
+      <tr><td>Cloud connector recipe-only storage</td><td>prisma/migrations/manual/2026-05-07-import-options-and-cloud-connectors.sql; lib/import-options/cloud-fetch.ts</td></tr>
+      <tr><td>Credential handling (in-memory only)</td><td>lib/import-options/cloud-fetch.ts &nbsp;&middot;&nbsp; buildAuthHeaders</td></tr>
+      <tr><td>2FA gate on AI populate</td><td>app/api/engagements/[engagementId]/ai-populate-current/route.ts</td></tr>
+      <tr><td>In-tool data only (no live web)</td><td>app/api/engagements/[engagementId]/ai-populate-current/route.ts &nbsp;&middot;&nbsp; evidence pack construction</td></tr>
+      <tr><td>Defensive double filter</td><td>app/api/engagements/[engagementId]/ai-populate-current/route.ts &nbsp;&middot;&nbsp; safeProposals</td></tr>
+    </tbody>
+  </table>
+
+  <h2>Sources / further reading</h2>
+  <ul>
+    <li>ICAEW &mdash; <em>Artificial intelligence in audit work: managing the risks</em> (audit-regulations-and-guidance area).</li>
+    <li>ICAEW &mdash; <em>Managing the risks of AI</em> (technology / artificial-intelligence area).</li>
+    <li>ICAEW &mdash; <em>FRC publishes landmark guidance on the uses of AI for audit</em> (Viewpoints, July 2025).</li>
+    <li>ICAEW &mdash; <em>How helpful is FRC's guidance on generative and agentic AI?</em> (Viewpoints, May 2026).</li>
+    <li>FRC &mdash; <em>Guidance on the use of Artificial Intelligence in the audit of financial statements</em> (2025) and 2026 update on generative and agentic AI.</li>
+    <li>ISA (UK) 200, 220 (Revised), 230, 240, 315 (Revised), 500, 540; ISQM (UK) 1.</li>
+    <li>UK GDPR / Data Protection Act 2018, in respect of any personal data inside client material processed by the AI extractor.</li>
+  </ul>
+
+  <p class="micro" style="margin-top:24px">Prepared by the Acumon methodology &amp; engineering team &middot; v1.0 &middot; 7 May 2026 &middot; Confidential — Internal.</p>
+
+</main>
+</body>
+</html>

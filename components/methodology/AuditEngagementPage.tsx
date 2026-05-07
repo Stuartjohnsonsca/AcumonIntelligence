@@ -502,6 +502,8 @@ export function AuditEngagementPage({ auditType }: Props) {
           <ImportOptionsModal
             engagementId={engagement.id}
             clientName={clientName}
+            periodEnd={periodEndDate ? String(periodEndDate).slice(0, 10) : undefined}
+            auditTypeLabel={AUDIT_TYPE_LABELS[auditType]}
             onComplete={async (state, opts) => {
               // Update local state so the modal does not re-open.
               setEngagement(prev => prev ? { ...prev, importOptions: state } : prev);
