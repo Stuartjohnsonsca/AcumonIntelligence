@@ -44,6 +44,22 @@ type Step =
   | 'handoff'   // connected mode — uses Acumon's MCP server (preferred)
   | 'cowork';   // manual fallback — user copy-pastes the prompt
 
+type HandoffStage = 'created' | 'discovered' | 'context_loaded' | 'uploading' | 'extracting' | 'submitted';
+
+interface StageMeta { key: HandoffStage; label: string; }
+const HANDOFF_STAGES: StageMeta[] = [
+  { key: 'created',        label: 'Session created' },
+  { key: 'discovered',     label: 'Assistant connected' },
+  { key: 'context_loaded', label: 'Engagement loaded' },
+  { key: 'uploading',      label: 'File uploading' },
+  { key: 'extracting',     label: 'AI extracting' },
+  { key: 'submitted',      label: 'Ready for review' },
+];
+function stageIndex(stage: HandoffStage): number {
+  const i = HANDOFF_STAGES.findIndex(s => s.key === stage);
+  return i < 0 ? 0 : i;
+}
+
 export function ImportOptionsModal({ engagementId, clientName, periodEnd, auditTypeLabel, onComplete, onClose }: Props) {
   const [step, setStep] = useState<Step>('select');
   const [selected, setSelected] = useState<Set<ImportSelection>>(new Set());
@@ -83,6 +99,10 @@ export function ImportOptionsModal({ engagementId, clientName, periodEnd, auditT
   const [handoffSessionId, setHandoffSessionId] = useState<string | null>(null);
   const [handoffStatus, setHandoffStatus] = useState<'pending' | 'submitted' | 'expired' | 'cancelled'>('pending');
   const [handoffPromptCopied, setHandoffPromptCopied] = useState(false);
+  // Progress within the pending lifecycle, surfaced as a 5-stage
+  // progress bar so the user can see what their assistant is doing.
+  const [handoffProgressStage, setHandoffProgressStage] = useState<HandoffStage>('created');
+  const [handoffProgressMessage, setHandoffProgressMessage] = useState<string>('Session created. Waiting for your assistant to connect…');
 
   // Manual / cowork fallback — user copy-pastes a prompt into their
   // assistant and drops the result back here.
@@ -147,6 +167,8 @@ export function ImportOptionsModal({ engagementId, clientName, periodEnd, auditT
       const json = await res.json() as { sessionId: string; mcpEndpoint: string; expiresAt: string };
       setHandoffSessionId(json.sessionId);
       setHandoffStatus('pending');
+      setHandoffProgressStage('created');
+      setHandoffProgressMessage('Session created. Waiting for your assistant to connect…');
       setCoworkVendorLabel(vendorLabel);
       setStep('handoff');
     } catch (err) {
@@ -166,8 +188,15 @@ export function ImportOptionsModal({ engagementId, clientName, periodEnd, auditT
       try {
         const res = await fetch(url);
         if (!res.ok) return;
-        const json = await res.json() as { status: string; extractionId?: string | null };
+        const json = await res.json() as {
+          status: string;
+          extractionId?: string | null;
+          progressStage?: HandoffStage;
+          progressMessage?: string | null;
+        };
         if (cancelled) return;
+        if (json.progressStage) setHandoffProgressStage(json.progressStage);
+        if (json.progressMessage) setHandoffProgressMessage(json.progressMessage);
         if (json.status === 'submitted' && json.extractionId) {
           setHandoffStatus('submitted');
           await fetch(`/api/engagements/${engagementId}/import-options/save`, {
@@ -650,57 +679,106 @@ export function ImportOptionsModal({ engagementId, clientName, periodEnd, auditT
             </>
           )}
 
-          {step === 'handoff' && handoffSessionId && (
-            <div className="text-center py-6">
-              <div className="inline-block w-10 h-10 border-2 border-blue-500 border-t-transparent rounded-full animate-spin mb-4" />
-              <p className="text-sm text-slate-800 font-medium mb-1">
-                Import session ready
-              </p>
-              <p className="text-xs text-slate-500 max-w-md mx-auto mb-5">
-                Open your AI assistant (with Acumon connected) and tell it to run the import.
-                Once it submits the file, this screen will refresh into the Review step
-                automatically.
-              </p>
-
-              <div className="inline-flex items-center gap-2 bg-slate-100 border border-slate-200 rounded px-3 py-2 mb-4">
-                <span className="text-[11px] text-slate-500 italic">&ldquo;{handoffShortPrompt}&rdquo;</span>
-                <button
-                  onClick={copyHandoffPrompt}
-                  className="text-[10px] px-2 py-0.5 bg-slate-200 text-slate-700 rounded hover:bg-slate-300"
-                  title="Copy"
-                >
-                  {handoffPromptCopied ? '✓' : '📋'}
-                </button>
-              </div>
-
-              {handoffStatus === 'expired' && (
-                <p className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded p-2 mb-3">
-                  Session expired (30-minute window). Cancel and start a new one, or switch to manual mode.
+          {step === 'handoff' && handoffSessionId && (() => {
+            const currentIdx = stageIndex(handoffProgressStage);
+            const percent = Math.round((currentIdx / (HANDOFF_STAGES.length - 1)) * 100);
+            const inProgress = handoffStatus === 'pending' && handoffProgressStage !== 'submitted';
+            return (
+              <div className="py-2">
+                <p className="text-sm text-slate-800 font-medium text-center mb-1">
+                  {handoffProgressStage === 'submitted' ? 'Import complete' : 'Importing prior audit file'}
                 </p>
-              )}
-              {handoffStatus === 'cancelled' && (
-                <p className="text-xs text-slate-500 italic mb-3">Session cancelled.</p>
-              )}
+                <p className="text-xs text-slate-500 text-center mb-5">
+                  {handoffProgressMessage}
+                </p>
 
-              <div className="flex flex-col gap-1.5 items-center text-[11px] text-slate-500">
-                <button
-                  type="button"
-                  onClick={() => { setCoworkVendorLabel(coworkVendorLabel || 'MyWorkPapers'); setStep('cowork'); }}
-                  className="text-slate-500 hover:underline"
-                >
-                  Switch to manual mode (copy prompt + drag file back)
-                </button>
-                <a
-                  href="/methodology-admin/cloud-audit-connectors/mcp-setup"
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="text-slate-500 hover:underline"
-                >
-                  First time? Connect your AI assistant to Acumon ↗
-                </a>
+                {/* Progress bar */}
+                <div className="relative mb-2">
+                  <div className="h-1.5 bg-slate-200 rounded-full overflow-hidden">
+                    <div
+                      className={`h-full transition-all duration-500 ${handoffProgressStage === 'submitted' ? 'bg-emerald-500' : 'bg-blue-500'}`}
+                      style={{ width: `${percent}%` }}
+                    />
+                  </div>
+                </div>
+
+                {/* Step list */}
+                <ol className="grid grid-cols-6 gap-1 mb-5">
+                  {HANDOFF_STAGES.map((s, i) => {
+                    const done = i < currentIdx || handoffProgressStage === 'submitted';
+                    const active = i === currentIdx && handoffProgressStage !== 'submitted';
+                    return (
+                      <li key={s.key} className="flex flex-col items-center text-center gap-1">
+                        <span
+                          className={`flex items-center justify-center w-5 h-5 rounded-full text-[10px] font-medium ${
+                            done ? 'bg-emerald-500 text-white'
+                            : active ? 'bg-blue-500 text-white'
+                            : 'bg-slate-200 text-slate-400'
+                          }`}
+                        >
+                          {done ? '✓' : active ? (
+                            <span className="inline-block w-2 h-2 rounded-full bg-white animate-pulse" />
+                          ) : i + 1}
+                        </span>
+                        <span className={`text-[9px] leading-tight ${active ? 'text-blue-700 font-medium' : done ? 'text-slate-700' : 'text-slate-400'}`}>
+                          {s.label}
+                        </span>
+                      </li>
+                    );
+                  })}
+                </ol>
+
+                {inProgress && (
+                  <div className="flex items-center justify-center gap-2 text-[11px] text-slate-500 mb-4">
+                    <span className="inline-block w-3 h-3 border-2 border-blue-500 border-t-transparent rounded-full animate-spin" />
+                    <span>Polling… this updates every 2.5 s while your assistant works</span>
+                  </div>
+                )}
+
+                {handoffProgressStage === 'created' && (
+                  <div className="flex justify-center mb-4">
+                    <div className="inline-flex items-center gap-2 bg-slate-100 border border-slate-200 rounded px-3 py-2">
+                      <span className="text-[11px] text-slate-600 italic">&ldquo;{handoffShortPrompt}&rdquo;</span>
+                      <button
+                        onClick={copyHandoffPrompt}
+                        className="text-[10px] px-2 py-0.5 bg-slate-200 text-slate-700 rounded hover:bg-slate-300"
+                        title="Copy"
+                      >
+                        {handoffPromptCopied ? '✓' : '📋'}
+                      </button>
+                    </div>
+                  </div>
+                )}
+
+                {handoffStatus === 'expired' && (
+                  <p className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded p-2 mb-3 text-center">
+                    Session expired (30-minute window). Cancel and start a new one, or switch to manual mode.
+                  </p>
+                )}
+                {handoffStatus === 'cancelled' && (
+                  <p className="text-xs text-slate-500 italic mb-3 text-center">Session cancelled.</p>
+                )}
+
+                <div className="flex flex-col gap-1 items-center text-[11px] text-slate-500">
+                  <button
+                    type="button"
+                    onClick={() => { setCoworkVendorLabel(coworkVendorLabel || 'MyWorkPapers'); setStep('cowork'); }}
+                    className="text-slate-500 hover:underline"
+                  >
+                    Switch to manual mode (copy prompt + drag file back)
+                  </button>
+                  <a
+                    href="/methodology-admin/cloud-audit-connectors/mcp-setup"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-slate-500 hover:underline"
+                  >
+                    First time? Connect your AI assistant to Acumon ↗
+                  </a>
+                </div>
               </div>
-            </div>
-          )}
+            );
+          })()}
 
           {step === 'cowork' && (
             <>

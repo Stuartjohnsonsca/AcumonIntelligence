@@ -2225,6 +2225,19 @@ model ImportHandoffSession {
   createdById           String   @map("created_by_id")
   vendorLabel           String   @map("vendor_label") // shown to the assistant via get_session_context
   status                String   @default("pending") // pending | submitted | expired | cancelled
+  // Granular progress within the pending lifecycle. The modal renders
+  // this as a progress bar so the user can see what the assistant is
+  // doing in real time. Stages, in order:
+  //   'created'        — /handoff/start fired (default; row freshly written)
+  //   'discovered'     — assistant called list_pending_sessions
+  //   'context_loaded' — assistant called get_session_context for this session
+  //   'uploading'      — submit_archive received bytes, blob upload in flight
+  //   'extracting'     — blob uploaded, AI extraction in flight
+  //   'submitted'      — extraction complete, ImportExtractionProposal exists
+  // When status flips to expired/cancelled, progressStage is left as it was.
+  progressStage         String   @default("created") @map("progress_stage")
+  progressMessage       String?  @map("progress_message")
+  progressAt            DateTime? @map("progress_at")
   expiresAt             DateTime @map("expires_at")
   submittedDocumentId   String?  @map("submitted_document_id")
   submittedExtractionId String?  @map("submitted_extraction_id")

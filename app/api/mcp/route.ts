@@ -185,6 +185,21 @@ export async function POST(req: Request) {
           },
         },
       });
+      // Mark every still-in-stage='created' session as 'discovered' so
+      // the modal shows the assistant has connected. We only step
+      // forward — never regress past context_loaded etc.
+      const now = new Date();
+      await prisma.importHandoffSession.updateMany({
+        where: {
+          id: { in: sessions.map(s => s.id) },
+          progressStage: 'created',
+        },
+        data: {
+          progressStage: 'discovered',
+          progressMessage: 'Assistant connected and discovered your pending session',
+          progressAt: now,
+        },
+      });
       const text = JSON.stringify({
         sessions: sessions.map(s => ({
           sessionId: s.id,
@@ -222,6 +237,14 @@ export async function POST(req: Request) {
       }
       if (handoff.status !== 'pending') return jsonRpcError(id, -32001, `Session ${handoff.status}`);
       if (handoff.expiresAt < new Date()) return jsonRpcError(id, -32001, 'Session expired');
+      await prisma.importHandoffSession.update({
+        where: { id: handoff.id },
+        data: {
+          progressStage: 'context_loaded',
+          progressMessage: 'Assistant has the engagement context and is fetching your file',
+          progressAt: new Date(),
+        },
+      });
       const text = JSON.stringify({
         sessionId,
         clientName: handoff.engagement?.client?.clientName,
@@ -265,6 +288,16 @@ export async function POST(req: Request) {
       });
       if (!engagement) return jsonRpcError(id, -32603, 'Engagement not found');
 
+      // Progress: upload received, blob upload starting.
+      await prisma.importHandoffSession.update({
+        where: { id: handoff.id },
+        data: {
+          progressStage: 'uploading',
+          progressMessage: `Receiving ${(buffer.length / 1024).toFixed(0)} KB from your assistant`,
+          progressAt: new Date(),
+        },
+      });
+
       const safeName = fileName.replace(/[^a-zA-Z0-9._-]/g, '_');
       const blobName = `documents/${engagement.clientId}/${engagement.id}/${Date.now()}_handoff_${safeName}`;
       await uploadToInbox(blobName, buffer, mimeType);
@@ -284,6 +317,16 @@ export async function POST(req: Request) {
           usageLocation: 'Prior Period',
           documentType: 'Prior Period Audit File',
           source: 'Third Party',
+        },
+      });
+
+      // Progress: file uploaded, AI extraction starting.
+      await prisma.importHandoffSession.update({
+        where: { id: handoff.id },
+        data: {
+          progressStage: 'extracting',
+          progressMessage: 'File received. Running AI extraction…',
+          progressAt: new Date(),
         },
       });
 
@@ -328,13 +371,17 @@ export async function POST(req: Request) {
         proposalId = proposal.id;
       }
 
+      const submittedAt = new Date();
       await prisma.importHandoffSession.update({
         where: { id: handoff.id },
         data: {
           status: 'submitted',
-          submittedAt: new Date(),
+          submittedAt,
           submittedDocumentId: archiveDoc.id,
           submittedExtractionId: proposalId,
+          progressStage: 'submitted',
+          progressMessage: 'Extraction complete. Ready for your review.',
+          progressAt: submittedAt,
         },
       });
 

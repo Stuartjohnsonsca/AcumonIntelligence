@@ -43,6 +43,9 @@ export async function GET(
     submittedAt: handoff.submittedAt?.toISOString() || null,
     extractionId: handoff.submittedExtractionId,
     documentId: handoff.submittedDocumentId,
+    progressStage: handoff.progressStage,
+    progressMessage: handoff.progressMessage,
+    progressAt: handoff.progressAt?.toISOString() || null,
   });
 }
 
