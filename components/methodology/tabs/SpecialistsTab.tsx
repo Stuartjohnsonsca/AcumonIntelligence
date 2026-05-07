@@ -27,9 +27,10 @@
  */
 
 import { useState, useEffect, useCallback, useRef, useMemo, type ReactNode } from 'react';
-import { Plus, ChevronDown, ChevronRight, MessageSquare, FileText, CheckCircle2, Trash2, Send, Paperclip, Phone, X, Loader2 } from 'lucide-react';
+import { Plus, ChevronDown, ChevronRight, MessageSquare, FileText, CheckCircle2, Trash2, Send, Paperclip, Phone, X, Loader2, Zap } from 'lucide-react';
 import { SignOffDots } from '../SignOffDots';
 import type { TeamMemberLite } from '@/lib/sign-off-helpers';
+import { findScheduleAction } from '@/lib/schedule-actions';
 
 // ─── Types ─────────────────────────────────────────────────────────
 
@@ -85,6 +86,11 @@ interface SpecialistItem {
   // archived and the item moves into "report" mode (chat history
   // shown read-only).
   status: 'open' | 'completed';
+  // When the item was created by a fired schedule action, these
+  // tag the source so the UI can show a "fired automatically"
+  // marker and the server can deduplicate re-fires.
+  sourceActionKey?: string;
+  sourceQuestionId?: string;
 }
 
 interface RoleItems { items: SpecialistItem[] }
@@ -575,6 +581,25 @@ export function SpecialistsTab({ engagementId, specialists, teamMembers, current
                       {item.status === 'completed' && (
                         <span className="text-[9px] px-1.5 py-0.5 bg-green-100 text-green-700 rounded">Completed</span>
                       )}
+                      {item.sourceActionKey && (() => {
+                        // Schedule-action marker — visible amber pill
+                        // with a lightning bolt, hover reveals the
+                        // exact action label and source question id.
+                        // Looks up the action label from the seeded
+                        // SCHEDULE_ACTIONS catalog so we always show
+                        // the human label, never the slug.
+                        const a = findScheduleAction(item.sourceActionKey);
+                        const label = a?.label || item.sourceActionKey;
+                        const qid = item.sourceQuestionId ? ` · question ${item.sourceQuestionId}` : '';
+                        return (
+                          <span
+                            className="inline-flex items-center gap-1 text-[9px] px-1.5 py-0.5 bg-amber-100 text-amber-800 border border-amber-200 rounded cursor-help"
+                            title={`Fired automatically by schedule action: ${label}${qid}`}
+                          >
+                            <Zap className="h-2.5 w-2.5" /> Schedule action
+                          </span>
+                        );
+                      })()}
                       <span className="text-[10px] text-slate-400 ml-auto whitespace-nowrap">
                         {item.createdByName} · {new Date(item.createdAt).toLocaleDateString('en-GB')}
                       </span>

@@ -6,6 +6,7 @@ import { FirmsAdmin } from './FirmsAdmin';
 import { AggregatorConnectorsTab } from '../my-account/AggregatorConnectorsTab';
 import { ActionTriggersAdmin } from './ActionTriggersAdmin';
 import { SuperAdminsAdmin } from './SuperAdminsAdmin';
+import { AuditTrailAdmin } from './AuditTrailAdmin';
 
 export function AdminClient() {
   return (
@@ -16,6 +17,7 @@ export function AdminClient() {
         <TabsTrigger value="firms">Firms</TabsTrigger>
         <TabsTrigger value="aggregator-connectors">Aggregator Connectors</TabsTrigger>
         <TabsTrigger value="action-triggers">Action Triggers</TabsTrigger>
+        <TabsTrigger value="audit-trail">Audit Trail</TabsTrigger>
       </TabsList>
       <TabsContent value="super-admins">
         <SuperAdminsAdmin />
@@ -31,6 +33,9 @@ export function AdminClient() {
       </TabsContent>
       <TabsContent value="action-triggers">
         <ActionTriggersAdmin />
+      </TabsContent>
+      <TabsContent value="audit-trail">
+        <AuditTrailAdmin />
       </TabsContent>
     </Tabs>
   );

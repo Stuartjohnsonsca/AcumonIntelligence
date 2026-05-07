@@ -70,23 +70,21 @@ export async function POST(
     const action = findScheduleAction(body.scheduleActionKey);
     if (!action) return NextResponse.json({ error: 'Unknown scheduleActionKey' }, { status: 400 });
 
-    // Resolve the action's hardcoded specialistRoleKey against the
-    // firm's actual configured specialist roles. Reason: SCHEDULE_ACTIONS
-    // ships fixed keys like 'tax_technical', but firms in the wild
-    // may have set up a role with a different key (e.g. 'custom_role'
-    // labelled 'Tax Specialist'). Without this lookup, schedule-action
-    // chats land in a ghost bucket the SpecialistsTab can't merge with
-    // the firm-configured role, producing a duplicate sub-tab.
-    //
-    // We fetch the engagement + firm roles up-front so storage,
-    // idempotency check, recipient lookup, portal URL, and audit-log
-    // metadata all use the SAME resolved key. Falls back to the
-    // hardcoded action.specialistRoleKey when no firm role plausibly
-    // matches — the chat still gets created (under the original key);
-    // an admin can map roles later and re-fire.
+    // Resolve the action target to the engagement's assigned
+    // specialist on the Opening tab — NOT the firm-wide role config.
+    // Reason: each engagement may have a specific specialist booked
+    // (JST as the Tax Specialist for client X, AB&Co as the Tax
+    // Specialist for client Y) and the schedule action must reach
+    // the person actually assigned to THIS engagement. Firm-wide
+    // config is only consulted to read the role's label so we can
+    // fuzzy-match the action's hardcoded role-key to whichever
+    // engagement specialist plays that role.
     const engagementForResolve = await prisma.auditEngagement.findUnique({
       where: { id: engagementId },
-      select: { firmId: true },
+      select: {
+        firmId: true,
+        specialists: { select: { specialistType: true, name: true, email: true } },
+      },
     });
     let firmRoles: any[] = [];
     if (engagementForResolve) {
@@ -101,7 +99,9 @@ export async function POST(
       });
       firmRoles = Array.isArray(rolesRow?.items) ? (rolesRow!.items as any[]) : [];
     }
-    const resolvedRoleKey = resolveFirmRoleKey(action, firmRoles);
+    const engagementSpecialists = engagementForResolve?.specialists || [];
+    const target = resolveActionTarget(action, engagementSpecialists, firmRoles);
+    const resolvedRoleKey = target.storageKey;
 
     const existing = await prisma.auditPermanentFile.findUnique({
       where: { engagementId_sectionKey: { engagementId, sectionKey: SECTION_KEY } },
@@ -179,18 +179,14 @@ export async function POST(
         },
       });
       if (engagement) {
-        // Reuse the firm-roles list we already loaded for the resolver
-        // — saves a round trip and keeps recipient lookup consistent
-        // with the storage key. If the resolver fell back to the
-        // hardcoded action key (no firm role matched) the role
-        // lookup here will also miss; in that case emailStatus
-        // becomes 'no_recipient' and the audit log captures it.
-        const role = firmRoles.find((r: any) => r.key === resolvedRoleKey && r.isActive !== false);
-        const lead = role?.email ? { name: role.name || '', email: String(role.email).toLowerCase() } : null;
-        const firstMember = Array.isArray(role?.members)
-          ? role.members.find((m: any) => m?.email)
+        // Recipient comes from the engagement's assigned specialist
+        // (resolved above). The firm-wide role config is only
+        // consulted for the LABEL — never for the recipient — so a
+        // schedule action always emails the person assigned on the
+        // Opening tab.
+        const recipient = target.recipientEmail
+          ? { name: target.recipientName || '', email: target.recipientEmail }
           : null;
-        const recipient = lead || (firstMember ? { name: firstMember.name || '', email: String(firstMember.email).toLowerCase() } : null);
         if (recipient?.email) {
           recipientEmail = recipient.email;
           recipientName = recipient.name || null;
@@ -208,7 +204,11 @@ export async function POST(
           // 'Tax Specialist' rather than 'custom_role'. Falls back to
           // the resolved key spaced out if the firm role doesn't carry
           // a label.
-          const resolvedRoleLabel = (role?.label && String(role.label).trim()) || resolvedRoleKey.replace(/_/g, ' ');
+          // Prefer the firm-role label for the resolved key — e.g.
+          // 'Tax Specialist' rather than 'custom_role'. Falls back
+          // to the resolved key spaced-out when no label is set.
+          const firmRoleForLabel = firmRoles.find((r: any) => r?.key === resolvedRoleKey);
+          const resolvedRoleLabel = (firmRoleForLabel?.label && String(firmRoleForLabel.label).trim()) || resolvedRoleKey.replace(/_/g, ' ');
           const html = `
             <div style="font-family:Arial,sans-serif;max-width:560px;margin:0 auto;padding:20px;color:#334155">
               <h2 style="color:#1e40af;margin-bottom:4px">Specialist input requested</h2>
@@ -266,6 +266,7 @@ export async function POST(
             actionKey: action.key,
             actionRoleKey: action.specialistRoleKey,
             resolvedRoleKey,
+            resolvedSource: target.resolvedSource,
             sourceQuestionId: questionId || null,
             recipientEmail,
             recipientName,
@@ -311,50 +312,128 @@ export async function POST(
 }
 
 /**
- * Map a hardcoded SCHEDULE_ACTIONS specialistRoleKey to a key that
- * actually exists in the firm's specialist-roles config.
+ * Resolve a schedule-action target to the engagement's assigned
+ * specialist (set on the Opening tab). The hardcoded
+ * `action.specialistRoleKey` (e.g. 'tax_technical' from
+ * SCHEDULE_ACTIONS) is matched against the role key + the firm's
+ * configured label for that key, against each engagement specialist
+ * — the highest-scoring engagement specialist becomes the target.
+ *
+ * Why this routing instead of the firm-wide config: each engagement
+ * may have its own specialist booked (different Tax Specialist for
+ * different clients), and the schedule action MUST reach the person
+ * actually assigned to THIS engagement, not the firm-default lead.
  *
  * Strategy:
- *   1. Exact key match wins (e.g. 'ethics_partner' on a firm that
- *      kept the seed key).
- *   2. Otherwise, score each firm role by how many stem-words from
- *      the action's role-key + label appear in the firm role's
- *      key + label (case-insensitive). Stems shorter than 3 chars
- *      are dropped to avoid noise like 'it', 'a', 'on'.
- *   3. Highest non-zero scoring firm role wins. Ties resolved by
- *      first occurrence in the firm-roles list.
- *   4. If nothing scores, fall back to the action's hardcoded key —
- *      the chat still gets created (under that key) and an admin
- *      can map roles later.
+ *   1. Exact match on engagement specialistType. Wins immediately.
+ *   2. Otherwise, score each engagement specialist by overlap of
+ *      stem words from the action (role-key + label) against that
+ *      specialist's specialistType + the firm-role label for that
+ *      key. Stops words ('consult', 'specialist', 'with', etc) and
+ *      stems shorter than 3 chars are dropped to avoid noise.
+ *   3. Highest non-zero scoring engagement specialist wins. The
+ *      storage key is that specialist's specialistType, and the
+ *      recipient is its name + email.
+ *   4. If no engagement specialist plausibly matches, fall back to
+ *      the firm-role config (lead / first member email) — same
+ *      shape the firm-wide flow used historically. Records
+ *      `resolvedSource: 'firm-role'` so the audit log captures it.
+ *   5. Last resort: hardcoded action key, no recipient. The chat
+ *      is still created so the work isn't lost; emailStatus will
+ *      be 'no_recipient' in the audit log.
  */
-function resolveFirmRoleKey(
+function resolveActionTarget(
   action: { key: string; label: string; specialistRoleKey: string },
-  firmRoles: Array<{ key: string; label?: string; isActive?: boolean }>,
-): string {
-  const active = firmRoles.filter(r => r && r.key && r.isActive !== false);
-  // 1. Exact key match
-  const exact = active.find(r => r.key === action.specialistRoleKey);
-  if (exact) return exact.key;
+  engagementSpecialists: Array<{ specialistType: string; name: string; email: string | null }>,
+  firmRoles: Array<{ key: string; label?: string; name?: string; email?: string; members?: Array<{ name?: string; email?: string }>; isActive?: boolean }>,
+): {
+  storageKey: string;
+  recipientEmail: string | null;
+  recipientName: string | null;
+  resolvedRoleKey: string;
+  resolvedSource: 'engagement-specialist' | 'firm-role' | 'fallback';
+} {
+  // Build a key→label index from the firm-role config for matching.
+  const firmLabelByKey: Record<string, string> = {};
+  for (const r of firmRoles) {
+    if (r?.key) firmLabelByKey[r.key] = String(r.label || '');
+  }
 
-  // 2. Score by overlapping stems
+  // 1. Exact specialistType match against an engagement specialist.
+  const exactSpec = engagementSpecialists.find(s => s.specialistType === action.specialistRoleKey);
+  if (exactSpec) {
+    return {
+      storageKey: exactSpec.specialistType,
+      recipientEmail: exactSpec.email || null,
+      recipientName: exactSpec.name || null,
+      resolvedRoleKey: exactSpec.specialistType,
+      resolvedSource: 'engagement-specialist',
+    };
+  }
+
+  // 2. Stem-overlap score against each engagement specialist.
   const STOPWORDS = new Set(['consult', 'specialist', 'with', 'and', 'the', 'role']);
   const stems = `${action.specialistRoleKey} ${action.label}`
     .toLowerCase()
     .split(/[^a-z0-9]+/)
     .filter(s => s.length >= 3 && !STOPWORDS.has(s));
-  if (stems.length === 0) return action.specialistRoleKey;
 
-  let bestKey = action.specialistRoleKey;
-  let bestScore = 0;
-  for (const r of active) {
-    const haystack = `${r.key} ${r.label || ''}`.toLowerCase();
-    const score = stems.reduce((s, stem) => s + (haystack.includes(stem) ? 1 : 0), 0);
-    if (score > bestScore) {
-      bestScore = score;
-      bestKey = r.key;
+  if (stems.length > 0 && engagementSpecialists.length > 0) {
+    let best: { spec: typeof engagementSpecialists[number]; score: number } | null = null;
+    for (const spec of engagementSpecialists) {
+      const haystack = `${spec.specialistType} ${firmLabelByKey[spec.specialistType] || ''}`.toLowerCase();
+      const score = stems.reduce((s, stem) => s + (haystack.includes(stem) ? 1 : 0), 0);
+      if (score > 0 && (!best || score > best.score)) best = { spec, score };
+    }
+    if (best) {
+      return {
+        storageKey: best.spec.specialistType,
+        recipientEmail: best.spec.email || null,
+        recipientName: best.spec.name || null,
+        resolvedRoleKey: best.spec.specialistType,
+        resolvedSource: 'engagement-specialist',
+      };
     }
   }
-  return bestKey;
+
+  // 3. Fallback: firm-role lead / first-member. This keeps the chat
+  //    addressable when no specialist has been assigned to the
+  //    engagement yet but the firm has the role configured.
+  const activeFirmRoles = firmRoles.filter(r => r && r.key && r.isActive !== false);
+  const firmExact = activeFirmRoles.find(r => r.key === action.specialistRoleKey);
+  const firmFuzzy = !firmExact && stems.length > 0
+    ? activeFirmRoles
+      .map(r => ({
+        r,
+        score: stems.reduce((s, stem) => s + (`${r.key} ${r.label || ''}`.toLowerCase().includes(stem) ? 1 : 0), 0),
+      }))
+      .filter(x => x.score > 0)
+      .sort((a, b) => b.score - a.score)[0]?.r
+    : undefined;
+  const firmRole = firmExact || firmFuzzy;
+  if (firmRole) {
+    const lead = firmRole.email ? { name: firmRole.name || '', email: String(firmRole.email).toLowerCase() } : null;
+    const firstMember = Array.isArray(firmRole.members)
+      ? firmRole.members.find(m => m?.email)
+      : null;
+    const recipient = lead || (firstMember ? { name: firstMember.name || '', email: String(firstMember.email).toLowerCase() } : null);
+    return {
+      storageKey: firmRole.key,
+      recipientEmail: recipient?.email || null,
+      recipientName: recipient?.name || null,
+      resolvedRoleKey: firmRole.key,
+      resolvedSource: 'firm-role',
+    };
+  }
+
+  // 4. Last resort.
+  return {
+    storageKey: action.specialistRoleKey,
+    recipientEmail: null,
+    recipientName: null,
+    resolvedRoleKey: action.specialistRoleKey,
+    resolvedSource: 'fallback',
+  };
 }
 
 function escapeHtml(s: string): string {
