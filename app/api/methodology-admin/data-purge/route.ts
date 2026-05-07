@@ -23,7 +23,7 @@ import { logEngagementAction } from '@/lib/engagement-action-log';
  *     captures who wiped what and when.
  */
 
-export async function GET() {
+export async function GET(req: Request) {
   const session = await auth();
   if (!session?.user?.twoFactorVerified) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
@@ -31,8 +31,37 @@ export async function GET() {
   if (!session.user.isSuperAdmin && !session.user.isMethodologyAdmin) {
     return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
   }
-  // Surfaces the registry to the UI so the dropdown options stay
-  // server-driven.
+
+  const firmId = session.user.firmId;
+  // Optional `clientId` query param: when present we return the
+  // periods that have engagements for that client, scoped to the
+  // firm. Lets the UI build a dependent Client → Period dropdown
+  // without two endpoints.
+  const { searchParams } = new URL(req.url);
+  const filterClientId = searchParams.get('clientId') || undefined;
+
+  const [clients, periods] = await Promise.all([
+    prisma.client.findMany({
+      where: {
+        firmId,
+        periods: { some: { auditEngagements: { some: {} } } },
+      },
+      select: { id: true, clientName: true },
+      orderBy: { clientName: 'asc' },
+    }),
+    filterClientId
+      ? prisma.clientPeriod.findMany({
+        where: {
+          clientId: filterClientId,
+          client: { firmId },
+          auditEngagements: { some: {} },
+        },
+        select: { id: true, startDate: true, endDate: true },
+        orderBy: { endDate: 'desc' },
+      })
+      : Promise.resolve([] as Array<{ id: string; startDate: Date; endDate: Date }>),
+  ]);
+
   return NextResponse.json({
     tabs: TAB_PURGE_DEFS.map(t => ({
       key: t.key,
@@ -42,6 +71,12 @@ export async function GET() {
       // Pre-resolved expansion so the UI can display "purging this
       // also wipes …" without re-implementing the cascade walker.
       expandedKeys: resolveTargetsWithCascade(t.key).expandedKeys,
+    })),
+    clients: clients.map(c => ({ id: c.id, name: c.clientName })),
+    periods: periods.map(p => ({
+      id: p.id,
+      startDate: p.startDate?.toISOString() || null,
+      endDate: p.endDate?.toISOString() || null,
     })),
   });
 }
@@ -60,7 +95,12 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: 'Body required' }, { status: 400 });
   }
   const tabKey = typeof body.tab === 'string' ? body.tab : '';
+  const clientId = typeof body.clientId === 'string' ? body.clientId.trim() : '';
+  const periodId = typeof body.periodId === 'string' ? body.periodId.trim() : '';
   const confirmation = typeof body.confirmation === 'string' ? body.confirmation : '';
+  if (!clientId || !periodId) {
+    return NextResponse.json({ error: 'clientId and periodId are required — purges are scoped to one Client + Period' }, { status: 400 });
+  }
   if (confirmation !== 'DELETE') {
     return NextResponse.json({ error: "confirmation must be exactly 'DELETE'" }, { status: 400 });
   }
@@ -70,11 +110,25 @@ export async function POST(req: Request) {
   }
 
   const firmId = session.user.firmId;
-  // Resolve every engagement in this firm — we filter the per-table
-  // deleteMany by `engagementId IN (...)` so one tab purge can't
-  // accidentally cross firms via a missing scope filter.
+  // Verify the chosen client + period actually belong to this firm
+  // before we touch anything. Without this, a crafted body could
+  // (in theory) pass another firm's clientId. The findFirst is on
+  // (firmId, clientId, periodId) — only matches when all three line
+  // up.
+  const scopeCheck = await prisma.auditEngagement.findFirst({
+    where: { firmId, clientId, periodId },
+    select: { id: true },
+  });
+  if (!scopeCheck) {
+    return NextResponse.json({ error: 'No engagement found for this firm + client + period' }, { status: 404 });
+  }
+
+  // Resolve every engagement under (firmId, clientId, periodId) —
+  // a client+period pair can carry multiple engagements (one per
+  // audit type, e.g. SME vs GROUP). All matching engagements get
+  // wiped together since they share the period's data context.
   const engagements = await prisma.auditEngagement.findMany({
-    where: { firmId },
+    where: { firmId, clientId, periodId },
     select: { id: true },
   });
   const engagementIds = engagements.map(e => e.id);
@@ -125,7 +179,7 @@ export async function POST(req: Request) {
       actorUserId: session.user.id || null,
       actorName: session.user.name || session.user.email || 'methodology-admin',
       action: `data-purge.${def.key}`,
-      summary: `Methodology Admin purged "${def.label}" data across the firm — ${totalDeleted} rows total`,
+      summary: `Methodology Admin purged "${def.label}" data for this client+period — ${totalDeleted} rows total`,
       targetType: 'data-purge',
       targetId: def.key,
       metadata: {
@@ -135,11 +189,13 @@ export async function POST(req: Request) {
         targets: perTargetCounts,
         totalDeleted,
         engagementCount: engagementIds.length,
+        clientId,
+        periodId,
       },
     });
   }
 
-  console.log(`[data-purge] firm=${firmId} tab=${def.key} cascaded=[${expandedKeys.join(',')}] deleted=${totalDeleted} byUser=${session.user.id} (${session.user.email})`);
+  console.log(`[data-purge] firm=${firmId} client=${clientId} period=${periodId} tab=${def.key} cascaded=[${expandedKeys.join(',')}] deleted=${totalDeleted} byUser=${session.user.id} (${session.user.email})`);
   return NextResponse.json({
     ok: true,
     tab: def.key,
@@ -148,5 +204,7 @@ export async function POST(req: Request) {
     targets: perTargetCounts,
     totalDeleted,
     engagementCount: engagementIds.length,
+    clientId,
+    periodId,
   });
 }

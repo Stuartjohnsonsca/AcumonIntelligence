@@ -25,6 +25,9 @@ interface TabOption {
   expandedKeys: string[];
 }
 
+interface ClientOption { id: string; name: string }
+interface PeriodOption { id: string; startDate: string | null; endDate: string | null }
+
 interface PurgeResult {
   ok: boolean;
   tab: string;
@@ -33,17 +36,31 @@ interface PurgeResult {
   targets: Array<{ model: string; count: number; extraWhere?: Record<string, unknown> }>;
   totalDeleted: number;
   engagementCount: number;
+  clientId: string;
+  periodId: string;
+}
+
+function formatPeriod(p: PeriodOption | undefined | null): string {
+  if (!p) return '';
+  const end = p.endDate ? new Date(p.endDate).toLocaleDateString('en-GB') : '';
+  return end ? `Period ended ${end}` : '(period dates missing)';
 }
 
 export function DataPurgeClient() {
   const [tabs, setTabs] = useState<TabOption[]>([]);
+  const [clients, setClients] = useState<ClientOption[]>([]);
+  const [periods, setPeriods] = useState<PeriodOption[]>([]);
   const [loadingTabs, setLoadingTabs] = useState(true);
   const [tabKey, setTabKey] = useState('');
+  const [clientId, setClientId] = useState('');
+  const [periodId, setPeriodId] = useState('');
   const [confirmation, setConfirmation] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<PurgeResult | null>(null);
 
+  // Initial load — tabs + client list (no clientId yet so periods
+  // come back empty).
   useEffect(() => {
     let cancelled = false;
     (async () => {
@@ -52,6 +69,7 @@ export function DataPurgeClient() {
         if (!cancelled && res.ok) {
           const data = await res.json();
           setTabs(Array.isArray(data?.tabs) ? data.tabs : []);
+          setClients(Array.isArray(data?.clients) ? data.clients : []);
         }
       } finally {
         if (!cancelled) setLoadingTabs(false);
@@ -60,8 +78,29 @@ export function DataPurgeClient() {
     return () => { cancelled = true; };
   }, []);
 
+  // Load periods when the client changes. Wipe periodId so a stale
+  // selection from another client can't be submitted.
+  useEffect(() => {
+    setPeriodId('');
+    setPeriods([]);
+    if (!clientId) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch(`/api/methodology-admin/data-purge?clientId=${encodeURIComponent(clientId)}`);
+        if (!cancelled && res.ok) {
+          const data = await res.json();
+          setPeriods(Array.isArray(data?.periods) ? data.periods : []);
+        }
+      } catch { /* tolerant */ }
+    })();
+    return () => { cancelled = true; };
+  }, [clientId]);
+
   const selectedTab = tabs.find(t => t.key === tabKey);
-  const canCommit = !!tabKey && confirmation === 'DELETE' && !submitting;
+  const selectedClient = clients.find(c => c.id === clientId);
+  const selectedPeriod = periods.find(p => p.id === periodId);
+  const canCommit = !!tabKey && !!clientId && !!periodId && confirmation === 'DELETE' && !submitting;
 
   async function handleCommit() {
     if (!canCommit) return;
@@ -72,7 +111,7 @@ export function DataPurgeClient() {
       const res = await fetch('/api/methodology-admin/data-purge', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ tab: tabKey, confirmation }),
+        body: JSON.stringify({ tab: tabKey, clientId, periodId, confirmation }),
       });
       if (!res.ok) {
         const detail = await res.json().catch(() => ({}));
@@ -96,9 +135,40 @@ export function DataPurgeClient() {
       <div className="flex items-start gap-3 p-3 bg-red-50 border border-red-200 rounded">
         <AlertTriangle className="h-5 w-5 text-red-600 flex-shrink-0 mt-0.5" />
         <div className="text-sm text-red-900">
-          <strong>This deletes data permanently across every engagement in your firm.</strong> There is no
-          undo. The Methodology Admin audit trail will record who triggered the wipe, when, and how many
-          rows were deleted.
+          <strong>This deletes data permanently for the selected Client + Period.</strong> All
+          engagements under that period (e.g. SME and GROUP audit types of the same client+period)
+          are affected. There is no undo. The audit trail records who triggered the wipe, when,
+          and how many rows were deleted.
+        </div>
+      </div>
+
+      {/* Client + Period scope */}
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-3 p-3 bg-slate-50 border border-slate-200 rounded">
+        <div>
+          <label className="block text-xs font-medium text-slate-700 mb-1">Client</label>
+          <select
+            value={clientId}
+            onChange={e => { setClientId(e.target.value); setResult(null); setError(null); }}
+            disabled={loadingTabs || submitting}
+            className="w-full text-sm border border-slate-300 rounded px-3 py-2 bg-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+          >
+            <option value="">{loadingTabs ? 'Loading…' : '— Pick a client —'}</option>
+            {clients.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+          </select>
+        </div>
+        <div>
+          <label className="block text-xs font-medium text-slate-700 mb-1">Period</label>
+          <select
+            value={periodId}
+            onChange={e => { setPeriodId(e.target.value); setResult(null); setError(null); }}
+            disabled={!clientId || submitting}
+            className="w-full text-sm border border-slate-300 rounded px-3 py-2 bg-white disabled:bg-slate-100 focus:outline-none focus:ring-2 focus:ring-blue-500"
+          >
+            <option value="">{!clientId ? 'Pick a client first' : (periods.length === 0 ? 'No periods with engagements' : '— Pick a period —')}</option>
+            {periods.map(p => (
+              <option key={p.id} value={p.id}>{formatPeriod(p)}</option>
+            ))}
+          </select>
         </div>
       </div>
 
@@ -161,8 +231,12 @@ export function DataPurgeClient() {
             <><Trash2 className="h-4 w-4 mr-2" /> Commit Delete</>
           )}
         </Button>
-        {!canCommit && tabKey && confirmation !== 'DELETE' && !submitting && (
-          <span className="text-xs text-slate-500">Type DELETE exactly to enable.</span>
+        {!canCommit && !submitting && (
+          <span className="text-xs text-slate-500">
+            {(!clientId || !periodId) && 'Pick a Client + Period. '}
+            {tabKey && (clientId && periodId) && confirmation !== 'DELETE' && 'Type DELETE exactly to enable.'}
+            {!tabKey && (clientId && periodId) && 'Pick a tab.'}
+          </span>
         )}
       </div>
 
@@ -178,7 +252,7 @@ export function DataPurgeClient() {
         <div className="p-3 bg-green-50 border border-green-200 rounded text-sm space-y-2">
           <div className="flex items-center gap-2 text-green-800 font-semibold">
             <CheckCircle2 className="h-4 w-4" />
-            Wiped &ldquo;{result.label}&rdquo; — {result.totalDeleted.toLocaleString()} rows across {result.engagementCount} engagement{result.engagementCount === 1 ? '' : 's'}.
+            Wiped &ldquo;{result.label}&rdquo; for {selectedClient?.name || 'client'} · {formatPeriod(selectedPeriod)} — {result.totalDeleted.toLocaleString()} rows across {result.engagementCount} engagement{result.engagementCount === 1 ? '' : 's'}.
           </div>
           <div className="text-xs text-slate-700">
             <strong>Per-table breakdown:</strong>

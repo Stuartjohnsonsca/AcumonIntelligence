@@ -57,7 +57,7 @@ export const TAB_PURGE_DEFS: PurgeTabDef[] = [
     key: 'permanent_file',
     label: 'Permanent File',
     description:
-      'Deletes every Permanent File answer across all engagements (Entity Details, Understanding the Entity, IT Environment, Taxation, etc.). Also cascades to clear the specialist chats and Schedule Specialist Reviews fired from those answers, so the engagement is genuinely back to a clean slate and triggers can refire.',
+      'Deletes every Permanent File answer for the selected Client + Period (Entity Details, Understanding the Entity, IT Environment, Taxation, etc.). Also cascades to clear the specialist chats and Schedule Specialist Reviews fired from those answers, so the engagement is genuinely back to a clean slate and triggers can refire.',
     targets: [{ model: 'auditPermanentFile' }],
     cascade: ['schedule_specialist_reviews'],
   },
@@ -121,49 +121,49 @@ export const TAB_PURGE_DEFS: PurgeTabDef[] = [
   {
     key: 'rmm_rows',
     label: 'Risk Matrix (RMM)',
-    description: 'Deletes every Risk Matrix row across all engagements.',
+    description: 'Deletes every Risk Matrix row for the selected Client + Period.',
     targets: [{ model: 'auditRMMRow' }],
   },
   {
     key: 'par_rows',
     label: 'Planning Analytical Review (PAR)',
-    description: 'Deletes every PAR row across all engagements.',
+    description: 'Deletes every PAR row for the selected Client + Period.',
     targets: [{ model: 'auditPARRow' }],
   },
   {
     key: 'trial_balance',
     label: 'Trial Balance',
-    description: 'Deletes every imported TB row across all engagements (re-import will be required).',
+    description: 'Deletes every imported TB row for the selected Client + Period (re-import will be required).',
     targets: [{ model: 'auditTBRow' }],
   },
   {
     key: 'test_conclusions',
     label: 'Test Conclusions',
-    description: 'Deletes every test conclusion (per-FS-line / per-test sign-off) across all engagements.',
+    description: 'Deletes every test conclusion (per-FS-line / per-test sign-off) for the selected Client + Period.',
     targets: [{ model: 'auditTestConclusion' }],
   },
   {
     key: 'analytical_reviews',
     label: 'Analytical Reviews',
-    description: 'Deletes every analytical-review run across all engagements.',
+    description: 'Deletes every analytical-review run for the selected Client + Period.',
     targets: [{ model: 'auditAnalyticalReview' }],
   },
   {
     key: 'payroll_tests',
     label: 'Payroll Tests',
-    description: 'Deletes every payroll-test run across all engagements.',
+    description: 'Deletes every payroll-test run for the selected Client + Period.',
     targets: [{ model: 'auditPayrollTest' }],
   },
   {
     key: 'error_schedule',
     label: 'Error Schedule',
-    description: 'Deletes every Error Schedule entry across all engagements (uncorrected misstatements).',
+    description: 'Deletes every Error Schedule entry for the selected Client + Period (uncorrected misstatements).',
     targets: [{ model: 'auditErrorSchedule' }],
   },
   {
     key: 'audit_points',
     label: 'Audit Points',
-    description: 'Deletes every Audit Point (Review Points / RI Matters / Discussion Points) across all engagements.',
+    description: 'Deletes every Audit Point (Review Points / RI Matters / Discussion Points) for the selected Client + Period.',
     targets: [{ model: 'auditPoint' }],
   },
   {
@@ -175,13 +175,13 @@ export const TAB_PURGE_DEFS: PurgeTabDef[] = [
   {
     key: 'meetings',
     label: 'Meetings',
-    description: 'Deletes every meeting record across all engagements.',
+    description: 'Deletes every meeting record for the selected Client + Period.',
     targets: [{ model: 'auditMeeting' }],
   },
   {
     key: 'documents',
     label: 'Documents',
-    description: 'Deletes every audit document record (request rows, upload metadata) across all engagements. Blob storage is NOT touched.',
+    description: 'Deletes every audit document record (request rows, upload metadata) for the selected Client + Period. Blob storage is NOT touched.',
     targets: [{ model: 'auditDocument' }],
   },
   {
@@ -193,7 +193,7 @@ export const TAB_PURGE_DEFS: PurgeTabDef[] = [
   {
     key: 'agreed_dates',
     label: 'Audit Timetable (Agreed Dates)',
-    description: 'Deletes every agreed-date / audit-timetable entry across all engagements.',
+    description: 'Deletes every agreed-date / audit-timetable entry for the selected Client + Period.',
     targets: [{ model: 'auditAgreedDate' }],
   },
   {
@@ -224,25 +224,25 @@ export const TAB_PURGE_DEFS: PurgeTabDef[] = [
   {
     key: 'schedule_specialist_reviews',
     label: 'Schedule Specialist Reviews',
-    description: 'Deletes every "Send for specialist review" row across all engagements (sent reviews + their decisions, comments, attachments). The send-email side-effect is not undone.',
+    description: 'Deletes every "Send for specialist review" row for the selected Client + Period (sent reviews + their decisions, comments, attachments). The send-email side-effect is not undone.',
     targets: [{ model: 'scheduleSpecialistReview' }],
   },
   {
     key: 'outstanding_items',
     label: 'Outstanding Items',
-    description: 'Deletes every Outstanding Item row across all engagements (flow tasks, portal requests, evidence requests, review points spawned by tests / pipelines).',
+    description: 'Deletes every Outstanding Item row for the selected Client + Period (flow tasks, portal requests, evidence requests, review points spawned by tests / pipelines).',
     targets: [{ model: 'outstandingItem' }],
   },
   {
     key: 'test_executions',
     label: 'Test Executions',
-    description: 'Deletes every audit-test execution record across all engagements (results of tests run via the Audit Plan / pipelines).',
+    description: 'Deletes every audit-test execution record for the selected Client + Period (results of tests run via the Audit Plan / pipelines).',
     targets: [{ model: 'testExecution' }],
   },
   {
     key: 'journal_risk_runs',
     label: 'Journal Risk Runs',
-    description: 'Deletes every Journal Risk run across all engagements (frozen Config snapshots, population evidence, selection summary).',
+    description: 'Deletes every Journal Risk run for the selected Client + Period (frozen Config snapshots, population evidence, selection summary).',
     targets: [{ model: 'journalRiskRun' }],
   },
   {

@@ -19,8 +19,9 @@ export default async function DataPurgePage() {
       <div className="mb-8">
         <h1 className="text-3xl font-bold text-slate-900">Reset Tab Data</h1>
         <p className="text-slate-600 mt-1">
-          Wipe a single tab&apos;s data across every engagement in your firm. Pick the tab from the dropdown,
-          type DELETE to confirm, then click Commit Delete. Every wipe is recorded in the audit trail.
+          Wipe a single tab&apos;s data for one Client + Period. Pick the Client + Period, choose the tab,
+          type DELETE to confirm, then click Commit Delete. Every wipe is recorded in the audit trail
+          and (when the tab cascades) also clears the artifacts that were triggered from it.
         </p>
       </div>
       <DataPurgeClient />
