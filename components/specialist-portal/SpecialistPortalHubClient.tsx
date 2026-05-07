@@ -105,6 +105,12 @@ export function SpecialistPortalHubClient({ email, sig }: Props) {
   const [lastFrom, setLastFrom] = useState('');
   const [lastTo, setLastTo] = useState('');
   const [expandedKey, setExpandedKey] = useState<string | null>(null);
+  // Per-item toggle for the message thread inside an expanded card.
+  // Long conversations get noisy by default; auditors can click
+  // 'Show conversation' to reveal the thread separately from the
+  // composer / source body. Defaults to "show" when there are <=2
+  // messages so short chats don't need an extra click.
+  const [conversationCollapsed, setConversationCollapsed] = useState<Record<string, boolean>>({});
   const [drafts, setDrafts] = useState<Record<string, string>>({});
   const [sending, setSending] = useState<string | null>(null);
   const [callLink, setCallLink] = useState<Record<string, string>>({});
@@ -323,10 +329,31 @@ export function SpecialistPortalHubClient({ email, sig }: Props) {
             {filtered.map(it => {
               const key = `${it.engagementId}|${it.roleKey}|${it.item.id}`;
               const isExpanded = expandedKey === key;
+              // Row tint communicates status at a glance: closed
+              // chats fade back, awaiting-you chats wear an amber
+              // accent stripe (matches the status pill), back-with-
+              // team chats get a quieter blue, and items hovered
+              // out of focus go faintly tinted.
+              const rowTint =
+                it.status === 'closed' ? 'bg-slate-50/80 opacity-75' :
+                it.status === 'unresponded' ? 'bg-amber-50/60' :
+                'bg-blue-50/40';
+              const accentBar =
+                it.status === 'closed' ? 'border-l-4 border-l-slate-300' :
+                it.status === 'unresponded' ? 'border-l-4 border-l-amber-400' :
+                'border-l-4 border-l-blue-400';
+              // Default the conversation collapse to OPEN for short
+              // chats (≤2 messages) and CLOSED for longer ones, so
+              // expanding an item with a 30-message history doesn't
+              // dump the whole thread on the screen.
+              const collapseDefault = it.item.messages.length > 2;
+              const conversationCollapsedNow = (key in conversationCollapsed)
+                ? conversationCollapsed[key]
+                : collapseDefault;
               return (
                 <Fragment key={key}>
                   <div
-                    className={`px-3 py-2.5 hover:bg-slate-50 cursor-pointer ${isExpanded ? 'bg-blue-50/30' : ''}`}
+                    className={`px-3 py-2.5 cursor-pointer transition-colors ${rowTint} ${accentBar} ${isExpanded ? 'shadow-inner' : 'hover:bg-slate-100/60'}`}
                     onClick={() => setExpandedKey(prev => prev === key ? null : key)}
                   >
                     <div className="flex items-center gap-2">
@@ -337,7 +364,7 @@ export function SpecialistPortalHubClient({ email, sig }: Props) {
                       {it.item.kind === 'chat' && <MessageSquare className="h-3 w-3 text-slate-400 flex-shrink-0" />}
                       {it.item.kind === 'report' && <FileText className="h-3 w-3 text-slate-400 flex-shrink-0" />}
                       {it.item.kind === 'conclusion' && <CheckCircle2 className="h-3 w-3 text-slate-400 flex-shrink-0" />}
-                      <span className="text-sm font-medium text-slate-800 truncate">{it.item.title}</span>
+                      <span className={`text-sm font-medium truncate ${it.status === 'closed' ? 'text-slate-500' : 'text-slate-800'}`}>{it.item.title}</span>
                       {it.item.sourceActionKey && (
                         <span className="inline-flex items-center gap-0.5 text-[9px] px-1.5 py-0.5 bg-amber-100 text-amber-800 border border-amber-200 rounded" title="Fired by a schedule action">
                           <Zap className="h-2.5 w-2.5" /> Schedule action
@@ -348,53 +375,79 @@ export function SpecialistPortalHubClient({ email, sig }: Props) {
                       <span><strong>{it.clientName}</strong> · {it.roleLabel}{it.periodEndDate ? ` · period ended ${fmtDate(it.periodEndDate)}` : ''}</span>
                       <span>Initiated {fmtDate(it.initiatedAt)}</span>
                       <span>Last message {fmtDateTime(it.lastMessageAt)}</span>
+                      <span>{it.item.messages.length} message{it.item.messages.length === 1 ? '' : 's'}</span>
                     </div>
                   </div>
                   {isExpanded && (
-                    <div className="px-3 py-3 bg-slate-50 border-t border-slate-100 space-y-3">
+                    <div className="px-3 py-3 bg-white border-t border-slate-100 space-y-3">
                       {it.item.body && (
-                        <div className="text-xs text-slate-700 whitespace-pre-wrap break-words bg-white border border-slate-200 rounded p-2">
+                        <div className="text-xs text-slate-700 whitespace-pre-wrap break-words bg-slate-50 border border-slate-200 rounded p-2">
                           {it.item.body}
                         </div>
                       )}
-                      <div className="space-y-1.5 max-h-72 overflow-y-auto">
-                        {it.item.messages.length === 0 ? (
-                          <p className="text-[11px] italic text-slate-400 text-center py-2">No messages yet.</p>
-                        ) : it.item.messages.map(m => {
-                          const fromMe = (m.userId || '').toLowerCase() === `external:${email.toLowerCase()}`;
-                          return (
-                            <div key={m.id} className={`text-xs p-2 rounded border ${fromMe ? 'bg-blue-50 border-blue-200 ml-6' : 'bg-white border-slate-200 mr-6'}`}>
-                              <div className="flex items-center gap-2 text-[10px] text-slate-500 mb-1">
-                                <strong className="text-slate-700">{fromMe ? 'You' : (m.userName || 'Audit team')}</strong>
-                                <span>·</span>
-                                <span>{m.role}</span>
-                                <span className="ml-auto">{fmtDateTime(m.createdAt)}</span>
-                              </div>
-                              {m.message && <div className="whitespace-pre-wrap break-words text-slate-800">{m.message}</div>}
-                              {m.callLink && (
-                                <a href={m.callLink.url} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 mt-1 text-[11px] px-2 py-0.5 bg-emerald-100 text-emerald-800 border border-emerald-200 rounded hover:bg-emerald-200">
-                                  <Phone className="h-2.5 w-2.5" /> {m.callLink.label || 'Join call'}
-                                </a>
-                              )}
-                              {m.attachments && m.attachments.length > 0 && (
-                                <div className="mt-1 flex flex-wrap gap-1">
-                                  {m.attachments.map(a => (
-                                    <a
-                                      key={a.id}
-                                      href={`/api/engagements/${encodeURIComponent(it.engagementId)}/specialists/attachments?blob=${encodeURIComponent(a.blobName || a.id)}&roleKey=${encodeURIComponent(it.roleKey)}&${baseQs}`}
-                                      target="_blank"
-                                      rel="noreferrer"
-                                      className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 bg-slate-100 text-slate-700 border border-slate-200 rounded hover:bg-slate-200"
-                                    >
-                                      📎 {a.name}
-                                    </a>
-                                  ))}
-                                </div>
-                              )}
-                            </div>
-                          );
-                        })}
+                      {/* Conversation header — separate collapse from
+                          the parent card so long threads can be
+                          tucked away while the composer + source
+                          body stay visible. */}
+                      <div>
+                        <button
+                          onClick={() => setConversationCollapsed(prev => ({ ...prev, [key]: !conversationCollapsedNow }))}
+                          className="w-full flex items-center justify-between text-[11px] font-medium text-slate-700 px-2 py-1 bg-slate-100 hover:bg-slate-200 rounded transition-colors"
+                        >
+                          <span className="inline-flex items-center gap-1">
+                            {conversationCollapsedNow ? <ChevronRight className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}
+                            Conversation ({it.item.messages.length} message{it.item.messages.length === 1 ? '' : 's'})
+                          </span>
+                          {it.item.messages.length > 0 && (
+                            <span className="text-[10px] text-slate-500 font-normal">
+                              Last {fmtDateTime(it.lastMessageAt)}
+                            </span>
+                          )}
+                        </button>
                       </div>
+                      {!conversationCollapsedNow && (
+                        <div className="space-y-1.5 max-h-96 overflow-y-auto pr-1">
+                          {it.item.messages.length === 0 ? (
+                            <p className="text-[11px] italic text-slate-400 text-center py-3 bg-slate-50 rounded">No messages yet — be the first to reply.</p>
+                          ) : it.item.messages.map(m => {
+                            const fromMe = (m.userId || '').toLowerCase() === `external:${email.toLowerCase()}`;
+                            return (
+                              <div key={m.id} className={`flex ${fromMe ? 'justify-end' : 'justify-start'}`}>
+                                <div className={`text-xs p-2 rounded-lg border max-w-[80%] ${fromMe ? 'bg-blue-50 border-blue-200 rounded-br-none' : 'bg-slate-50 border-slate-200 rounded-bl-none'}`}>
+                                  <div className="flex items-center gap-2 text-[10px] text-slate-500 mb-1">
+                                    <strong className={fromMe ? 'text-blue-800' : 'text-slate-700'}>
+                                      {fromMe ? 'You' : (m.userName || 'Audit team')}
+                                    </strong>
+                                    {m.role && <><span>·</span><span>{m.role}</span></>}
+                                    <span className="ml-auto">{fmtDateTime(m.createdAt)}</span>
+                                  </div>
+                                  {m.message && <div className="whitespace-pre-wrap break-words text-slate-800">{m.message}</div>}
+                                  {m.callLink && (
+                                    <a href={m.callLink.url} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 mt-1 text-[11px] px-2 py-0.5 bg-emerald-100 text-emerald-800 border border-emerald-200 rounded hover:bg-emerald-200">
+                                      <Phone className="h-2.5 w-2.5" /> {m.callLink.label || 'Join call'}
+                                    </a>
+                                  )}
+                                  {m.attachments && m.attachments.length > 0 && (
+                                    <div className="mt-1 flex flex-wrap gap-1">
+                                      {m.attachments.map(a => (
+                                        <a
+                                          key={a.id}
+                                          href={`/api/engagements/${encodeURIComponent(it.engagementId)}/specialists/attachments?blob=${encodeURIComponent(a.blobName || a.id)}&roleKey=${encodeURIComponent(it.roleKey)}&${baseQs}`}
+                                          target="_blank"
+                                          rel="noreferrer"
+                                          className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 bg-slate-100 text-slate-700 border border-slate-200 rounded hover:bg-slate-200"
+                                        >
+                                          📎 {a.name}
+                                        </a>
+                                      ))}
+                                    </div>
+                                  )}
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      )}
                       {it.item.status === 'open' ? (
                         <div className="space-y-1.5">
                           <textarea
