@@ -256,7 +256,7 @@ export function PriorPeriodTab({ engagementId, teamMembers = [], clientName, per
         <button
           onClick={() => setShowImportOptions(true)}
           className="inline-flex items-center gap-1.5 text-xs px-3 py-2 bg-purple-600 text-white rounded-md hover:bg-purple-700 font-medium"
-          title="Open the Import Options flow — Upload, Claude Cowork, or Cloud connector"
+          title="Open the Import Options flow — Upload or Connect to Cloud Audit Software"
         >
           ⬇ Import External Audit File
         </button>

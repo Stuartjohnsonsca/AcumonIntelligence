@@ -314,7 +314,7 @@ export function TabDocumentsFooter({ engagementId, tab, tabLabel, clientName, pe
               onClick={() => setShowImportOptions(true)}
               disabled={busy}
               className="inline-flex items-center gap-1 text-[11px] px-2.5 py-1 bg-purple-700 text-white rounded hover:bg-purple-800 disabled:opacity-50"
-              title="Import data from an external prior audit file (upload, cloud connector, or Claude Cowork) — the same flow that runs when an engagement is first opened"
+              title="Import data from an external prior audit file — the same flow that runs when an engagement is first opened"
             >
               <Download className="h-3 w-3" />
               Import External Audit File

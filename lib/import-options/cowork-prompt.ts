@@ -1,8 +1,10 @@
-// Builds the Claude Cowork prompt the user runs in their own
-// Claude session (with the Claude in Chrome extension installed).
-// Claude drives the user's actual browser tab — no credentials are
-// ever sent to acumon, no API integration to MyWorkPapers etc., no
-// ToS issues. We just write the prompt; the user runs it.
+// Builds the prompt the user pastes into their AI browser assistant
+// (Claude.ai with the Claude in Chrome extension is the reference setup,
+// but we keep the user-facing copy generic so it works with any
+// extension-based browsing assistant). The assistant drives the user's
+// actual browser tab — no credentials are ever sent to acumon, no API
+// integration to MyWorkPapers etc., no ToS issues. We just write the
+// prompt; the user runs it.
 
 export interface CoworkPromptInput {
   vendorLabel: string; // e.g. "MyWorkPapers", "CaseWare Cloud"

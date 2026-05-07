@@ -317,7 +317,7 @@ export function ImportOptionsModal({ engagementId, clientName, periodEnd, auditT
           {step === 'expand' && (
             <>
               <p className="text-sm text-slate-700 mb-3">Where is the source audit file?</p>
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-5">
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-5">
                 <button
                   onClick={() => setSourceType('upload')}
                   className={`text-left p-3 border-2 rounded-lg ${sourceType === 'upload' ? 'border-blue-500 bg-blue-50' : 'border-slate-200 hover:border-slate-300'}`}
@@ -326,28 +326,18 @@ export function ImportOptionsModal({ engagementId, clientName, periodEnd, auditT
                   <p className="text-xs text-slate-500 mt-1">Browse for a local file (zip or PDF).</p>
                 </button>
                 <button
-                  onClick={() => { setSourceType('claude_cowork'); setStep('cowork'); }}
-                  className={`text-left p-3 border-2 rounded-lg ${sourceType === 'claude_cowork' ? 'border-purple-500 bg-purple-50' : 'border-slate-200 hover:border-slate-300'}`}
-                >
-                  <div className="text-sm font-semibold text-slate-800">🤖 Use Claude Cowork</div>
-                  <p className="text-xs text-slate-500 mt-1">
-                    You log in to MyWorkPapers / another vendor in your own browser; Claude (with the
-                    Chrome extension) drives the tab and downloads the prior audit file.
-                  </p>
-                </button>
-                <button
                   onClick={() => setSourceType('cloud')}
                   className={`text-left p-3 border-2 rounded-lg ${sourceType === 'cloud' ? 'border-blue-500 bg-blue-50' : 'border-slate-200 hover:border-slate-300'}`}
                 >
-                  <div className="text-sm font-semibold text-slate-800">☁ Connect via API</div>
-                  <p className="text-xs text-slate-500 mt-1">Fetch from a configured vendor connector (admin sets up the API recipe).</p>
+                  <div className="text-sm font-semibold text-slate-800">☁ Connect to Cloud Audit Software</div>
+                  <p className="text-xs text-slate-500 mt-1">Fetch from MyWorkPapers or another configured vendor.</p>
                 </button>
                 <button
-                  onClick={() => setSourceType('cloud_other')}
+                  onClick={() => { setSourceType('cloud_other'); setCoworkVendorLabel(''); setStep('cowork'); }}
                   className={`text-left p-3 border-2 rounded-lg ${sourceType === 'cloud_other' ? 'border-blue-500 bg-blue-50' : 'border-slate-200 hover:border-slate-300'}`}
                 >
-                  <div className="text-sm font-semibold text-slate-800">＋ Register New API Connector</div>
-                  <p className="text-xs text-slate-500 mt-1">Add a vendor API recipe — saved firm-wide for reuse.</p>
+                  <div className="text-sm font-semibold text-slate-800">＋ Other Cloud Audit Software</div>
+                  <p className="text-xs text-slate-500 mt-1">Use any other vendor — type its name and we&apos;ll guide you through the rest.</p>
                 </button>
               </div>
 
@@ -542,14 +532,14 @@ export function ImportOptionsModal({ engagementId, clientName, periodEnd, auditT
           {step === 'cowork' && (
             <>
               <p className="text-sm text-slate-700 mb-3">
-                Claude Cowork drives <em>your</em> browser tab — your credentials never leave your machine, and
-                acumon never connects to {coworkVendorLabel || 'the vendor'} directly.
+                Your AI browser assistant will drive <em>your</em> {coworkVendorLabel || 'cloud audit software'} tab —
+                your credentials never leave your machine and acumon never connects to the vendor directly.
               </p>
 
               <ol className="text-xs text-slate-600 space-y-1 list-decimal list-inside mb-4">
-                <li>Open the cloud audit software in a new tab and log in (with MFA if you use it).</li>
-                <li>Open Claude Cowork (with the Claude in Chrome extension installed) and paste the prompt below.</li>
-                <li>Claude will navigate the open tab, find the prior period, and download the audit archive to your Downloads folder.</li>
+                <li>Open {coworkVendorLabel || 'the cloud audit software'} in a new tab and log in (with MFA if you use it).</li>
+                <li>Open your AI browser assistant and paste the prompt below.</li>
+                <li>The assistant will navigate the tab, find the prior period, and download the audit archive to your Downloads folder.</li>
                 <li>Drop the downloaded file here — acumon will extract proposals and you&apos;ll review them on the next screen.</li>
               </ol>
 
@@ -568,7 +558,7 @@ export function ImportOptionsModal({ engagementId, clientName, periodEnd, auditT
 
                 <div>
                   <div className="flex items-center justify-between mb-1">
-                    <label className="block text-xs font-medium text-slate-600">Prompt for Claude Cowork</label>
+                    <label className="block text-xs font-medium text-slate-600">Prompt for your assistant</label>
                     <button
                       onClick={copyCoworkPrompt}
                       className="text-[11px] px-2 py-0.5 bg-purple-600 text-white rounded hover:bg-purple-700 font-medium"
@@ -585,7 +575,7 @@ export function ImportOptionsModal({ engagementId, clientName, periodEnd, auditT
                 </div>
 
                 <div>
-                  <label className="block text-xs font-medium text-slate-600 mb-1">File Claude downloaded (.zip or .pdf)</label>
+                  <label className="block text-xs font-medium text-slate-600 mb-1">File the assistant downloaded (.zip or .pdf)</label>
                   <input
                     type="file"
                     accept=".zip,.pdf"
@@ -601,9 +591,9 @@ export function ImportOptionsModal({ engagementId, clientName, periodEnd, auditT
               </div>
 
               <div className="border border-amber-200 bg-amber-50 rounded p-3 text-[11px] text-amber-800">
-                <strong>Reminder:</strong> The prompt explicitly tells Claude not to enter passwords, MFA codes, or
-                click destructive buttons. Read what Claude is about to do before approving its actions in the
-                Chrome extension — anything other than read-only navigation + the download click is suspicious.
+                <strong>Reminder:</strong> The prompt explicitly tells the assistant not to enter passwords, MFA codes, or
+                click destructive buttons. Read what it&apos;s about to do before approving its actions —
+                anything other than read-only navigation + the download click is suspicious.
               </div>
             </>
           )}
@@ -692,7 +682,19 @@ export function ImportOptionsModal({ engagementId, clientName, periodEnd, auditT
                 {sourceType === 'cloud' && (
                   <button
                     disabled={!chosenConnectorId}
-                    onClick={() => setStep('connect_credentials')}
+                    onClick={() => {
+                      const conn = connectors.find(c => c.id === chosenConnectorId);
+                      // If the connector has no API recipe (admin hasn't filled it
+                      // in), fall back to the assistant-driven path automatically —
+                      // the user just sees "Connect to Cloud Audit Software" and
+                      // gets walked through the right flow for that vendor.
+                      if (conn && !conn.config.baseUrl) {
+                        setCoworkVendorLabel(conn.label);
+                        setStep('cowork');
+                      } else {
+                        setStep('connect_credentials');
+                      }
+                    }}
                     className="text-sm px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:opacity-50 font-medium"
                   >
                     Continue
