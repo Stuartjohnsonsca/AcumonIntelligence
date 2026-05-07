@@ -137,12 +137,16 @@ function aggregateAcrossSubTabs(states: AggregateState[]): AggregateState {
 
 // ─── Role label ────────────────────────────────────────────────────
 //
-// Maps the firm-wide role keys (stored in template config + the
-// items blob) to user-friendly sub-tab labels. The roles align with
-// SCHEDULE_ACTIONS in lib/schedule-actions.ts. Unknown keys fall
-// back to a title-cased version of the underscore-split key so
-// custom firm roles still render readably.
-const ROLE_LABELS: Record<string, string> = {
+// Sub-tab labels prefer the firm's configured role label (loaded at
+// runtime from /api/methodology-admin/specialist-roles) so e.g. a
+// firm role keyed `custom_role` with label "Tax Specialist" displays
+// as "Tax Specialist", not "Custom Role".
+//
+// Only when the firm hasn't configured a label for the key do we
+// fall back to a hardcoded map of the SCHEDULE_ACTIONS role keys
+// (so a fired chat under a key the firm never set up still reads
+// sensibly), and finally to a title-cased underscore-split.
+const SCHEDULE_ACTION_LABELS: Record<string, string> = {
   tax_technical: 'Taxation',
   ethics_partner: 'Ethics',
   mrlo: 'MLRO',
@@ -150,8 +154,10 @@ const ROLE_LABELS: Record<string, string> = {
   actuarial: 'Actuarial',
   valuation: 'Valuations',
 };
-function roleLabel(roleKey: string): string {
-  if (ROLE_LABELS[roleKey]) return ROLE_LABELS[roleKey];
+function roleLabel(roleKey: string, firmRoleLabels: Record<string, string>): string {
+  const firm = firmRoleLabels[roleKey];
+  if (firm && firm.trim()) return firm;
+  if (SCHEDULE_ACTION_LABELS[roleKey]) return SCHEDULE_ACTION_LABELS[roleKey];
   return roleKey
     .split('_')
     .filter(Boolean)
@@ -164,6 +170,12 @@ function roleLabel(roleKey: string): string {
 export function SpecialistsTab({ engagementId, specialists, teamMembers, currentUserId, currentUserName }: Props) {
   const [state, setState] = useState<SpecialistsState>({});
   const [loading, setLoading] = useState(true);
+  // Firm-configured specialist role labels keyed by role key.
+  // Loaded from /api/methodology-admin/specialist-roles on mount;
+  // used by roleLabel() to display the firm's chosen label instead
+  // of falling back to a title-cased key. Empty until the fetch
+  // resolves — roleLabel handles missing entries gracefully.
+  const [firmRoleLabels, setFirmRoleLabels] = useState<Record<string, string>>({});
   const [activeRoleKey, setActiveRoleKey] = useState<string>('');
   const [expandedItemIds, setExpandedItemIds] = useState<Set<string>>(new Set());
   const [showNewItemFor, setShowNewItemFor] = useState<string | null>(null);
@@ -192,6 +204,28 @@ export function SpecialistsTab({ engagementId, specialists, teamMembers, current
     })();
     return () => { cancelled = true; };
   }, [engagementId]);
+
+  // Load firm-configured specialist role labels once on mount.
+  // The endpoint allows any twoFactorVerified user (read-only) so
+  // engagement members can see their firm's chosen labels.
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch('/api/methodology-admin/specialist-roles');
+        if (!cancelled && res.ok) {
+          const data = await res.json();
+          const list: Array<{ key: string; label?: string }> = Array.isArray(data?.roles) ? data.roles : [];
+          const map: Record<string, string> = {};
+          for (const r of list) {
+            if (r?.key && r.label) map[r.key] = r.label;
+          }
+          setFirmRoleLabels(map);
+        }
+      } catch { /* tolerant — labels just fall back */ }
+    })();
+    return () => { cancelled = true; };
+  }, []);
 
   // Sub-tabs are the union of:
   //   - specialists assigned on the Opening tab (always shown, even
@@ -437,7 +471,7 @@ export function SpecialistsTab({ engagementId, specialists, teamMembers, current
                   : 'border-transparent text-slate-500 hover:text-slate-700 hover:border-slate-300'
               }`}
             >
-              <span>{roleLabel(sub.roleKey)}</span>
+              <span>{roleLabel(sub.roleKey, firmRoleLabels)}</span>
               {sub.specialistName && <span className="text-[10px] text-slate-400">· {sub.specialistName}</span>}
               {items.length > 0 && (
                 <span className="text-[10px] text-slate-400">({items.length})</span>
@@ -455,7 +489,7 @@ export function SpecialistsTab({ engagementId, specialists, teamMembers, current
       <div>
         <div className="flex items-center justify-between mb-3">
           <div>
-            <h3 className="text-sm font-semibold text-slate-800">{roleLabel(activeRole.roleKey)}</h3>
+            <h3 className="text-sm font-semibold text-slate-800">{roleLabel(activeRole.roleKey, firmRoleLabels)}</h3>
             <p className="text-xs text-slate-500">
               {activeRole.specialistName
                 ? <>{activeRole.specialistName}{activeRole.specialistEmail ? ` · ${activeRole.specialistEmail}` : ''} — </>
