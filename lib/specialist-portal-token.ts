@@ -81,3 +81,48 @@ export function buildPortalUrl(baseUrl: string, ctx: PortalContext): string {
   url.searchParams.set('sig', sig);
   return url.toString();
 }
+
+// ─── Specialist Hub (cross-engagement) ────────────────────────────
+//
+// A second token shape that signs ONLY the email — lets the same
+// person access every engagement they're configured on without
+// needing one signed URL per engagement. The payload prefix `hub|`
+// keeps these signatures distinct from per-engagement tokens, so
+// a hub token cannot be replayed against a per-engagement endpoint
+// (different payload, different HMAC).
+//
+// Server-side checks must enforce that the email is actually
+// assigned (or has an existing chat) on each engagement before
+// returning data — the signature only proves the email is in the
+// auditor's hands, not which engagements they should see.
+
+function hubPayload(email: string): string {
+  return `hub|${(email || '').trim().toLowerCase()}`;
+}
+
+export function signPortalHubToken(email: string): string {
+  const h = crypto.createHmac('sha256', SECRET);
+  h.update(hubPayload(email));
+  return h.digest('base64url');
+}
+
+export function verifyPortalHubToken(email: string, token: string): boolean {
+  try {
+    const expected = signPortalHubToken(email);
+    const a = Buffer.from(token);
+    const b = Buffer.from(expected);
+    if (a.length !== b.length) return false;
+    return crypto.timingSafeEqual(a, b);
+  } catch {
+    return false;
+  }
+}
+
+export function buildPortalHubUrl(baseUrl: string, email: string): string {
+  const sig = signPortalHubToken(email);
+  const root = baseUrl.replace(/\/+$/, '');
+  const url = new URL(`${root}/specialist-portal`);
+  url.searchParams.set('email', email);
+  url.searchParams.set('sig', sig);
+  return url.toString();
+}

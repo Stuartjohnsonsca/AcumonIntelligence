@@ -3,7 +3,7 @@ import { auth } from '@/lib/auth';
 import { prisma } from '@/lib/db';
 import { assertEngagementWriteAccess } from '@/lib/auth/engagement-auth';
 import { findScheduleAction, renderOpeningMessage } from '@/lib/schedule-actions';
-import { buildPortalUrl } from '@/lib/specialist-portal-token';
+import { buildPortalUrl, buildPortalHubUrl } from '@/lib/specialist-portal-token';
 import { sendEmail } from '@/lib/email';
 import { logEngagementAction } from '@/lib/engagement-action-log';
 
@@ -206,6 +206,7 @@ export async function POST(
             roleKey: resolvedRoleKey,
             email: recipient.email,
           });
+          const hubUrl = buildPortalHubUrl(baseUrl, recipient.email);
           const periodEnd = engagement.period?.endDate
             ? new Date(engagement.period.endDate).toLocaleDateString('en-GB')
             : '';
@@ -231,12 +232,12 @@ export async function POST(
               <blockquote style="border-left:3px solid #cbd5e1;padding:8px 12px;color:#475569;margin:16px 0">
                 ${escapeHtml(opening).replace(/\n/g, '<br>')}
               </blockquote>
-              <p>Click below to open your scoped portal — read the question, reply, and attach files:</p>
+              <p>Click below to open your specialist hub — every chat for every client/period you're configured on, in one place. Use the dropdowns there to switch between clients and the filters to find what needs your attention:</p>
               <p style="text-align:center;margin:24px 0">
-                <a href="${portalUrl}" style="background:#2563eb;color:#fff;padding:10px 20px;border-radius:6px;text-decoration:none;font-weight:600">Open specialist portal</a>
+                <a href="${hubUrl}" style="background:#2563eb;color:#fff;padding:10px 20px;border-radius:6px;text-decoration:none;font-weight:600">Open specialist hub</a>
               </p>
               <p style="font-size:12px;color:#94a3b8">
-                This link is private — it gives you access to this engagement and this role only. Do not forward it.
+                Or jump straight to <a href="${portalUrl}" style="color:#2563eb">this specific engagement / role</a>. Both links are private — please don't forward them.
               </p>
             </div>`;
           console.log(`[specialists/items] Sending portal email — engagement=${engagementId} action=${action.key} actionRole=${action.specialistRoleKey} resolvedRole=${resolvedRoleKey} to=${recipient.email}`);
