@@ -14,6 +14,34 @@ export interface CoworkPromptInput {
   auditTypeLabel?: string; // "SME audit (FRS102)", etc.
 }
 
+// Prompt for the **connected** (MCP) flow. Includes the session token
+// inline so the assistant can use it as the bearer when calling our MCP
+// server. The user does not need to copy the token themselves — this
+// prompt is auto-opened in claude.ai via URL prefill (and copied to
+// clipboard as a fallback for browsers that block the prefill).
+export function buildHandoffPrompt(args: {
+  vendorLabel: string;
+  mcpEndpoint: string;
+  sessionToken: string;
+}): string {
+  return [
+    `Run an Acumon Audit Import session on the "Acumon Audit Import" MCP server registered in your settings.`,
+    '',
+    `MCP endpoint: ${args.mcpEndpoint}`,
+    `Bearer token (for this session only): ${args.sessionToken}`,
+    `Vendor: ${args.vendorLabel}`,
+    '',
+    `Steps:`,
+    `1. Call get_session_context first to read the engagement details (client name, period end).`,
+    `2. Drive my open browser tab to ${args.vendorLabel}. If I am not yet logged in, pause and ask me to log in — do NOT enter passwords or MFA codes for me.`,
+    `3. Navigate to the client and prior period from step 1.`,
+    `4. Find the option to download the engagement archive (zip preferred; otherwise the financial statements + key working papers PDF).`,
+    `5. Call submit_archive with the downloaded file. The session closes after this; do not call further tools.`,
+    '',
+    `Avoid any state-changing actions in ${args.vendorLabel} — read-only navigation + the download click only.`,
+  ].join('\n');
+}
+
 export function buildCoworkPrompt(input: CoworkPromptInput): string {
   const periodLine = input.periodEnd
     ? `Period end: ${input.periodEnd}`
