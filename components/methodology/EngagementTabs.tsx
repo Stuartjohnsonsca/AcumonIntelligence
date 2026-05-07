@@ -4,6 +4,7 @@ import { useState, useEffect, useCallback, useRef, Component, Fragment, type Rea
 import { ChevronLeft, ChevronRight } from 'lucide-react';
 import { useSearchParams, useRouter } from 'next/navigation';
 import type { AuditType } from '@/types/methodology';
+import { AUDIT_TYPE_LABELS } from '@/types/methodology';
 import type { EngagementData } from '@/hooks/useEngagement';
 import { SignOffHeader } from './SignOffHeader';
 import { ScheduleSpecialistReviewsPanel } from './ScheduleSpecialistReviewsPanel';
@@ -1635,6 +1636,9 @@ export function EngagementTabs({ engagement, auditType, clientName, periodEndDat
               engagementId={engagement.id}
               tab={activeTab}
               tabLabel={TABS.find(t => t.key === activeTab)?.label}
+              clientName={clientName}
+              periodEnd={periodEndDate ? String(periodEndDate).slice(0, 10) : undefined}
+              auditTypeLabel={AUDIT_TYPE_LABELS[auditType]}
             />
           )}
 

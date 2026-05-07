@@ -1,7 +1,9 @@
 'use client';
 
 import { useEffect, useRef, useState } from 'react';
-import { Paperclip, Upload, FolderOpen, Copy, Loader2, FileText, X } from 'lucide-react';
+import { Paperclip, Upload, FolderOpen, Copy, Loader2, FileText, X, Download } from 'lucide-react';
+import { ImportOptionsModal } from '@/components/methodology/ImportOptionsModal';
+import { ImportReviewModal } from '@/components/methodology/ImportReviewModal';
 
 /**
  * Per-tab document attachments — appears as a footer at the bottom of
@@ -57,9 +59,14 @@ interface Props {
   /** Friendly label for the section ("Ethics", "Materiality", …). Optional;
    *  defaults to a humanised tab key. */
   tabLabel?: string;
+  /** Engagement context — only consumed when this footer renders the
+   *  "Import External Audit File" button on the Prior Period tab. */
+  clientName?: string;
+  periodEnd?: string;
+  auditTypeLabel?: string;
 }
 
-export function TabDocumentsFooter({ engagementId, tab, tabLabel }: Props) {
+export function TabDocumentsFooter({ engagementId, tab, tabLabel, clientName, periodEnd, auditTypeLabel }: Props) {
   const [docs, setDocs] = useState<TabDocument[]>([]);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
@@ -72,7 +79,16 @@ export function TabDocumentsFooter({ engagementId, tab, tabLabel }: Props) {
   const [hasPriorPeriod, setHasPriorPeriod] = useState<boolean | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
+  // Re-runnable Import Options flow — surfaced only on the Prior Period
+  // tab as a "Import External Audit File" button. Reuses the same modal
+  // that fires automatically when the engagement is first opened. Setting
+  // re-import state to a fresh extraction id flips us into the Review
+  // modal once upload + AI extraction completes.
+  const [showImportOptions, setShowImportOptions] = useState(false);
+  const [importExtractionId, setImportExtractionId] = useState<string | null>(null);
+
   const niceLabel = tabLabel || humanise(tab);
+  const isPriorPeriodTab = tab === 'prior-period';
 
   async function load() {
     setLoading(true);
@@ -288,11 +304,22 @@ export function TabDocumentsFooter({ engagementId, tab, tabLabel }: Props) {
             onClick={openCopyPrior}
             disabled={busy}
             className="inline-flex items-center gap-1 text-[11px] px-2.5 py-1 bg-emerald-700 text-white rounded hover:bg-emerald-800 disabled:opacity-50"
-            title="Copy the same tab's documents from the prior period"
+            title="Copy the same tab's documents from the prior period engagement that's already linked in the system"
           >
             <Copy className="h-3 w-3" />
-            From Prior Period
+            From Linked Prior Period
           </button>
+          {isPriorPeriodTab && (
+            <button
+              onClick={() => setShowImportOptions(true)}
+              disabled={busy}
+              className="inline-flex items-center gap-1 text-[11px] px-2.5 py-1 bg-purple-700 text-white rounded hover:bg-purple-800 disabled:opacity-50"
+              title="Import data from an external prior audit file (upload, cloud connector, or Claude Cowork) — the same flow that runs when an engagement is first opened"
+            >
+              <Download className="h-3 w-3" />
+              Import External Audit File
+            </button>
+          )}
         </div>
       </div>
 
@@ -450,6 +477,38 @@ export function TabDocumentsFooter({ engagementId, tab, tabLabel }: Props) {
             </div>
           </div>
         </div>
+      )}
+
+      {/* Re-runnable Import Options modal — same flow as the
+          first-time-open pop-up. Reaches AI extraction → Review → Apply
+          and tags __fieldmeta with prior_period_ai provenance, putting
+          the orange dashed surround on every populated field. */}
+      {showImportOptions && isPriorPeriodTab && clientName && (
+        <ImportOptionsModal
+          engagementId={engagementId}
+          clientName={clientName}
+          periodEnd={periodEnd}
+          auditTypeLabel={auditTypeLabel}
+          onComplete={(_state, opts) => {
+            setShowImportOptions(false);
+            if (opts.extractionId) setImportExtractionId(opts.extractionId);
+          }}
+          onClose={() => setShowImportOptions(false)}
+        />
+      )}
+
+      {importExtractionId && (
+        <ImportReviewModal
+          engagementId={engagementId}
+          extractionId={importExtractionId}
+          onApplied={() => {
+            setImportExtractionId(null);
+            // Refresh the document list so any newly-attached prior-period
+            // archive shows up in this tab's footer.
+            void load();
+          }}
+          onCancelled={() => setImportExtractionId(null)}
+        />
       )}
     </div>
   );
