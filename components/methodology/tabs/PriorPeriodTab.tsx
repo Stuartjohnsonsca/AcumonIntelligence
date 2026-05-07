@@ -4,10 +4,17 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 import { useSession } from 'next-auth/react';
 import { expandZipFile } from '@/lib/client-unzip';
 import { useScrollToAnchor } from '@/lib/hooks/useScrollToAnchor';
+import { ImportOptionsModal } from '@/components/methodology/ImportOptionsModal';
+import { ImportReviewModal } from '@/components/methodology/ImportReviewModal';
 
 interface Props {
   engagementId: string;
   teamMembers?: { userId: string; userName?: string; role: string }[];
+  /** Optional engagement context for the re-runnable Import Options
+   *  flow surfaced from this tab. */
+  clientName?: string;
+  periodEnd?: string;
+  auditTypeLabel?: string;
 }
 
 interface DocStatus {
@@ -36,7 +43,7 @@ const REVIEWABLE = ['pp_letter_of_comment', 'pp_letter_of_representation', 'pp_f
 const ROLE_MAP: Record<string, string> = { Junior: 'operator', Manager: 'reviewer', RI: 'partner' };
 const PRIOR_PERIOD_ARCHIVE_TAG = '__prior_period_archive__';
 
-export function PriorPeriodTab({ engagementId, teamMembers = [] }: Props) {
+export function PriorPeriodTab({ engagementId, teamMembers = [], clientName, periodEnd, auditTypeLabel }: Props) {
   const { data: session } = useSession();
   const [docStatus, setDocStatus] = useState<DocStatus[]>([]);
   const [repoDocs, setRepoDocs] = useState<{ id: string; documentName: string; uploadedDate: string | null; mappedItems?: unknown }[]>([]);
@@ -63,6 +70,12 @@ export function PriorPeriodTab({ engagementId, teamMembers = [] }: Props) {
   // Options pop-up at audit start. Tagged with PRIOR_PERIOD_ARCHIVE_TAG.
   const [archiveDocs, setArchiveDocs] = useState<ArchiveDoc[]>([]);
   const [archiveExpanded, setArchiveExpanded] = useState(true);
+
+  // Re-runnable Import Options flow — opens the same modal that fires
+  // automatically when an engagement is first opened, so a user can
+  // run / re-run the import at any later point.
+  const [showImportOptions, setShowImportOptions] = useState(false);
+  const [importExtractionId, setImportExtractionId] = useState<string | null>(null);
 
   const currentUserId = session?.user?.id;
   const canSignAs = (role: string) => currentUserId && teamMembers.some(m => ROLE_MAP[m.role] === role && m.userId === currentUserId);
@@ -230,6 +243,25 @@ export function PriorPeriodTab({ engagementId, teamMembers = [] }: Props) {
 
   return (
     <div className="space-y-6">
+      {/* Header action bar — re-runnable Import Options entry point.
+          The same flow fires automatically the first time the engagement
+          is opened; this button lets the user run it again later. */}
+      <div className="flex items-center justify-between bg-slate-50 border border-slate-200 rounded-lg px-4 py-3">
+        <div>
+          <h2 className="text-sm font-semibold text-slate-800">Prior Period</h2>
+          <p className="text-[11px] text-slate-500 mt-0.5">
+            Import and review prior-period audit data, link required documents, and reconcile opening balances.
+          </p>
+        </div>
+        <button
+          onClick={() => setShowImportOptions(true)}
+          className="inline-flex items-center gap-1.5 text-xs px-3 py-2 bg-purple-600 text-white rounded-md hover:bg-purple-700 font-medium"
+          title="Open the Import Options flow — Upload, Claude Cowork, or Cloud connector"
+        >
+          ⬇ Import External Audit File
+        </button>
+      </div>
+
       {/* Document Sections */}
       {docStatus.map(doc => {
         const isLinked = !!doc.documentId;
@@ -607,6 +639,36 @@ export function PriorPeriodTab({ engagementId, teamMembers = [] }: Props) {
           </div>
         )}
       </div>
+
+      {/* Re-runnable Import Options modal — same flow as the
+          first-time-open pop-up. Reaches AI extraction → Review → Apply
+          and tags __fieldmeta with prior_period_ai provenance. */}
+      {showImportOptions && clientName && (
+        <ImportOptionsModal
+          engagementId={engagementId}
+          clientName={clientName}
+          periodEnd={periodEnd}
+          auditTypeLabel={auditTypeLabel}
+          onComplete={(_state, opts) => {
+            setShowImportOptions(false);
+            if (opts.extractionId) setImportExtractionId(opts.extractionId);
+          }}
+          onClose={() => setShowImportOptions(false)}
+        />
+      )}
+
+      {importExtractionId && (
+        <ImportReviewModal
+          engagementId={engagementId}
+          extractionId={importExtractionId}
+          onApplied={() => {
+            setImportExtractionId(null);
+            // Refresh so the freshly applied prior-period archive shows up.
+            void loadData();
+          }}
+          onCancelled={() => setImportExtractionId(null)}
+        />
+      )}
     </div>
   );
 }

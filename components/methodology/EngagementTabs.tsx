@@ -1053,7 +1053,15 @@ export function EngagementTabs({ engagement, auditType, clientName, periodEndDat
       case 'opening':
         return <OpeningTab engagement={engagement} auditType={auditType} clientName={clientName} periodEndDate={periodEndDate} onShowCategoryChange={setTbShowCategory} />;
       case 'prior-period':
-        return <PriorPeriodTab engagementId={engagement.id} teamMembers={teamMembers} />;
+        return (
+          <PriorPeriodTab
+            engagementId={engagement.id}
+            teamMembers={teamMembers}
+            clientName={clientName}
+            periodEnd={periodEndDate ? String(periodEndDate).slice(0, 10) : undefined}
+            auditTypeLabel={AUDIT_TYPE_LABELS[auditType]}
+          />
+        );
       case 'permanent-file':
         return <PermanentFileTab engagementId={engagement.id} />;
       case 'ethics':
