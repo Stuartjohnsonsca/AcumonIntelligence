@@ -2119,6 +2119,95 @@ model CloudAuditConnector {
   @@map("cloud_audit_connectors")
 }
 
+// ─── OAuth 2.1 server (for the Acumon MCP custom integration) ────────
+// Implements the subset of OAuth that MCP custom-integration clients
+// (claude.ai, Cowork CLI, etc.) need: dynamic client registration,
+// authorization-code with PKCE, refresh tokens, and access tokens
+// scoped to a User + Firm. Tokens are stored hashed (sha256, no salt
+// — they're already 256-bit random) so a DB leak doesn't yield active
+// bearers; lookup is by `tokenHash`.
+
+/// OAuth client registered against this Acumon installation. Created
+/// either via Dynamic Client Registration (RFC 7591) or by an admin via
+/// the methodology-admin UI for a fixed integration. Most rows will be
+/// claude.ai sideload registrations, one per user-install.
+model OAuthClient {
+  id                       String   @id @default(uuid())
+  clientId                 String   @unique @map("client_id")
+  /// SHA-256 hash of clientSecret, when one was issued. NULL for public
+  /// clients (PKCE-only). MCP clients are typically public.
+  clientSecretHash         String?  @map("client_secret_hash")
+  clientName               String   @map("client_name")
+  /// JSON array of permitted redirect URIs.
+  redirectUris             Json     @map("redirect_uris")
+  tokenEndpointAuthMethod  String   @default("none") @map("token_endpoint_auth_method") // none | client_secret_basic | client_secret_post
+  grantTypes               Json     @default("[\"authorization_code\", \"refresh_token\"]") @map("grant_types")
+  /// Optional firm scoping — when set, only users in this firm may
+  /// authenticate against this client. NULL means any firm.
+  firmId                   String?  @map("firm_id")
+  createdAt                DateTime @default(now()) @map("created_at")
+  updatedAt                DateTime @updatedAt @map("updated_at")
+
+  authCodes    OAuthAuthCode[]
+  accessTokens OAuthAccessToken[]
+
+  @@index([firmId])
+  @@map("oauth_clients")
+}
+
+/// Short-lived (60 s) authorization code issued at /oauth/authorize once
+/// the user has consented. Bound to the requesting client + redirectUri
+/// + PKCE code challenge; redeemed once at /oauth/token.
+model OAuthAuthCode {
+  code                  String   @id // 32 bytes random, base64url
+  clientId              String   @map("client_id")
+  userId                String   @map("user_id")
+  firmId                String   @map("firm_id")
+  redirectUri           String   @map("redirect_uri")
+  codeChallenge         String   @map("code_challenge")
+  codeChallengeMethod   String   @map("code_challenge_method") // S256 only
+  scope                 String?  // space-separated; only "mcp" supported for now
+  /// Optional resource indicator (RFC 8707) — the audience the issued
+  /// access token will be valid for. We always set this to the canonical
+  /// MCP endpoint URL.
+  resource              String?
+  expiresAt             DateTime @map("expires_at")
+  used                  Boolean  @default(false)
+  createdAt             DateTime @default(now()) @map("created_at")
+
+  client OAuthClient @relation(fields: [clientId], references: [clientId], onDelete: Cascade)
+
+  @@index([clientId])
+  @@index([expiresAt])
+  @@map("oauth_auth_codes")
+}
+
+/// Issued access token. Lookup by `tokenHash` (sha256 of the bearer);
+/// the raw token never persists. Refresh tokens follow the same pattern.
+/// `revokedAt` is set on token rotation (a refresh issues a new pair and
+/// retires the old one) and on explicit user-driven revocation.
+model OAuthAccessToken {
+  id                    String    @id @default(uuid())
+  tokenHash             String    @unique @map("token_hash")
+  refreshTokenHash      String?   @unique @map("refresh_token_hash")
+  clientId              String    @map("client_id")
+  userId                String    @map("user_id")
+  firmId                String    @map("firm_id")
+  scope                 String?
+  resource              String?
+  expiresAt             DateTime  @map("expires_at")
+  refreshTokenExpiresAt DateTime? @map("refresh_token_expires_at")
+  revokedAt             DateTime? @map("revoked_at")
+  createdAt             DateTime  @default(now()) @map("created_at")
+
+  client OAuthClient @relation(fields: [clientId], references: [clientId], onDelete: Cascade)
+
+  @@index([clientId])
+  @@index([userId])
+  @@index([expiresAt])
+  @@map("oauth_access_tokens")
+}
+
 /// One-time session that an external AI assistant (e.g. Claude Cowork
 /// with the Acumon MCP server registered) uses to drive a prior-period
 /// import on behalf of the user. Session token IS the bearer credential

@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { expandZipFile } from '@/lib/client-unzip';
 import type {
   ImportOptionsState,
@@ -10,7 +10,7 @@ import type {
   CloudConnectorConfig,
 } from '@/lib/import-options/types';
 import { emptyMyWorkpapersConfig } from '@/lib/import-options/types';
-import { buildCoworkPrompt, buildHandoffPrompt } from '@/lib/import-options/cowork-prompt';
+import { buildCoworkPrompt } from '@/lib/import-options/cowork-prompt';
 
 interface Props {
   engagementId: string;
@@ -75,18 +75,14 @@ export function ImportOptionsModal({ engagementId, clientName, periodEnd, auditT
   // Upload
   const [uploadFile, setUploadFile] = useState<File | null>(null);
 
-  // Connected mode (handoff) — generates a one-time bearer token for the
-  // Acumon MCP server, auto-opens the user's AI assistant (claude.ai)
-  // with the prompt prefilled, and waits for submit_archive to flip the
-  // session to 'submitted'. The user never sees the token unless they
-  // explicitly switch to manual mode.
-  const [handoffToken, setHandoffToken] = useState<string | null>(null);
-  const [handoffPrompt, setHandoffPrompt] = useState<string | null>(null);
+  // Connected mode (handoff) — creates a server-side ImportHandoffSession
+  // and waits for the user's OAuth-authorised AI assistant to call
+  // submit_archive on /api/mcp. The session id is just an identifier;
+  // OAuth (added via the assistant's connector UI as a one-time setup)
+  // is the actual auth. We never expose a bearer token in this modal.
+  const [handoffSessionId, setHandoffSessionId] = useState<string | null>(null);
   const [handoffStatus, setHandoffStatus] = useState<'pending' | 'submitted' | 'expired' | 'cancelled'>('pending');
   const [handoffPromptCopied, setHandoffPromptCopied] = useState(false);
-  // Reference to the popped-open assistant tab so we can re-focus it if
-  // the user accidentally closes / hides it.
-  const assistantTabRef = useRef<Window | null>(null);
 
   // Manual / cowork fallback — user copy-pastes a prompt into their
   // assistant and drops the result back here.
@@ -109,20 +105,15 @@ export function ImportOptionsModal({ engagementId, clientName, periodEnd, auditT
     }
   }
 
-  // Re-open the assistant tab (claude.ai with the prompt prefilled) — used
-  // when the user accidentally closes the popup. Falls back to copying the
-  // prompt to clipboard if popup blocking prevents reopening.
-  function reopenAssistantTab() {
-    if (!handoffPrompt) return;
-    const claudeUrl = `https://claude.ai/new?q=${encodeURIComponent(handoffPrompt)}`;
-    const w = window.open(claudeUrl, '_blank', 'noopener,noreferrer');
-    if (w) assistantTabRef.current = w;
-  }
+  // The short prompt we show under "Tell your assistant", used by the
+  // optional copy button. Generic — no tokens or URLs in it because OAuth
+  // does the auth and the assistant resolves the session itself via
+  // list_pending_sessions.
+  const handoffShortPrompt = `Run my pending Acumon import session for ${coworkVendorLabel || 'the cloud audit software'}.`;
 
   function copyHandoffPrompt() {
-    if (!handoffPrompt) return;
     if (typeof navigator !== 'undefined' && navigator.clipboard) {
-      navigator.clipboard.writeText(handoffPrompt).then(
+      navigator.clipboard.writeText(handoffShortPrompt).then(
         () => { setHandoffPromptCopied(true); setTimeout(() => setHandoffPromptCopied(false), 2000); },
         () => { /* ignore */ },
       );
@@ -131,79 +122,45 @@ export function ImportOptionsModal({ engagementId, clientName, periodEnd, auditT
 
   // Start a connected-mode handoff session.
   //
-  // The flow is:
-  //   1. Open a placeholder assistant tab SYNCHRONOUSLY in the click
-  //      handler so popup blockers don't trip (popup blockers require
-  //      a user gesture; once we await fetch() the gesture is gone).
-  //   2. POST /handoff/start to mint the session token + MCP URL.
-  //   3. Build the assistant prompt with the token inline.
-  //   4. Copy the prompt to the clipboard as a fallback (in case
-  //      claude.ai's URL-prefill is unavailable for any reason).
-  //   5. Navigate the placeholder tab to claude.ai/new?q=<encoded prompt>.
-  //   6. Show the connecting spinner and let polling do the rest.
-  function startHandoffSession(vendorLabel: string) {
-    // (1) — synchronous open within the user gesture.
-    const placeholder = window.open('about:blank', '_blank', 'noopener,noreferrer');
-    if (placeholder) assistantTabRef.current = placeholder;
-
+  // 1. POST /handoff/start to create a server-side pending session. The
+  //    response carries a short sessionId — NOT a bearer token. OAuth on
+  //    /api/mcp is what authenticates the assistant; the user does that
+  //    setup once via Settings → Connectors in their AI tool.
+  // 2. Show a "Session ready" view with one short copyable instruction
+  //    sentence and the live status (pending → submitted).
+  // 3. Polling on /handoff/status flips the modal into the Review screen
+  //    when the assistant calls submit_archive on /api/mcp.
+  async function startHandoffSession(vendorLabel: string) {
     setStep('busy');
-    setBusyMessage('Connecting to your AI assistant...');
+    setBusyMessage('Creating import session...');
     setError(null);
-
-    void (async () => {
-      try {
-        const res = await fetch(`/api/engagements/${engagementId}/import-options/handoff/start`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ vendorLabel }),
-        });
-        if (!res.ok) {
-          const j = await res.json().catch(() => ({}));
-          throw new Error(j.error || `Failed to start session (${res.status})`);
-        }
-        const json = await res.json() as { sessionToken: string; mcpEndpoint: string; expiresAt: string };
-
-        const prompt = buildHandoffPrompt({
-          vendorLabel,
-          mcpEndpoint: json.mcpEndpoint,
-          sessionToken: json.sessionToken,
-        });
-
-        // Clipboard fallback — best-effort, ignored on insecure contexts.
-        if (typeof navigator !== 'undefined' && navigator.clipboard) {
-          try { await navigator.clipboard.writeText(prompt); } catch { /* ignore */ }
-        }
-
-        // Navigate the placeholder tab to claude.ai with the prompt prefilled.
-        // If the placeholder was blocked, fall back to a fresh window.open
-        // (which may also be blocked but at this point the prompt is in
-        // the clipboard and the modal exposes a "Re-open assistant" button).
-        const claudeUrl = `https://claude.ai/new?q=${encodeURIComponent(prompt)}`;
-        if (placeholder && !placeholder.closed) {
-          try { placeholder.location.href = claudeUrl; } catch { /* ignore — cross-origin once navigated */ }
-        } else {
-          window.open(claudeUrl, '_blank', 'noopener,noreferrer');
-        }
-
-        setHandoffToken(json.sessionToken);
-        setHandoffPrompt(prompt);
-        setHandoffStatus('pending');
-        setCoworkVendorLabel(vendorLabel);
-        setStep('handoff');
-      } catch (err) {
-        if (placeholder) try { placeholder.close(); } catch { /* ignore */ }
-        setError(err instanceof Error ? err.message : 'Failed to start session');
-        setStep('expand');
+    try {
+      const res = await fetch(`/api/engagements/${engagementId}/import-options/handoff/start`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ vendorLabel }),
+      });
+      if (!res.ok) {
+        const j = await res.json().catch(() => ({}));
+        throw new Error(j.error || `Failed to start session (${res.status})`);
       }
-    })();
+      const json = await res.json() as { sessionId: string; mcpEndpoint: string; expiresAt: string };
+      setHandoffSessionId(json.sessionId);
+      setHandoffStatus('pending');
+      setCoworkVendorLabel(vendorLabel);
+      setStep('handoff');
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to start session');
+      setStep('expand');
+    }
   }
 
   // Poll the handoff status while we're waiting for the assistant to
   // call submit_archive on the MCP endpoint. Stops on submitted /
   // expired / cancelled.
   useEffect(() => {
-    if (step !== 'handoff' || !handoffToken || handoffStatus !== 'pending') return;
-    const url = `/api/engagements/${engagementId}/import-options/handoff/status?token=${encodeURIComponent(handoffToken)}`;
+    if (step !== 'handoff' || !handoffSessionId || handoffStatus !== 'pending') return;
+    const url = `/api/engagements/${engagementId}/import-options/handoff/status?sessionId=${encodeURIComponent(handoffSessionId)}`;
     let cancelled = false;
     const tick = async () => {
       try {
@@ -213,8 +170,6 @@ export function ImportOptionsModal({ engagementId, clientName, periodEnd, auditT
         if (cancelled) return;
         if (json.status === 'submitted' && json.extractionId) {
           setHandoffStatus('submitted');
-          // Persist selections + close out the modal — the parent will
-          // open the Review pop-up against this extraction id.
           await fetch(`/api/engagements/${engagementId}/import-options/save`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -241,12 +196,12 @@ export function ImportOptionsModal({ engagementId, clientName, periodEnd, auditT
     const id = setInterval(tick, 2500);
     void tick();
     return () => { cancelled = true; clearInterval(id); };
-  }, [step, handoffToken, handoffStatus, engagementId, selected, coworkVendorLabel, onComplete]);
+  }, [step, handoffSessionId, handoffStatus, engagementId, selected, coworkVendorLabel, onComplete]);
 
   async function cancelHandoff() {
-    if (!handoffToken) return;
+    if (!handoffSessionId) return;
     try {
-      await fetch(`/api/engagements/${engagementId}/import-options/handoff/status?token=${encodeURIComponent(handoffToken)}`, {
+      await fetch(`/api/engagements/${engagementId}/import-options/handoff/status?sessionId=${encodeURIComponent(handoffSessionId)}`, {
         method: 'DELETE',
       });
     } catch { /* ignore */ }
@@ -695,21 +650,32 @@ export function ImportOptionsModal({ engagementId, clientName, periodEnd, auditT
             </>
           )}
 
-          {step === 'handoff' && handoffToken && (
+          {step === 'handoff' && handoffSessionId && (
             <div className="text-center py-6">
               <div className="inline-block w-10 h-10 border-2 border-blue-500 border-t-transparent rounded-full animate-spin mb-4" />
               <p className="text-sm text-slate-800 font-medium mb-1">
-                Connecting to your AI assistant…
+                Import session ready
               </p>
-              <p className="text-xs text-slate-500 mb-4">
-                We&apos;ve opened your assistant in a new tab with the import instructions ready.
-                It will fetch the prior audit file from <strong>{coworkVendorLabel || 'the vendor'}</strong> and
-                drop it back here automatically — usually within a minute or two.
+              <p className="text-xs text-slate-500 max-w-md mx-auto mb-5">
+                Open your AI assistant (with Acumon connected) and tell it to run the import.
+                Once it submits the file, this screen will refresh into the Review step
+                automatically.
               </p>
+
+              <div className="inline-flex items-center gap-2 bg-slate-100 border border-slate-200 rounded px-3 py-2 mb-4">
+                <span className="text-[11px] text-slate-500 italic">&ldquo;{handoffShortPrompt}&rdquo;</span>
+                <button
+                  onClick={copyHandoffPrompt}
+                  className="text-[10px] px-2 py-0.5 bg-slate-200 text-slate-700 rounded hover:bg-slate-300"
+                  title="Copy"
+                >
+                  {handoffPromptCopied ? '✓' : '📋'}
+                </button>
+              </div>
 
               {handoffStatus === 'expired' && (
                 <p className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded p-2 mb-3">
-                  Session expired. Cancel and start again, or switch to manual mode.
+                  Session expired (30-minute window). Cancel and start a new one, or switch to manual mode.
                 </p>
               )}
               {handoffStatus === 'cancelled' && (
@@ -717,13 +683,6 @@ export function ImportOptionsModal({ engagementId, clientName, periodEnd, auditT
               )}
 
               <div className="flex flex-col gap-1.5 items-center text-[11px] text-slate-500">
-                <button
-                  type="button"
-                  onClick={reopenAssistantTab}
-                  className="text-blue-600 hover:underline"
-                >
-                  Closed the assistant tab? Re-open it
-                </button>
                 <button
                   type="button"
                   onClick={() => { setCoworkVendorLabel(coworkVendorLabel || 'MyWorkPapers'); setStep('cowork'); }}
@@ -737,32 +696,9 @@ export function ImportOptionsModal({ engagementId, clientName, periodEnd, auditT
                   rel="noopener noreferrer"
                   className="text-slate-500 hover:underline"
                 >
-                  First time? Set up the Acumon MCP server in your assistant ↗
+                  First time? Connect your AI assistant to Acumon ↗
                 </a>
               </div>
-
-              {/* Hidden fallback — only shown if the user explicitly reveals it.
-                  Keeps the token + prompt available in case the auto-open + clipboard
-                  copy both failed (e.g. unsupported browser, locked-down environment). */}
-              <details className="mt-4 text-left">
-                <summary className="text-[10px] text-slate-400 cursor-pointer hover:text-slate-600">
-                  Show prompt manually
-                </summary>
-                <div className="mt-2 space-y-1">
-                  <button
-                    onClick={copyHandoffPrompt}
-                    className="text-[10px] px-2 py-0.5 bg-slate-200 text-slate-700 rounded hover:bg-slate-300"
-                  >
-                    {handoffPromptCopied ? '✓ Copied' : '📋 Copy prompt'}
-                  </button>
-                  <textarea
-                    value={handoffPrompt || ''}
-                    readOnly
-                    rows={6}
-                    className="w-full mt-1 border border-slate-200 rounded px-2 py-1 text-[10px] font-mono bg-slate-50"
-                  />
-                </div>
-              </details>
             </div>
           )}
 
