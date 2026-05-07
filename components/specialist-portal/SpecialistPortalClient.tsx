@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useRef, useState } from 'react';
-import { Loader2, Send, MessageSquare, FileText, CheckCircle2, Paperclip, Phone, X } from 'lucide-react';
+import { Loader2, Send, MessageSquare, FileText, CheckCircle2, Paperclip, Phone, X, ChevronDown, ChevronRight } from 'lucide-react';
 
 /**
  * External Specialist Portal — client component.
@@ -71,6 +71,10 @@ export function SpecialistPortalClient({ engagementId, roleKey, email, sig }: Pr
   const [pendingAttachments, setPendingAttachments] = useState<Record<string, ChatAttachment[]>>({});
   const [uploadingFor, setUploadingFor] = useState<string | null>(null);
   const [sending, setSending] = useState<string | null>(null);
+  // Per-item conversation collapse — long threads tuck themselves
+  // away unless the specialist explicitly opens them. Defaults
+  // OPEN for ≤2 messages, CLOSED otherwise.
+  const [conversationCollapsed, setConversationCollapsed] = useState<Record<string, boolean>>({});
   const fileInputs = useRef<Record<string, HTMLInputElement | null>>({});
 
   const baseQs = new URLSearchParams({ email, sig }).toString();
@@ -238,19 +242,53 @@ export function SpecialistPortalClient({ engagementId, roleKey, email, sig }: Pr
         <div className="space-y-3">
           {data.items.map(item => {
             const Icon = item.kind === 'chat' ? MessageSquare : item.kind === 'report' ? FileText : CheckCircle2;
+            // Per-item status: closed / responded (with team) /
+            // unresponded (awaiting you). Same rules as the hub.
+            const lastMsg = item.messages.length > 0 ? item.messages[item.messages.length - 1] : null;
+            const lastFromMe = lastMsg
+              ? ((lastMsg.userId || '').toLowerCase() === `external:${data.email.toLowerCase()}` ||
+                 (lastMsg.userName || '').toLowerCase() === data.email.toLowerCase() ||
+                 (lastMsg.role || '').toLowerCase() === 'external specialist')
+              : false;
+            const status: 'closed' | 'responded' | 'unresponded' =
+              item.status === 'completed' ? 'closed' :
+              (lastMsg && lastFromMe) ? 'responded' :
+              'unresponded';
+            // Card tint matches the hub: muted slate for closed,
+            // amber accent when waiting on the specialist, blue
+            // when back with the team.
+            const cardClass =
+              status === 'closed' ? 'bg-slate-50/80 border-slate-200 opacity-90' :
+              status === 'unresponded' ? 'bg-amber-50/40 border-amber-200' :
+              'bg-blue-50/30 border-blue-200';
+            const headerClass =
+              status === 'closed' ? 'bg-slate-100/70 border-slate-200' :
+              status === 'unresponded' ? 'bg-amber-100/60 border-amber-200' :
+              'bg-blue-100/60 border-blue-200';
+            const statusBadge =
+              status === 'closed' ? { text: 'Closed', cls: 'bg-slate-200 text-slate-700' } :
+              status === 'unresponded' ? { text: 'Awaiting your response', cls: 'bg-amber-100 text-amber-800' } :
+              { text: 'With audit team', cls: 'bg-blue-100 text-blue-800' };
+
+            // Per-item conversation collapse default: open when ≤2
+            // messages, closed otherwise. Persists per item id once
+            // toggled.
+            const collapseDefault = item.messages.length > 2;
+            const conversationCollapsedNow = (item.id in conversationCollapsed)
+              ? conversationCollapsed[item.id]
+              : collapseDefault;
+
             return (
-              <div key={item.id} className="bg-white border border-slate-200 rounded-lg overflow-hidden">
-                <div className="px-4 py-3 bg-slate-50 border-b border-slate-200 flex items-center gap-2">
+              <div key={item.id} className={`border rounded-lg overflow-hidden ${cardClass}`}>
+                <div className={`px-4 py-3 border-b flex items-center gap-2 ${headerClass}`}>
                   <Icon className="h-4 w-4 text-blue-500" />
                   <div className="flex-1 min-w-0">
-                    <h3 className="text-sm font-semibold text-slate-800 truncate">{item.title}</h3>
+                    <h3 className={`text-sm font-semibold truncate ${status === 'closed' ? 'text-slate-500' : 'text-slate-800'}`}>{item.title}</h3>
                     <p className="text-[11px] text-slate-500">
                       {item.kind} · opened {new Date(item.createdAt).toLocaleDateString('en-GB')} by {item.createdByName}
                     </p>
                   </div>
-                  {item.status === 'completed' && (
-                    <span className="text-[10px] px-2 py-0.5 bg-green-100 text-green-700 rounded">Completed</span>
-                  )}
+                  <span className={`text-[10px] px-2 py-0.5 rounded ${statusBadge.cls}`}>{statusBadge.text}</span>
                 </div>
                 <div className="p-4 space-y-3">
                   {item.body && (
@@ -260,47 +298,78 @@ export function SpecialistPortalClient({ engagementId, roleKey, email, sig }: Pr
                   )}
                   {item.kind === 'chat' && (
                     <div className="space-y-2">
-                      <div className="border border-slate-200 rounded p-2 max-h-[300px] overflow-auto bg-white space-y-2">
+                      {/* Conversation collapse toggle — separate from
+                          the rest of the card so the composer +
+                          source body stay visible for long threads. */}
+                      <button
+                        onClick={() => setConversationCollapsed(prev => ({ ...prev, [item.id]: !conversationCollapsedNow }))}
+                        className="w-full flex items-center justify-between text-[11px] font-medium text-slate-700 px-2 py-1 bg-slate-100 hover:bg-slate-200 rounded transition-colors"
+                      >
+                        <span className="inline-flex items-center gap-1">
+                          {conversationCollapsedNow ? <ChevronRight className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}
+                          Conversation ({item.messages.length} message{item.messages.length === 1 ? '' : 's'})
+                        </span>
+                        {lastMsg && (
+                          <span className="text-[10px] text-slate-500 font-normal">
+                            Last {new Date(lastMsg.createdAt).toLocaleString('en-GB', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })}
+                          </span>
+                        )}
+                      </button>
+                      {!conversationCollapsedNow && (
+                      <div className="border border-slate-200 rounded p-2 max-h-[360px] overflow-auto bg-white space-y-1.5">
                         {item.messages.length === 0 ? (
                           <p className="text-[11px] text-slate-400 italic text-center py-2">No messages yet.</p>
-                        ) : item.messages.map(m => (
-                          <div key={m.id} className="text-xs">
-                            <div className="flex items-baseline gap-2">
-                              <span className="font-medium text-slate-700">{m.userName}</span>
-                              <span className="text-[10px] text-slate-400">{m.role}</span>
-                              <span className="text-[10px] text-slate-400 ml-auto">{new Date(m.createdAt).toLocaleString('en-GB')}</span>
+                        ) : item.messages.map(m => {
+                          // Specialist's own message bubbles right (blue),
+                          // audit team bubbles left (slate). Author label is
+                          // colour-matched so left/right dialogue is obvious
+                          // at a glance.
+                          const fromMe = (m.userId || '').toLowerCase() === `external:${data.email.toLowerCase()}` ||
+                                         (m.userName || '').toLowerCase() === data.email.toLowerCase();
+                          return (
+                            <div key={m.id} className={`flex ${fromMe ? 'justify-end' : 'justify-start'}`}>
+                              <div className={`text-xs p-2 rounded-lg border max-w-[80%] ${fromMe ? 'bg-blue-50 border-blue-200 rounded-br-none' : 'bg-slate-50 border-slate-200 rounded-bl-none'}`}>
+                                <div className="flex items-center gap-2 text-[10px] text-slate-500 mb-1">
+                                  <strong className={fromMe ? 'text-blue-800' : 'text-slate-700'}>
+                                    {fromMe ? 'You' : (m.userName || 'Audit team')}
+                                  </strong>
+                                  {m.role && <><span>·</span><span>{m.role}</span></>}
+                                  <span className="ml-auto">{new Date(m.createdAt).toLocaleString('en-GB')}</span>
+                                </div>
+                                {m.message && <p className="text-slate-700 whitespace-pre-wrap break-words">{m.message}</p>}
+                                {m.callLink && (
+                                  <a
+                                    href={m.callLink.url}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    className="mt-1 inline-flex items-center gap-1 text-[11px] px-2 py-1 bg-emerald-50 text-emerald-700 border border-emerald-200 rounded hover:bg-emerald-100"
+                                  >
+                                    <Phone className="h-3 w-3" /> {m.callLink.label || 'Join call'}
+                                  </a>
+                                )}
+                                {m.attachments && m.attachments.length > 0 && (
+                                  <ul className="mt-1 space-y-0.5">
+                                    {m.attachments.map(a => (
+                                      <li key={a.id}>
+                                        <a
+                                          href={attachmentDownloadUrl(a)}
+                                          target="_blank"
+                                          rel="noopener noreferrer"
+                                          className="inline-flex items-center gap-1 text-[11px] text-blue-600 hover:underline"
+                                        >
+                                          <Paperclip className="h-3 w-3" /> {a.name}
+                                          {typeof a.size === 'number' && <span className="text-slate-400">({Math.round(a.size / 1024)} KB)</span>}
+                                        </a>
+                                      </li>
+                                    ))}
+                                  </ul>
+                                )}
+                              </div>
                             </div>
-                            {m.message && <p className="text-slate-700 whitespace-pre-wrap break-words mt-0.5">{m.message}</p>}
-                            {m.callLink && (
-                              <a
-                                href={m.callLink.url}
-                                target="_blank"
-                                rel="noopener noreferrer"
-                                className="mt-1 inline-flex items-center gap-1 text-[11px] px-2 py-1 bg-emerald-50 text-emerald-700 border border-emerald-200 rounded hover:bg-emerald-100"
-                              >
-                                <Phone className="h-3 w-3" /> {m.callLink.label || 'Join call'}
-                              </a>
-                            )}
-                            {m.attachments && m.attachments.length > 0 && (
-                              <ul className="mt-1 space-y-0.5">
-                                {m.attachments.map(a => (
-                                  <li key={a.id}>
-                                    <a
-                                      href={attachmentDownloadUrl(a)}
-                                      target="_blank"
-                                      rel="noopener noreferrer"
-                                      className="inline-flex items-center gap-1 text-[11px] text-blue-600 hover:underline"
-                                    >
-                                      <Paperclip className="h-3 w-3" /> {a.name}
-                                      {typeof a.size === 'number' && <span className="text-slate-400">({Math.round(a.size / 1024)} KB)</span>}
-                                    </a>
-                                  </li>
-                                ))}
-                              </ul>
-                            )}
-                          </div>
-                        ))}
+                          );
+                        })}
                       </div>
+                      )}
                       {item.status === 'open' ? (
                         <div className="space-y-2">
                           {pendingAttachments[item.id]?.length > 0 && (
