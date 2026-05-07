@@ -35,7 +35,14 @@ const CHECKBOX_OPTIONS: CheckboxOption[] = [
   { key: 'ai_populate_current', label: 'Use AI to populate current year' },
 ];
 
-type Step = 'select' | 'expand' | 'busy' | 'connect_credentials' | 'register_connector' | 'cowork';
+type Step =
+  | 'select'
+  | 'expand'
+  | 'busy'
+  | 'connect_credentials'
+  | 'register_connector'
+  | 'handoff'   // connected mode — uses Acumon's MCP server (preferred)
+  | 'cowork';   // manual fallback — user copy-pastes the prompt
 
 export function ImportOptionsModal({ engagementId, clientName, periodEnd, auditTypeLabel, onComplete, onClose }: Props) {
   const [step, setStep] = useState<Step>('select');
@@ -68,9 +75,17 @@ export function ImportOptionsModal({ engagementId, clientName, periodEnd, auditT
   // Upload
   const [uploadFile, setUploadFile] = useState<File | null>(null);
 
-  // Claude Cowork mode — user runs a Claude prompt in their own browser
-  // (with the Claude in Chrome extension). Claude drives the user's tab,
-  // downloads the prior audit file, the user drags it back in here.
+  // Connected mode (handoff) — generates a one-time bearer token for the
+  // Acumon MCP server. The user's AI assistant calls submit_archive on
+  // the MCP and the modal auto-advances to the Review screen.
+  const [handoffToken, setHandoffToken] = useState<string | null>(null);
+  const [handoffMcpEndpoint, setHandoffMcpEndpoint] = useState<string | null>(null);
+  const [handoffStatus, setHandoffStatus] = useState<'pending' | 'submitted' | 'expired' | 'cancelled'>('pending');
+  const [handoffExpiresAt, setHandoffExpiresAt] = useState<string | null>(null);
+  const [handoffTokenCopied, setHandoffTokenCopied] = useState(false);
+
+  // Manual / cowork fallback — user copy-pastes a prompt into their
+  // assistant and drops the result back here.
   const [coworkVendorLabel, setCoworkVendorLabel] = useState('MyWorkPapers');
   const [coworkFile, setCoworkFile] = useState<File | null>(null);
   const [coworkPromptCopied, setCoworkPromptCopied] = useState(false);
@@ -88,6 +103,102 @@ export function ImportOptionsModal({ engagementId, clientName, periodEnd, auditT
         () => { /* clipboard may be unavailable in non-https; fallback is the visible textarea */ },
       );
     }
+  }
+
+  function copyHandoffToken() {
+    if (typeof navigator !== 'undefined' && navigator.clipboard && handoffToken) {
+      navigator.clipboard.writeText(handoffToken).then(
+        () => { setHandoffTokenCopied(true); setTimeout(() => setHandoffTokenCopied(false), 2000); },
+        () => { /* ignore */ },
+      );
+    }
+  }
+
+  // Start a connected-mode handoff session (generates the bearer token,
+  // posts /handoff/start, opens the polling step). Called when the user
+  // picks "Connect to Cloud Audit Software" with no API recipe configured,
+  // or "Other Cloud Audit Software".
+  async function startHandoffSession(vendorLabel: string) {
+    setStep('busy');
+    setBusyMessage('Starting connected session...');
+    setError(null);
+    try {
+      const res = await fetch(`/api/engagements/${engagementId}/import-options/handoff/start`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ vendorLabel }),
+      });
+      if (!res.ok) {
+        const j = await res.json().catch(() => ({}));
+        throw new Error(j.error || `Failed to start session (${res.status})`);
+      }
+      const json = await res.json();
+      setHandoffToken(json.sessionToken);
+      setHandoffMcpEndpoint(json.mcpEndpoint);
+      setHandoffExpiresAt(json.expiresAt);
+      setHandoffStatus('pending');
+      setCoworkVendorLabel(vendorLabel);
+      setStep('handoff');
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to start session');
+      setStep('expand');
+    }
+  }
+
+  // Poll the handoff status while we're waiting for the assistant to
+  // call submit_archive on the MCP endpoint. Stops on submitted /
+  // expired / cancelled.
+  useEffect(() => {
+    if (step !== 'handoff' || !handoffToken || handoffStatus !== 'pending') return;
+    const url = `/api/engagements/${engagementId}/import-options/handoff/status?token=${encodeURIComponent(handoffToken)}`;
+    let cancelled = false;
+    const tick = async () => {
+      try {
+        const res = await fetch(url);
+        if (!res.ok) return;
+        const json = await res.json() as { status: string; extractionId?: string | null };
+        if (cancelled) return;
+        if (json.status === 'submitted' && json.extractionId) {
+          setHandoffStatus('submitted');
+          // Persist selections + close out the modal — the parent will
+          // open the Review pop-up against this extraction id.
+          await fetch(`/api/engagements/${engagementId}/import-options/save`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              selections: Array.from(selected),
+              source: { type: 'cloud', vendorLabel: coworkVendorLabel },
+              status: 'extracted',
+            }),
+          });
+          onComplete({
+            prompted: true,
+            selections: Array.from(selected),
+            source: { type: 'cloud', vendorLabel: coworkVendorLabel },
+            status: 'extracted',
+            extractionId: json.extractionId,
+          }, { extractionId: json.extractionId });
+        } else if (json.status === 'expired' || json.status === 'cancelled') {
+          setHandoffStatus(json.status as 'expired' | 'cancelled');
+        }
+      } catch {
+        /* keep polling on transient errors */
+      }
+    };
+    const id = setInterval(tick, 2500);
+    void tick();
+    return () => { cancelled = true; clearInterval(id); };
+  }, [step, handoffToken, handoffStatus, engagementId, selected, coworkVendorLabel, onComplete]);
+
+  async function cancelHandoff() {
+    if (!handoffToken) return;
+    try {
+      await fetch(`/api/engagements/${engagementId}/import-options/handoff/status?token=${encodeURIComponent(handoffToken)}`, {
+        method: 'DELETE',
+      });
+    } catch { /* ignore */ }
+    setHandoffStatus('cancelled');
+    setStep('expand');
   }
 
   useEffect(() => {
@@ -333,7 +444,7 @@ export function ImportOptionsModal({ engagementId, clientName, periodEnd, auditT
                   <p className="text-xs text-slate-500 mt-1">Fetch from MyWorkPapers or another configured vendor.</p>
                 </button>
                 <button
-                  onClick={() => { setSourceType('cloud_other'); setCoworkVendorLabel(''); setStep('cowork'); }}
+                  onClick={() => setSourceType('cloud_other')}
                   className={`text-left p-3 border-2 rounded-lg ${sourceType === 'cloud_other' ? 'border-blue-500 bg-blue-50' : 'border-slate-200 hover:border-slate-300'}`}
                 >
                   <div className="text-sm font-semibold text-slate-800">＋ Other Cloud Audit Software</div>
@@ -358,37 +469,39 @@ export function ImportOptionsModal({ engagementId, clientName, periodEnd, auditT
                 </div>
               )}
 
-              {(sourceType === 'cloud' || sourceType === 'cloud_other') && (
+              {sourceType === 'cloud' && (
                 <div className="border border-slate-200 rounded-lg p-4 bg-slate-50">
                   <label className="block text-xs font-medium text-slate-600 mb-1">Cloud Audit Software</label>
                   {connectorsLoading ? (
-                    <p className="text-xs text-slate-400">Loading connectors...</p>
+                    <p className="text-xs text-slate-400">Loading...</p>
                   ) : (
                     <select
                       value={chosenConnectorId}
                       onChange={e => setChosenConnectorId(e.target.value)}
                       className="w-full border border-slate-200 rounded px-3 py-1.5 text-sm bg-white focus:outline-none focus:ring-1 focus:ring-blue-400"
                     >
-                      <option value="">— Select connector —</option>
+                      <option value="">— Select vendor —</option>
                       {connectors.map(c => (
-                        <option key={c.id} value={c.id}>
-                          {c.label}{!c.config.baseUrl ? ' (not configured)' : ''}
-                        </option>
+                        <option key={c.id} value={c.id}>{c.label}</option>
                       ))}
                     </select>
                   )}
-                  {sourceType === 'cloud_other' && (
-                    <button
-                      onClick={() => {
-                        setNewConnLabel('');
-                        setNewConnConfig({ baseUrl: '', authScheme: 'bearer', authConfig: {}, endpoints: {} });
-                        setStep('register_connector');
-                      }}
-                      className="mt-3 text-xs px-3 py-1.5 bg-blue-600 text-white rounded hover:bg-blue-700 font-medium"
-                    >
-                      ＋ Register a new connector
-                    </button>
-                  )}
+                </div>
+              )}
+
+              {sourceType === 'cloud_other' && (
+                <div className="border border-slate-200 rounded-lg p-4 bg-slate-50">
+                  <label className="block text-xs font-medium text-slate-600 mb-1">Vendor name</label>
+                  <input
+                    type="text"
+                    value={coworkVendorLabel}
+                    onChange={e => setCoworkVendorLabel(e.target.value)}
+                    placeholder="e.g. CaseWare Cloud, Inflo, AuditBoard"
+                    className="w-full border border-slate-200 rounded px-3 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-blue-400"
+                  />
+                  <p className="text-[10px] text-slate-400 italic mt-1">
+                    Type the vendor&apos;s name — we&apos;ll guide your AI assistant through the rest.
+                  </p>
                 </div>
               )}
             </>
@@ -526,6 +639,71 @@ export function ImportOptionsModal({ engagementId, clientName, periodEnd, auditT
                   API documentation; if any are wrong the connector will return a clear error and store nothing.
                 </p>
               </div>
+            </>
+          )}
+
+          {step === 'handoff' && handoffToken && (
+            <>
+              <p className="text-sm text-slate-700 mb-3">
+                Open your AI browser assistant and ask it to run the import session for{' '}
+                <strong>{coworkVendorLabel || 'the cloud audit software'}</strong>. It will read
+                the engagement context from acumon, navigate the vendor&apos;s site for you, and
+                upload the prior audit file straight back here.
+              </p>
+
+              <div className="border border-blue-200 bg-blue-50 rounded-lg p-3 mb-4 space-y-2">
+                <div>
+                  <div className="flex items-center justify-between mb-1">
+                    <span className="text-[11px] font-medium text-blue-700 uppercase tracking-wide">Session Token</span>
+                    <button
+                      onClick={copyHandoffToken}
+                      className="text-[11px] px-2 py-0.5 bg-blue-600 text-white rounded hover:bg-blue-700 font-medium"
+                    >
+                      {handoffTokenCopied ? '✓ Copied' : '📋 Copy'}
+                    </button>
+                  </div>
+                  <code className="block w-full bg-white border border-blue-200 rounded px-2 py-1.5 text-[11px] font-mono text-slate-700 break-all">
+                    {handoffToken}
+                  </code>
+                </div>
+                {handoffMcpEndpoint && (
+                  <p className="text-[10px] text-blue-700">
+                    MCP endpoint: <code className="bg-white px-1 py-0.5 rounded">{handoffMcpEndpoint}</code>
+                  </p>
+                )}
+                <p className="text-[10px] text-blue-700">
+                  Ask the assistant: <em>&ldquo;Run the Acumon import session. Token: {handoffToken.slice(0, 12)}…&rdquo;</em>
+                </p>
+              </div>
+
+              <div className="flex items-center gap-2 mb-4">
+                {handoffStatus === 'pending' && (
+                  <>
+                    <span className="inline-block w-3 h-3 border-2 border-blue-500 border-t-transparent rounded-full animate-spin" />
+                    <p className="text-xs text-slate-600">Waiting for your assistant to submit the file…</p>
+                  </>
+                )}
+                {handoffStatus === 'expired' && (
+                  <p className="text-xs text-amber-700">Session expired. Cancel and start again, or switch to manual mode.</p>
+                )}
+                {handoffStatus === 'cancelled' && (
+                  <p className="text-xs text-slate-500 italic">Session cancelled.</p>
+                )}
+              </div>
+
+              <p className="text-[11px] text-slate-500 italic">
+                First time? <a href="/methodology-admin/cloud-audit-connectors/mcp-setup" target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:underline">How to add the Acumon MCP server to your assistant ↗</a>
+              </p>
+              <p className="text-[11px] text-slate-500 italic mt-1">
+                Don&apos;t have an MCP-capable assistant set up?{' '}
+                <button
+                  onClick={() => { setCoworkVendorLabel(coworkVendorLabel || 'MyWorkPapers'); setStep('cowork'); }}
+                  className="text-blue-600 hover:underline"
+                >
+                  Switch to manual mode
+                </button>{' '}
+                — copy a prompt and drag the file back yourself.
+              </p>
             </>
           )}
 
@@ -684,17 +862,25 @@ export function ImportOptionsModal({ engagementId, clientName, periodEnd, auditT
                     disabled={!chosenConnectorId}
                     onClick={() => {
                       const conn = connectors.find(c => c.id === chosenConnectorId);
-                      // If the connector has no API recipe (admin hasn't filled it
-                      // in), fall back to the assistant-driven path automatically —
-                      // the user just sees "Connect to Cloud Audit Software" and
-                      // gets walked through the right flow for that vendor.
-                      if (conn && !conn.config.baseUrl) {
-                        setCoworkVendorLabel(conn.label);
-                        setStep('cowork');
-                      } else {
+                      // If the connector has a fully-configured API recipe, use
+                      // the API path (existing flow). Otherwise start a connected
+                      // session against Acumon's MCP server — the user's AI
+                      // assistant drives the vendor's site for them.
+                      if (conn && conn.config.baseUrl) {
                         setStep('connect_credentials');
+                      } else if (conn) {
+                        void startHandoffSession(conn.label);
                       }
                     }}
+                    className="text-sm px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:opacity-50 font-medium"
+                  >
+                    Continue
+                  </button>
+                )}
+                {sourceType === 'cloud_other' && (
+                  <button
+                    disabled={!coworkVendorLabel.trim()}
+                    onClick={() => void startHandoffSession(coworkVendorLabel.trim())}
                     className="text-sm px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:opacity-50 font-medium"
                   >
                     Continue
@@ -713,6 +899,12 @@ export function ImportOptionsModal({ engagementId, clientName, periodEnd, auditT
               >
                 Register &amp; Continue
               </button>
+            </>
+          )}
+          {step === 'handoff' && (
+            <>
+              <button onClick={cancelHandoff} className="text-sm px-4 py-2 text-slate-600 hover:text-slate-800">← Cancel session</button>
+              <button onClick={handleCancel} className="text-sm px-4 py-2 text-slate-600 hover:text-slate-800">Skip import</button>
             </>
           )}
           {step === 'cowork' && (

@@ -2069,6 +2069,7 @@ model AuditEngagement {
   vatReconciliation     AuditVatReconciliation?
   taxOnProfits          AuditTaxOnProfits?
   importProposals       ImportExtractionProposal[]
+  importHandoffSessions ImportHandoffSession[]
 
   @@unique([clientId, periodId, auditType])
   @@index([firmId])
@@ -2116,6 +2117,36 @@ model CloudAuditConnector {
   @@unique([firmId, vendorKey])
   @@index([firmId])
   @@map("cloud_audit_connectors")
+}
+
+/// One-time session that an external AI assistant (e.g. Claude Cowork
+/// with the Acumon MCP server registered) uses to drive a prior-period
+/// import on behalf of the user. Session token IS the bearer credential
+/// — no other auth required for the duration. Single-use; once a file is
+/// submitted (or the TTL elapses) the session is closed.
+///
+/// Lifecycle: pending → submitted | expired | cancelled.
+/// On submitted: `submittedDocumentId` points at the AuditDocument row
+/// the assistant uploaded; the modal polling /handoff/status sees the
+/// flip and advances the user to the Review screen.
+model ImportHandoffSession {
+  id                    String   @id // base32 random — 32+ chars; THIS is the bearer token
+  engagementId          String   @map("engagement_id")
+  firmId                String   @map("firm_id")
+  createdById           String   @map("created_by_id")
+  vendorLabel           String   @map("vendor_label") // shown to the assistant via get_session_context
+  status                String   @default("pending") // pending | submitted | expired | cancelled
+  expiresAt             DateTime @map("expires_at")
+  submittedDocumentId   String?  @map("submitted_document_id")
+  submittedExtractionId String?  @map("submitted_extraction_id")
+  submittedAt           DateTime? @map("submitted_at")
+  createdAt             DateTime @default(now()) @map("created_at")
+
+  engagement AuditEngagement @relation(fields: [engagementId], references: [id], onDelete: Cascade)
+
+  @@index([engagementId])
+  @@index([status])
+  @@map("import_handoff_sessions")
 }
 
 /// Per-engagement scratchpad of an AI-extracted "proposed mapping" of
