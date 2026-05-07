@@ -1,7 +1,7 @@
 'use client';
 
 import Link from 'next/link';
-import { BookOpen, Settings, FileText, ClipboardCheck, Users, FileStack, Mail, AlertTriangle, ShieldAlert, Brain, ShieldCheck, ShieldOff, Search, Gauge } from 'lucide-react';
+import { BookOpen, Settings, FileText, ClipboardCheck, Users, FileStack, Mail, AlertTriangle, ShieldAlert, Brain, ShieldCheck, ShieldOff, Search, Gauge, Trash2 } from 'lucide-react';
 
 // Map href → registry howto-id so the global guide can point at any tile.
 // Keep these in sync with HOWTO_ELEMENTS in lib/howto/registry.ts.
@@ -21,6 +21,7 @@ const HOWTO_BY_HREF: Record<string, string> = {
   '/methodology-admin/portal-searches':        'tile.portal-searches',
   '/methodology-admin/template-documents':     'tile.template-documents',
   '/methodology-admin/internal-communication': 'tile.internal-communication',
+  '/methodology-admin/data-purge':             'tile.data-purge',
 };
 
 const tiles = [
@@ -143,6 +144,14 @@ const tiles = [
     icon: Mail,
     color: 'bg-indigo-50 border-indigo-200 hover:bg-indigo-100',
     iconColor: 'text-indigo-600',
+  },
+  {
+    title: 'Reset Tab Data',
+    description: 'Wipe all data for a chosen tab across every engagement in your firm. Destructive — used to clean up after methodology changes or testing.',
+    href: '/methodology-admin/data-purge',
+    icon: Trash2,
+    color: 'bg-red-50 border-red-200 hover:bg-red-100',
+    iconColor: 'text-red-600',
   },
 ];
 
