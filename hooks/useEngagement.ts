@@ -19,6 +19,9 @@ export interface EngagementData {
   hardCloseDate: string | null;
   isGroupAudit: boolean;
   isNewClient?: boolean | null;
+  /** FK into the firm's MethodologyIndustry catalogue. Set on the
+   *  Opening tab; null = unspecified. */
+  methodologyIndustryId?: string | null;
   /** True iff Client.isListed === true. Drives Listed-status schedule visibility. */
   clientIsListed?: boolean;
   /** True iff this engagement has a priorPeriodEngagementId set. Drives prior-period schedule visibility. */

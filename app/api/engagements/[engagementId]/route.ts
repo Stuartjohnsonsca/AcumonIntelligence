@@ -89,7 +89,7 @@ export async function PUT(
 
   try {
     const body = await req.json();
-    const { status, infoRequestType, hardCloseDate, isGroupAudit, planCreated, isNewClient } = body;
+    const { status, infoRequestType, hardCloseDate, isGroupAudit, planCreated, isNewClient, methodologyIndustryId } = body;
 
     // Verify ownership
     const existing = await prisma.auditEngagement.findUnique({
@@ -122,6 +122,11 @@ export async function PUT(
     // schedule), false (continuance audit, force Continuance schedule), null
     // (auto-detect by checking for prior-period engagement).
     if (isNewClient !== undefined) updateData.isNewClient = isNewClient;
+    // methodologyIndustryId — explicit null clears the choice; an empty
+    // string from the dropdown is normalised the same way.
+    if (methodologyIndustryId !== undefined) {
+      updateData.methodologyIndustryId = methodologyIndustryId === '' ? null : methodologyIndustryId;
+    }
 
     const engagement = await prisma.auditEngagement.update({
       where: { id: engagementId },

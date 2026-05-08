@@ -1995,6 +1995,12 @@ model AuditEngagement {
   completedAt             DateTime? @map("completed_at")
   priorPeriodEngagementId String?   @map("prior_period_engagement_id")
 
+  // Industry classification for this engagement, drawn from the firm's
+  // MethodologyIndustry catalogue (managed in My Account → Industries).
+  // SetNull on industry deletion so a firm can prune the catalogue
+  // without cascading the engagement away.
+  methodologyIndustryId String? @map("methodology_industry_id")
+
   // Portal Principal (ClientPortalUser.id) designated by the audit team
   // on the Opening tab. This person is the single contact who sets up
   // staff access + work allocations for the client side. When unset,
@@ -2035,6 +2041,7 @@ model AuditEngagement {
   methodologyVersion    MethodologyConfig?           @relation(fields: [methodologyVersionId], references: [id])
   priorPeriodEngagement AuditEngagement?             @relation("EngagementPriorPeriod", fields: [priorPeriodEngagementId], references: [id], onDelete: SetNull)
   nextPeriodEngagements AuditEngagement[]            @relation("EngagementPriorPeriod")
+  methodologyIndustry   MethodologyIndustry?         @relation(fields: [methodologyIndustryId], references: [id], onDelete: SetNull)
   portalPrincipal       ClientPortalUser?            @relation("PortalPrincipalForEngagement", fields: [portalPrincipalId], references: [id], onDelete: SetNull)
   portalStaffMembers    ClientPortalStaffMember[]
   portalWorkAllocations ClientPortalWorkAllocation[]
@@ -2076,6 +2083,7 @@ model AuditEngagement {
   @@index([firmId])
   @@index([createdById])
   @@index([priorPeriodEngagementId])
+  @@index([methodologyIndustryId])
   @@map("audit_engagements")
 }
 
@@ -2832,10 +2840,11 @@ model MethodologyIndustry {
   isDefault Boolean @default(false) @map("is_default")
   isActive  Boolean @default(true) @map("is_active")
 
-  firm            Firm                        @relation(fields: [firmId], references: [id], onDelete: Cascade)
-  testBanks       MethodologyTestBank[]
-  fsLineMappings  MethodologyFsLineIndustry[]
-  testAllocations MethodologyTestAllocation[]
+  firm             Firm                        @relation(fields: [firmId], references: [id], onDelete: Cascade)
+  testBanks        MethodologyTestBank[]
+  fsLineMappings   MethodologyFsLineIndustry[]
+  testAllocations  MethodologyTestAllocation[]
+  auditEngagements AuditEngagement[]
 
   @@unique([firmId, code])
   @@index([firmId])

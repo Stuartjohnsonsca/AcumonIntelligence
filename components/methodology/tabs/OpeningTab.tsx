@@ -44,6 +44,8 @@ export function OpeningTab({ engagement, auditType, clientName, periodEndDate, o
   //            false = continuance (force Continuance schedule),
   //            null = auto-detect via prior-period engagement lookup.
   const [isNewClient, setIsNewClient] = useState<boolean | null>(engagement.isNewClient ?? null);
+  const [industries, setIndustries] = useState<{ id: string; name: string; code: string; isDefault: boolean }[]>([]);
+  const [industryId, setIndustryId] = useState<string>(engagement.methodologyIndustryId ?? '');
   const [showCategory, setShowCategory] = useState(true);
   const [saving, setSaving] = useState(false);
   const [connection, setConnection] = useState<ConnectionStatus | null>(null);
@@ -60,6 +62,25 @@ export function OpeningTab({ engagement, auditType, clientName, periodEndDate, o
   useEffect(() => {
     setIsNewClient(engagement.isNewClient ?? null);
   }, [engagement.isNewClient]);
+
+  useEffect(() => {
+    setIndustryId(engagement.methodologyIndustryId ?? '');
+  }, [engagement.methodologyIndustryId]);
+
+  // Load firm's active industries for the Opening-tab dropdown. Read-
+  // only — admins manage the catalogue under My Account → Industries.
+  useEffect(() => {
+    async function loadIndustries() {
+      try {
+        const res = await fetch('/api/firm/industries');
+        if (res.ok) {
+          const data = await res.json();
+          setIndustries(data.industries || []);
+        }
+      } catch { /* ignore — dropdown just stays empty */ }
+    }
+    loadIndustries();
+  }, []);
 
   // Load firm's enabled connectors
   useEffect(() => {
@@ -250,6 +271,27 @@ export function OpeningTab({ engagement, auditType, clientName, periodEndDate, o
             <div className="flex justify-between">
               <dt className="text-slate-500">Period End</dt>
               <dd className="font-medium text-slate-800">{periodEndDate ? new Date(periodEndDate).toLocaleDateString('en-GB') : '—'}</dd>
+            </div>
+            <div className="flex items-center justify-between gap-2">
+              <dt className="text-slate-500">Industry</dt>
+              <dd className="flex-1 max-w-[60%]">
+                <select
+                  value={industryId}
+                  onChange={e => {
+                    const v = e.target.value;
+                    setIndustryId(v);
+                    updateSetting('methodologyIndustryId', v || null);
+                  }}
+                  disabled={industries.length === 0}
+                  className="w-full text-xs font-medium text-slate-800 bg-white border border-slate-200 rounded px-1.5 py-0.5 focus:outline-none focus:ring-1 focus:ring-blue-400 disabled:bg-slate-50 disabled:text-slate-400"
+                  title={industries.length === 0 ? 'No industries configured for this firm — add some under My Account → Industries' : 'Industry classification for this engagement'}
+                >
+                  <option value="">—</option>
+                  {industries.map(ind => (
+                    <option key={ind.id} value={ind.id}>{ind.name}</option>
+                  ))}
+                </select>
+              </dd>
             </div>
             <div className="flex justify-between">
               <dt className="text-slate-500">Status</dt>
