@@ -57,6 +57,19 @@ interface Props {
   label?: string;
   /** Stack labels under each dot (md default) or hide them (compact) */
   hideRoleLabels?: boolean;
+  /**
+   * Per-role rollup state from subsidiary sections. When provided, the
+   * dot's colour reflects the rollup: 'full' renders solid green even
+   * if the bucket itself isn't signed; 'partial' renders hollow green;
+   * 'none' renders hollow grey. An explicit sign-off in `signOffs`
+   * always wins (solid green) so a manual click on the rollup widget
+   * still latches.
+   *
+   * When omitted, partial state is derived from the bucket itself:
+   * unsigned dots show hollow green only if at least one other role
+   * in the bucket is signed (partial completion within the bucket).
+   */
+  subsidiaryProgress?: Record<string, 'none' | 'partial' | 'full' | undefined>;
 }
 
 export function SignOffDots({
@@ -68,10 +81,17 @@ export function SignOffDots({
   size = 'md',
   label,
   hideRoleLabels = false,
+  subsidiaryProgress,
 }: Props) {
   const dotSize = size === 'sm' ? 'w-3.5 h-3.5' : 'w-5 h-5';
   const checkSize = size === 'sm' ? 'h-2 w-2' : 'h-3 w-3';
   const gap = size === 'sm' ? 'gap-3' : 'gap-6';
+
+  // Bucket-level partial check used when no explicit subsidiaryProgress
+  // is supplied: a role-dot goes hollow-green if any *other* role in the
+  // same bucket is signed. With nothing signed at all the row is grey
+  // hollow regardless of who's allowed to sign.
+  const someSignedInBucket = roles.some(r => signOffs[r]?.timestamp);
 
   return (
     <div className="flex flex-col items-center">
@@ -84,28 +104,41 @@ export function SignOffDots({
           const isCascaded = isSigned && viaRole !== role;
           const canSign = canUserSign(role, currentUserId, teamMembers);
           const dateStr = effective?.timestamp ? new Date(effective.timestamp).toLocaleDateString('en-GB', { day: '2-digit', month: '2-digit', year: '2-digit' }) : '';
+          const sub = subsidiaryProgress?.[role];
+          const isFull = isSigned || sub === 'full';
+          const isPartial = !isFull && (sub === 'partial' || (sub === undefined && someSignedInBucket));
           const title = isSigned
             ? (isCascaded
                 ? `${effective?.userName || ''} — ${dateStr} (signed as ${roleLabel(viaRole || '')})`
                 : `${effective?.userName || ''} — ${dateStr}`)
-            : canSign
-              ? `Sign as ${roleLabel(role)}`
-              : roleNotAllowedTooltip(role);
+            : sub === 'full'
+              ? `All subsidiary sections signed by ${roleLabel(role)}`
+              : sub === 'partial'
+                ? `Some subsidiary sections signed by ${roleLabel(role)}`
+                : canSign
+                  ? `Sign as ${roleLabel(role)}`
+                  : roleNotAllowedTooltip(role);
+          let dotClass: string;
+          if (isFull) {
+            dotClass = 'bg-green-500 border-green-500';
+          } else if (isPartial) {
+            dotClass = canSign
+              ? 'border-green-400 hover:bg-green-50 cursor-pointer'
+              : 'border-green-200 cursor-not-allowed opacity-50';
+          } else {
+            dotClass = canSign
+              ? 'border-slate-300 hover:bg-slate-50 cursor-pointer'
+              : 'border-slate-200 cursor-not-allowed opacity-50';
+          }
           return (
             <div key={role} className="flex flex-col items-center gap-0.5">
               <button
                 onClick={e => { e.stopPropagation(); if (canSign) onToggle(role); }}
                 disabled={!canSign && !isSigned}
-                className={`${dotSize} rounded-full border-2 transition-colors flex items-center justify-center ${
-                  isSigned
-                    ? 'bg-green-500 border-green-500'
-                    : canSign
-                      ? 'border-green-400 hover:bg-green-50 cursor-pointer'
-                      : 'border-slate-200 cursor-not-allowed opacity-50'
-                }`}
+                className={`${dotSize} rounded-full border-2 transition-colors flex items-center justify-center ${dotClass}`}
                 title={title}
               >
-                {isSigned && <CheckCircle2 className={`${checkSize} text-white`} />}
+                {isFull && <CheckCircle2 className={`${checkSize} text-white`} />}
               </button>
               {!hideRoleLabels && (
                 <span className="text-[7px] text-slate-500 font-medium">{roleLabel(role)}</span>

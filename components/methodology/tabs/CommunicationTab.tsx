@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
 import { CommunicationOverallPanel } from '../panels/CommunicationOverallPanel';
 import { BoardMinutesPanel } from '../panels/BoardMinutesPanel';
 import { ShareholdersPanel } from '../panels/ShareholdersPanel';
@@ -101,6 +101,30 @@ export function CommunicationTab({ engagementId, teamMembers, currentUserId }: P
 
   const overallBucket = signOffBuckets['overall'] || {};
 
+  // Per-role rollup for the top "Communications" widget. Subsidiaries
+  // are the six sub-tabs (everything except 'overall'). Each sub-tab
+  // counts as signed for a given role if that role *or any senior role*
+  // (cascade: RI → Reviewer → Preparer) has a real timestamp in its
+  // bucket. all six → 'full'; some → 'partial'; none → 'none'.
+  const ROLLUP_TABS: SubTab[] = ['board-minutes', 'shareholders', 'tcwg', 'client', 'internal', 'expert'];
+  const ROLE_CASCADE: Record<string, string[]> = {
+    preparer: ['preparer', 'reviewer', 'ri'],
+    reviewer: ['reviewer', 'ri'],
+    ri: ['ri'],
+  };
+  const topRollup = useMemo(() => {
+    const out: Record<string, 'none' | 'partial' | 'full'> = {};
+    for (const role of ['preparer', 'reviewer', 'ri']) {
+      let signed = 0;
+      for (const tab of ROLLUP_TABS) {
+        const bucket = signOffBuckets[tab] || {};
+        if (ROLE_CASCADE[role].some(r => bucket[r]?.timestamp)) signed++;
+      }
+      out[role] = signed === 0 ? 'none' : signed === ROLLUP_TABS.length ? 'full' : 'partial';
+    }
+    return out;
+  }, [signOffBuckets]);
+
   return (
     <div>
       {/* Sub-tab bar + overall tab-level sign-off dots */}
@@ -135,6 +159,7 @@ export function CommunicationTab({ engagementId, teamMembers, currentUserId }: P
             onToggle={role => toggleSignOff('overall', role)}
             size="sm"
             hideRoleLabels
+            subsidiaryProgress={topRollup}
           />
         </div>
       </div>
