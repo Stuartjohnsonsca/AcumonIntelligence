@@ -635,6 +635,7 @@ function PromptForm({ prompt, onAnswer }: { prompt: PendingPrompt; onAnswer: (id
   const [busy, setBusy] = useState(false);
   const [textValue, setTextValue] = useState('');
   const [credentialValues, setCredentialValues] = useState<Record<string, string>>({});
+  const [revealedSecrets, setRevealedSecrets] = useState<Record<string, boolean>>({});
   const [selectValue, setSelectValue] = useState('');
 
   // Defensive defaults — if Claude calls ask_user(type='credentials')
@@ -660,6 +661,7 @@ function PromptForm({ prompt, onAnswer }: { prompt: PendingPrompt; onAnswer: (id
       setBusy(false);
       setTextValue('');
       setCredentialValues({});
+      setRevealedSecrets({});
       setSelectValue('');
     }
   }
@@ -670,18 +672,37 @@ function PromptForm({ prompt, onAnswer }: { prompt: PendingPrompt; onAnswer: (id
 
       {prompt.type === 'credentials' && (
         <div className="space-y-2">
-          {fields.map(f => (
-            <div key={f.name}>
-              <label className="block text-[11px] font-medium text-slate-600 mb-1">{f.label}</label>
-              <input
-                type={f.secret ? 'password' : 'text'}
-                value={credentialValues[f.name] || ''}
-                onChange={e => setCredentialValues({ ...credentialValues, [f.name]: e.target.value })}
-                autoComplete={f.secret ? 'current-password' : 'username'}
-                className="w-full border border-slate-200 rounded px-3 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-blue-400"
-              />
-            </div>
-          ))}
+          {fields.map(f => {
+            const revealed = !!revealedSecrets[f.name];
+            return (
+              <div key={f.name}>
+                <label className="block text-[11px] font-medium text-slate-600 mb-1">{f.label}</label>
+                <div className="relative">
+                  <input
+                    type={f.secret && !revealed ? 'password' : 'text'}
+                    value={credentialValues[f.name] || ''}
+                    onChange={e => setCredentialValues({ ...credentialValues, [f.name]: e.target.value })}
+                    autoComplete="off"
+                    autoCorrect="off"
+                    autoCapitalize="off"
+                    spellCheck={false}
+                    data-1p-ignore
+                    data-lpignore="true"
+                    data-form-type="other"
+                    className={`w-full border border-slate-200 rounded px-3 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-blue-400 ${f.secret ? 'pr-16' : ''}`}
+                  />
+                  {f.secret && (
+                    <button
+                      type="button"
+                      tabIndex={-1}
+                      onClick={() => setRevealedSecrets(s => ({ ...s, [f.name]: !s[f.name] }))}
+                      className="absolute inset-y-0 right-0 px-2 text-[11px] text-slate-500 hover:text-slate-700"
+                    >{revealed ? 'Hide' : 'Show'}</button>
+                  )}
+                </div>
+              </div>
+            );
+          })}
           <div className="flex justify-end pt-1">
             <button
               disabled={busy || fields.some(f => !credentialValues[f.name])}
@@ -690,7 +711,7 @@ function PromptForm({ prompt, onAnswer }: { prompt: PendingPrompt; onAnswer: (id
             >Send</button>
           </div>
           <p className="text-[10px] text-slate-500 italic">
-            Streamed to the live browser session only — never stored on Acumon.
+            Streamed to the live browser session only — never stored on Acumon. Browser autofill is disabled here so saved passwords won't silently fill in.
           </p>
         </div>
       )}
