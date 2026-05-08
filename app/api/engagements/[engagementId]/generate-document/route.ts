@@ -6,6 +6,9 @@ import { populateMergeFields } from '@/lib/template-merge';
 import { generatePdfFromTemplate, type PdfOptions } from '@/lib/template-pdf';
 import { AUDIT_TYPE_LABELS } from '@/types/methodology';
 import { downloadBlob, CONTAINERS } from '@/lib/azure-blob';
+import { extractReferencedPaths } from '@/lib/template-handlebars';
+import { buildTemplateContext } from '@/lib/template-context';
+import { MERGE_FIELDS } from '@/lib/template-merge-fields';
 
 async function verifyAccess(engagementId: string, firmId: string | undefined, isSuperAdmin: boolean) {
   const e = await prisma.auditEngagement.findUnique({ where: { id: engagementId }, select: { firmId: true, auditType: true } });
@@ -52,6 +55,49 @@ export async function POST(req: Request, { params }: { params: Promise<{ engagem
   // Load template
   const template = await prisma.documentTemplate.findUnique({ where: { id: templateId } });
   if (!template) return NextResponse.json({ error: 'Template not found' }, { status: 404 });
+
+  // ── Pre-flight: list every referenced placeholder that resolves to
+  // null / undefined / '' / [] in the live engagement context, so the
+  // UI can warn the user before they generate. Returns a structured
+  // list with friendly labels + group names lifted from MERGE_FIELDS;
+  // unknown paths fall back to the raw path. The body is left intact
+  // (no PDF generated, no document row written). Always callable
+  // regardless of write-access guard so even regulatory reviewers can
+  // see what's missing — but the action returns 403 above before this
+  // point because assertEngagementWriteAccess runs first.
+  if (action === 'check_required') {
+    const referenced = extractReferencedPaths(template.content || '');
+    const context = await buildTemplateContext(engagementId);
+    function resolve(path: string): unknown {
+      const parts = path.split('.');
+      let cur: unknown = context;
+      for (const p of parts) {
+        if (cur == null || typeof cur !== 'object') return undefined;
+        cur = (cur as Record<string, unknown>)[p];
+      }
+      return cur;
+    }
+    const missing: { key: string; label: string; group: string }[] = [];
+    const seen = new Set<string>();
+    for (const path of referenced) {
+      if (seen.has(path)) continue;
+      seen.add(path);
+      const value = resolve(path);
+      const isEmpty = value === null || value === undefined
+        || (typeof value === 'string' && value.trim() === '')
+        || (Array.isArray(value) && value.length === 0);
+      if (!isEmpty) continue;
+      const meta = MERGE_FIELDS.find(m => m.key === path);
+      missing.push({
+        key: path,
+        label: meta?.label || path,
+        group: meta?.group || 'Other',
+      });
+    }
+    // Sort grouped, then alphabetical, so the popup reads predictably.
+    missing.sort((a, b) => a.group.localeCompare(b.group) || a.label.localeCompare(b.label));
+    return NextResponse.json({ missing });
+  }
 
   // Populate merge fields (scalar + block expansion + detail option)
   const recipient = body.recipientName ? { name: body.recipientName, email: body.recipientEmail } : undefined;

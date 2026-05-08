@@ -105,6 +105,13 @@ export function DocumentRepositoryTab({ engagementId }: Props) {
   const [recipientName, setRecipientName] = useState('');
   const [generating, setGenerating] = useState(false);
   const [generateResult, setGenerateResult] = useState<string | null>(null);
+  // Missing-fields gate. handleGenerate first calls 'check_required'
+  // which returns the placeholders that resolve to empty in the live
+  // engagement context; if any are present we open a popup listing
+  // them grouped by section. The user can either bail out and fill
+  // the data in, or click "Generate anyway" which sets this back to
+  // null and re-enters handleGenerate with skipMissingCheck=true.
+  const [missingFields, setMissingFields] = useState<{ key: string; label: string; group: string }[] | null>(null);
 
   // Custom types added by user during this engagement
   const [customDocTypes, setCustomDocTypes] = useState<string[]>([]);
@@ -195,11 +202,34 @@ export function DocumentRepositoryTab({ engagementId }: Props) {
     } catch { /* ignore */ }
   }
 
-  async function handleGenerate() {
+  async function handleGenerate(skipMissingCheck = false) {
     if (!selectedTemplate) return;
     setGenerating(true);
     setGenerateResult(null);
     try {
+      // Pre-flight missing-fields check. Hits the same route with a
+      // 'check_required' action — much cheaper than a full PDF render
+      // because we just resolve paths and never invoke the renderer.
+      // If anything is empty we surface the popup and bail; the user
+      // can either close + fill the data in, or click "Generate
+      // anyway" which re-enters this function with skipMissingCheck=true.
+      if (!skipMissingCheck) {
+        try {
+          const checkRes = await fetch(`/api/engagements/${engagementId}/generate-document`, {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ templateId: selectedTemplate, action: 'check_required' }),
+          });
+          if (checkRes.ok) {
+            const data = await checkRes.json();
+            const missing = Array.isArray(data?.missing) ? data.missing : [];
+            if (missing.length > 0) {
+              setMissingFields(missing);
+              setGenerating(false);
+              return;
+            }
+          }
+        } catch { /* tolerant — fall through and let the generate call surface any real error */ }
+      }
       const body: Record<string, string> = { templateId: selectedTemplate, action: generateAction, auditPlanDetail };
       if (generateAction === 'send_email') { body.recipientEmail = recipientEmail; body.recipientName = recipientName; }
 
@@ -351,7 +381,7 @@ export function DocumentRepositoryTab({ engagementId }: Props) {
             </div>
           )}
           <div className="flex gap-2">
-            <button onClick={handleGenerate}
+            <button onClick={() => handleGenerate()}
               disabled={!selectedTemplate || generating || (generateAction === 'send_email' && !recipientEmail)}
               className="text-xs px-3 py-1.5 bg-purple-600 text-white rounded hover:bg-purple-700 disabled:opacity-50 font-medium">
               {generating ? 'Generating...' : generateAction === 'download' ? 'Generate & Download' : generateAction === 'send_email' ? 'Generate & Send Email' : 'Generate & Push to Portal'}
@@ -692,6 +722,66 @@ export function DocumentRepositoryTab({ engagementId }: Props) {
           </div>
         );
       })()}
+
+      {/* Missing-fields popup — shown after a Generate-from-Template
+          click when one or more {{placeholders}} resolve to empty.
+          Lists them grouped by section so the user can see at a glance
+          where to fill them in (e.g. "Materiality" → fill on the
+          Materiality tab). User can either close + go fix the data,
+          or click "Generate anyway" to bypass this gate. */}
+      {missingFields && (
+        <div className="fixed inset-0 z-50 bg-slate-900/60 flex items-center justify-center p-4" onClick={() => setMissingFields(null)}>
+          <div className="bg-white rounded-lg shadow-xl w-full max-w-lg max-h-[80vh] flex flex-col" onClick={e => e.stopPropagation()}>
+            <div className="px-4 py-3 border-b">
+              <h4 className="text-sm font-semibold text-slate-800">Some fields are empty</h4>
+              <p className="text-xs text-slate-500 mt-0.5">
+                The selected template references these fields but the engagement doesn&apos;t have values for them yet. Generating now will leave the corresponding spots blank in the output.
+              </p>
+            </div>
+            <div className="flex-1 overflow-y-auto p-4 space-y-3">
+              {(() => {
+                const grouped: Record<string, { key: string; label: string }[]> = {};
+                for (const m of missingFields) {
+                  if (!grouped[m.group]) grouped[m.group] = [];
+                  grouped[m.group].push({ key: m.key, label: m.label });
+                }
+                return Object.entries(grouped).map(([group, fields]) => (
+                  <div key={group}>
+                    <p className="text-[10px] font-semibold text-slate-500 uppercase tracking-wide mb-1">{group}</p>
+                    <ul className="space-y-1">
+                      {fields.map(f => (
+                        <li key={f.key} className="text-xs text-slate-700 flex items-baseline gap-2">
+                          <span className="w-1 h-1 rounded-full bg-amber-400 inline-block flex-shrink-0 mt-1.5" />
+                          <span>
+                            {f.label}
+                            <code className="ml-1.5 text-[10px] text-slate-400">{`{{${f.key}}}`}</code>
+                          </span>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                ));
+              })()}
+            </div>
+            <div className="px-4 py-3 border-t flex items-center justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => setMissingFields(null)}
+                className="text-xs px-3 py-1.5 bg-slate-100 text-slate-700 rounded hover:bg-slate-200"
+              >
+                Cancel — fill in the data
+              </button>
+              <button
+                type="button"
+                onClick={() => { setMissingFields(null); void handleGenerate(true); }}
+                className="text-xs px-3 py-1.5 bg-amber-600 text-white rounded hover:bg-amber-700"
+              >
+                Generate anyway
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Hidden file input */}
       <input ref={fileInputRef} type="file" accept="*,.zip" className="hidden" onChange={async e => {
