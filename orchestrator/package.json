@@ -1,6 +1,6 @@
 {
   "name": "acumon-orchestrator",
-  "version": "1.0.0",
+  "version": "1.0.9",
   "private": true,
   "description": "Acumon import orchestrator — drives a headless Chrome via the Anthropic Computer Use API to import prior-period audit files from cloud audit-software vendors on the user's behalf.",
   "type": "module",
