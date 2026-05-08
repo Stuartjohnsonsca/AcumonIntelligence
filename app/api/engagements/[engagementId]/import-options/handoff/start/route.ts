@@ -41,7 +41,7 @@ export async function POST(
       firmId: true,
       auditType: true,
       client: { select: { clientName: true } },
-      period: { select: { periodEnd: true } },
+      period: { select: { endDate: true } },
     },
   });
   if (!engagement || engagement.firmId !== session.user.firmId) {
@@ -106,7 +106,7 @@ export async function POST(
           vendorLabel,
           clientName: engagement.client?.clientName,
           auditType: engagement.auditType,
-          periodEnd: engagement.period?.periodEnd?.toISOString().slice(0, 10) || null,
+          periodEnd: engagement.period?.endDate?.toISOString().slice(0, 10) || null,
         }),
       });
       const orchText = await orchRes.text().catch(() => '');
