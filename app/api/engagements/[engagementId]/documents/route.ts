@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { assertEngagementWriteAccess } from '@/lib/auth/engagement-auth';
 import { auth } from '@/lib/auth';
 import { prisma } from '@/lib/db';
+import { sendDocumentRequestEmail } from '@/lib/audit-email';
 
 async function verifyAccess(engagementId: string, firmId: string | undefined, isSuperAdmin: boolean) {
   const e = await prisma.auditEngagement.findUnique({ where: { id: engagementId }, select: { firmId: true, clientId: true } });
@@ -53,10 +54,49 @@ export async function POST(req: Request, { params }: { params: Promise<{ engagem
   const body = await req.json();
   const { action } = body;
 
-  // Create document request
+  // Create document request. New `deliveryMethod` (portal | email |
+  // download) extends the old behaviour:
+  //   - download: just creates the request row (legacy default).
+  //   - email:    creates the row AND emails the 'Requested To'
+  //     address via sendDocumentRequestEmail.
+  //   - portal:   verifies the email maps to a ClientPortalUser of
+  //     this engagement's client; if it does, opens a portalRequest
+  //     row so the document shows up on the client portal. If it
+  //     doesn't, returns 400 with a portalUserMissing flag so the UI
+  //     can render the "cannot action — recipient is not a portal
+  //     user" warning.
   if (action === 'request') {
-    const { documentName, requestedFrom, mappedItems, source, usageLocation, documentType } = body;
+    const { documentName, requestedFrom, mappedItems, source, usageLocation, documentType, deliveryMethod } = body;
     if (!documentName) return NextResponse.json({ error: 'documentName required' }, { status: 400 });
+    const method: 'portal' | 'email' | 'download' =
+      deliveryMethod === 'portal' || deliveryMethod === 'email' ? deliveryMethod : 'download';
+
+    // Portal-mode pre-check: must be a real portal user. Bail BEFORE
+    // creating any rows so the user gets a clean error and can switch
+    // the recipient or the delivery method.
+    let portalUser: { id: string; name: string } | null = null;
+    if (method === 'portal') {
+      const recipientEmail = typeof requestedFrom === 'string' ? requestedFrom.trim().toLowerCase() : '';
+      if (!recipientEmail) {
+        return NextResponse.json({ error: 'Portal delivery requires a recipient email' }, { status: 400 });
+      }
+      const found = await prisma.clientPortalUser.findFirst({
+        where: { clientId: engagement.clientId, email: { equals: recipientEmail, mode: 'insensitive' }, isActive: true },
+        select: { id: true, name: true },
+      });
+      if (!found) {
+        return NextResponse.json({
+          error: `Cannot send via portal — ${recipientEmail} is not registered as a Client Portal user for this engagement's client. Invite them via the Portal tab → Manage Staff or pick Email / Download instead.`,
+          portalUserMissing: true,
+        }, { status: 400 });
+      }
+      portalUser = found;
+    }
+
+    if (method === 'email' && (!requestedFrom || typeof requestedFrom !== 'string' || !requestedFrom.trim())) {
+      return NextResponse.json({ error: 'Email delivery requires a recipient email' }, { status: 400 });
+    }
+
     const doc = await prisma.auditDocument.create({
       data: {
         engagementId, documentName, requestedFrom: requestedFrom || null,
@@ -68,7 +108,50 @@ export async function POST(req: Request, { params }: { params: Promise<{ engagem
       },
       include: { requestedBy: { select: { id: true, name: true } }, uploadedBy: { select: { id: true, name: true } } },
     });
-    return NextResponse.json({ document: doc }, { status: 201 });
+
+    if (method === 'portal' && portalUser) {
+      // Open a portalRequest so the document shows up under the client's
+      // portal "documents" inbox. We use the same shape as
+      // generate-document/send_portal: clientId, section='documents',
+      // question = the requested document name.
+      await prisma.portalRequest.create({
+        data: {
+          engagementId,
+          clientId: engagement.clientId,
+          section: 'documents',
+          question: `Document request: ${documentName}`,
+          status: 'outstanding',
+          requestedByName: session.user.name || session.user.email || 'System',
+          requestedById: session.user.id,
+          attachments: [],
+        } as any,
+      });
+    } else if (method === 'email') {
+      try {
+        const clientName = (await prisma.client.findUnique({
+          where: { id: engagement.clientId },
+          select: { clientName: true },
+        }))?.clientName || 'the client';
+        await sendDocumentRequestEmail(
+          requestedFrom,
+          requestedFrom,
+          clientName,
+          documentName,
+          session.user.name || session.user.email || 'the audit team',
+        );
+      } catch (err: any) {
+        console.error('[documents/request] email failed:', err);
+        // Don't roll back the doc row — the auditor will see the
+        // request in the UI and can re-trigger the email later via a
+        // resend action if we add one.
+        return NextResponse.json({
+          document: doc,
+          warning: `Request created, but the email could not be sent (${err?.message || 'unknown error'}). Resend manually if needed.`,
+        }, { status: 201 });
+      }
+    }
+
+    return NextResponse.json({ document: doc, deliveryMethod: method }, { status: 201 });
   }
 
   // Upload metadata (file upload handled via blob storage separately)

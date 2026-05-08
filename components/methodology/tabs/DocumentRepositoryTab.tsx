@@ -118,6 +118,15 @@ export function DocumentRepositoryTab({ engagementId }: Props) {
   const [addingCustomType, setAddingCustomType] = useState(false);
   const [customTypeInput, setCustomTypeInput] = useState('');
 
+  // Request-form state additions: FS line picker + delivery method +
+  // live portal-user check. fsLines populates from the new
+  // /api/firm/fs-lines endpoint on mount; selectedFsLineIds is the
+  // multi-select state for the request.
+  const [fsLines, setFsLines] = useState<{ id: string; name: string; fsCategory: string; fsLevelName: string | null; fsStatementName: string | null }[]>([]);
+  const [selectedFsLineIds, setSelectedFsLineIds] = useState<string[]>([]);
+  const [deliveryMethod, setDeliveryMethod] = useState<'portal' | 'email' | 'download'>('portal');
+  const [portalCheck, setPortalCheck] = useState<{ status: 'idle' | 'checking' | 'ok' | 'missing'; message?: string }>({ status: 'idle' });
+
   // Filters
   const [filterSource, setFilterSource] = useState('');
   const [filterLocation, setFilterLocation] = useState('');
@@ -156,6 +165,55 @@ export function DocumentRepositoryTab({ engagementId }: Props) {
 
   useEffect(() => { loadDocuments(); }, [loadDocuments]);
 
+  // Load the firm's FS lines once for the Mapped-to dropdown.
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch('/api/firm/fs-lines');
+        if (!cancelled && res.ok) {
+          const data = await res.json();
+          setFsLines(Array.isArray(data?.fsLines) ? data.fsLines : []);
+        }
+      } catch { /* tolerant — dropdown stays empty */ }
+    })();
+    return () => { cancelled = true; };
+  }, []);
+
+  // Debounced portal-user check — fires whenever the user types into
+  // the Requested To field while the delivery method is 'portal'. The
+  // server returns isPortalUser true/false; we surface the reason
+  // string inline. No-op for 'email' / 'download' delivery.
+  useEffect(() => {
+    if (!showForm) return;
+    if (deliveryMethod !== 'portal') {
+      setPortalCheck({ status: 'idle' });
+      return;
+    }
+    const email = newFrom.trim();
+    if (!email || !isValidEmail(email)) {
+      setPortalCheck({ status: 'idle' });
+      return;
+    }
+    setPortalCheck({ status: 'checking' });
+    let cancelled = false;
+    const timer = setTimeout(async () => {
+      try {
+        const res = await fetch(`/api/engagements/${engagementId}/portal-user-check?email=${encodeURIComponent(email)}`);
+        if (cancelled) return;
+        if (res.ok) {
+          const data = await res.json();
+          if (data?.isPortalUser) {
+            setPortalCheck({ status: 'ok', message: data.portalUserName ? `Will deliver via portal to ${data.portalUserName}` : 'Recipient is registered on the portal' });
+          } else {
+            setPortalCheck({ status: 'missing', message: data?.reason || 'Recipient is not a Client Portal user' });
+          }
+        }
+      } catch { /* tolerant */ }
+    }, 350);
+    return () => { cancelled = true; clearTimeout(timer); };
+  }, [engagementId, newFrom, deliveryMethod, showForm]);
+
   async function postAction(body: Record<string, unknown>) {
     await fetch(`/api/engagements/${engagementId}/documents`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
@@ -165,15 +223,54 @@ export function DocumentRepositoryTab({ engagementId }: Props) {
 
   async function requestDocument() {
     if (!newName.trim()) return;
+    if (deliveryMethod === 'portal' && portalCheck.status === 'missing') {
+      // Server would reject this anyway; bail early so the user
+      // doesn't lose the form. The inline flag has already explained
+      // why.
+      return;
+    }
     setSubmitting(true);
-    await postAction({
-      action: 'request', documentName: newName.trim(), requestedFrom: newFrom.trim() || null,
-      mappedItems: newMapping ? newMapping.split(',').map(s => s.trim()).filter(Boolean) : null,
-      source: newSource || null,
-      usageLocation: newUsageLocation || null,
-      documentType: newDocType || null,
+    // Map FS line ids → names for the legacy mappedItems string[] —
+    // existing renderers display the strings directly. Fall back to
+    // the comma-separated free-text the input still allows so prior
+    // requests keep working.
+    const fsLineNames = selectedFsLineIds
+      .map(id => fsLines.find(l => l.id === id)?.name)
+      .filter(Boolean) as string[];
+    const freeTextItems = newMapping ? newMapping.split(',').map(s => s.trim()).filter(Boolean) : [];
+    const mappedItems = fsLineNames.length > 0 ? fsLineNames : freeTextItems.length > 0 ? freeTextItems : null;
+
+    const res = await fetch(`/api/engagements/${engagementId}/documents`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        action: 'request',
+        documentName: newName.trim(),
+        requestedFrom: newFrom.trim() || null,
+        mappedItems,
+        source: newSource || null,
+        usageLocation: newUsageLocation || null,
+        documentType: newDocType || null,
+        deliveryMethod,
+      }),
     });
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      // Server returns portalUserMissing when the email isn't a
+      // Client Portal user — surface the message inline.
+      if (data?.portalUserMissing) {
+        setPortalCheck({ status: 'missing', message: data.error || 'Recipient is not a Client Portal user' });
+      } else {
+        // Generic alert for now; could be a toast.
+        alert(data?.error || `Request failed (${res.status})`);
+      }
+      setSubmitting(false);
+      return;
+    }
+    await loadDocuments();
     setNewName(''); setNewFrom(''); setNewMapping(''); setNewSource(''); setNewUsageLocation(''); setNewDocType('');
+    setSelectedFsLineIds([]);
+    setDeliveryMethod('portal');
+    setPortalCheck({ status: 'idle' });
     setShowForm(false); setSubmitting(false);
   }
 
@@ -415,11 +512,57 @@ export function DocumentRepositoryTab({ engagementId }: Props) {
               {newFrom && !isValidEmail(newFrom) && (
                 <p className="text-[10px] text-red-600 mt-0.5">Enter a valid email address</p>
               )}
+              {portalCheck.status === 'checking' && (
+                <p className="text-[10px] text-slate-500 mt-0.5">Checking portal access…</p>
+              )}
+              {portalCheck.status === 'ok' && portalCheck.message && (
+                <p className="text-[10px] text-emerald-700 mt-0.5">✓ {portalCheck.message}</p>
+              )}
+              {portalCheck.status === 'missing' && portalCheck.message && (
+                <p className="text-[10px] text-amber-700 mt-0.5">⚠ {portalCheck.message}</p>
+              )}
             </div>
             <div>
-              <label className="block text-xs text-slate-500 mb-1">Mapped To (comma-separated)</label>
-              <input type="text" value={newMapping} onChange={e => setNewMapping(e.target.value)}
-                className="w-full border border-slate-200 rounded px-3 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-blue-400" placeholder="e.g. Revenue, Trade Debtors" />
+              <label className="block text-xs text-slate-500 mb-1">Mapped to FS line(s)</label>
+              <select
+                multiple
+                value={selectedFsLineIds}
+                onChange={e => {
+                  const opts = Array.from(e.target.selectedOptions).map(o => o.value);
+                  setSelectedFsLineIds(opts);
+                }}
+                size={Math.min(4, Math.max(2, fsLines.length))}
+                disabled={fsLines.length === 0}
+                title={fsLines.length === 0 ? 'No FS lines configured for this firm — add some under Methodology Admin → FS Lines' : 'Hold Ctrl/Cmd to pick multiple lines'}
+                className="w-full border border-slate-200 rounded px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-blue-400 disabled:bg-slate-50"
+              >
+                {fsLines.map(l => (
+                  <option key={l.id} value={l.id}>
+                    {l.name}{l.fsLevelName ? ` — ${l.fsLevelName}` : ''}
+                  </option>
+                ))}
+              </select>
+              <p className="text-[10px] text-slate-400 mt-0.5">Hold Ctrl/Cmd to pick more than one.</p>
+            </div>
+          </div>
+
+          {/* Delivery method row — drives how the request reaches the
+              recipient. Portal opens a portalRequest (gated by the
+              portal-user check above), Email sends an email via
+              sendDocumentRequestEmail, Download just records the
+              request internally. */}
+          <div className="grid grid-cols-3 gap-3 mb-3">
+            <div>
+              <label className="block text-xs text-slate-500 mb-1">How to deliver the request</label>
+              <select
+                value={deliveryMethod}
+                onChange={e => setDeliveryMethod(e.target.value as 'portal' | 'email' | 'download')}
+                className="w-full border border-slate-200 rounded px-3 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-blue-400 bg-white"
+              >
+                <option value="portal">Portal — recipient must be a Client Portal user</option>
+                <option value="email">Email — send a document request email</option>
+                <option value="download">Download — record the request internally only</option>
+              </select>
             </div>
           </div>
           {/* Categorisation row */}
@@ -467,10 +610,21 @@ export function DocumentRepositoryTab({ engagementId }: Props) {
           <div className="flex gap-2">
             <button
               onClick={requestDocument}
-              disabled={!newName.trim() || submitting || (!!newFrom && !isValidEmail(newFrom))}
+              disabled={
+                !newName.trim()
+                || submitting
+                || (!!newFrom && !isValidEmail(newFrom))
+                || (deliveryMethod !== 'download' && !newFrom.trim())
+                || (deliveryMethod === 'portal' && portalCheck.status === 'missing')
+              }
               className="text-xs px-3 py-1.5 bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50 font-medium"
+              title={
+                deliveryMethod === 'portal' && portalCheck.status === 'missing'
+                  ? 'Recipient is not a Client Portal user — switch to Email or Download, or invite them to the portal first.'
+                  : undefined
+              }
             >
-              {submitting ? 'Requesting...' : 'Create Request'}
+              {submitting ? 'Sending...' : deliveryMethod === 'portal' ? 'Send via Portal' : deliveryMethod === 'email' ? 'Send Email Request' : 'Create Request'}
             </button>
             <button onClick={() => setShowForm(false)} className="text-xs px-3 py-1.5 bg-slate-100 text-slate-600 rounded hover:bg-slate-200">Cancel</button>
           </div>
