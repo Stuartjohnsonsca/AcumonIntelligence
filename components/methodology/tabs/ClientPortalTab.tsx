@@ -125,16 +125,25 @@ export function ClientPortalTab({ engagementId, clientName }: Props) {
   return (
     <div className="space-y-3">
       {/* Firm-side context header — what the auditor sees (NOT the client) */}
-      <div className="flex items-center justify-between">
+      <div className="flex items-center justify-between gap-3">
         <div>
           <h2 className="text-base font-semibold text-slate-800 inline-flex items-center gap-2">
             <Eye className="h-4 w-4 text-slate-500" />
             Client Portal Preview
           </h2>
           <p className="text-xs text-slate-500 mt-0.5">
-            Read-only replica of what <strong>{clientName}</strong> sees in their portal. Walk the client through each view without needing their login.
+            Read-only replica of what <strong>{clientName}</strong> sees in their portal. Use it on a screen-share to walk the client through each view without needing their login. Buttons and inputs look real but don&apos;t save anything.
           </p>
         </div>
+        <a
+          href="/portal"
+          target="_blank"
+          rel="noopener noreferrer"
+          className="shrink-0 inline-flex items-center gap-1.5 text-[11px] px-2.5 py-1 bg-blue-50 text-blue-700 border border-blue-200 rounded hover:bg-blue-100"
+          title="Open the real portal in a new tab — requires a portal login"
+        >
+          Open the real portal ↗
+        </a>
       </div>
 
       {/* Simulated browser chrome — establishes clearly that what's
