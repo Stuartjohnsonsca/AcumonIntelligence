@@ -20,12 +20,20 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Eye, EyeOff } from 'lucide-react';
 import { expandZipFile } from '@/lib/client-unzip';
+import { buildCoworkPrompt } from '@/lib/import-options/cowork-prompt';
 import type {
   ImportOptionsState,
   ImportSelection,
   ImportSourceType,
   CloudConnectorRecord,
 } from '@/lib/import-options/types';
+
+// When false (the default), the orchestrator-driven cloud-audit-software
+// cards are hidden and Claude Cowork is the primary cloud path. The
+// orchestrator code stays in the repo + the container keeps running so
+// we can flip back to it without a rebuild — just set
+// NEXT_PUBLIC_IMPORT_ORCHESTRATOR_ENABLED=true on Vercel.
+const ORCHESTRATOR_ENABLED = process.env.NEXT_PUBLIC_IMPORT_ORCHESTRATOR_ENABLED === 'true';
 
 // ─── Stage / prompt types (mirror server) ────────────────────────────
 
@@ -99,7 +107,7 @@ const CHECKBOX_OPTIONS: { key: ImportSelection; label: string }[] = [
   { key: 'ai_populate_current', label: 'Use AI to populate current year' },
 ];
 
-type Step = 'select' | 'expand' | 'upload' | 'busy' | 'handoff';
+type Step = 'select' | 'expand' | 'upload' | 'cowork' | 'busy' | 'handoff';
 
 // ─── Component ───────────────────────────────────────────────────────
 
@@ -117,6 +125,13 @@ export function ImportOptionsModal({ engagementId, clientName, periodEnd, auditT
 
   // Upload (manual file picker)
   const [uploadFile, setUploadFile] = useState<File | null>(null);
+
+  // Cowork (operator drives the vendor + Acumon themselves via Claude
+  // Cowork in their own browser; we just hand them a prompt template
+  // and a drop zone tagged sourceType=claude_cowork).
+  const [coworkVendorName, setCoworkVendorName] = useState('MyWorkPapers');
+  const [coworkLoginUrl, setCoworkLoginUrl] = useState('https://audit.myworkpapers.co.uk/login');
+  const [coworkFile, setCoworkFile] = useState<File | null>(null);
 
   // Handoff session state (server-driven)
   const [handoffSessionId, setHandoffSessionId] = useState<string | null>(null);
@@ -262,6 +277,35 @@ export function ImportOptionsModal({ engagementId, clientName, periodEnd, auditT
     }
   }
 
+  async function handleCoworkProceed() {
+    if (!coworkFile) { setError('Drop the file Cowork downloaded into the box, or pick it manually.'); return; }
+    if (!coworkVendorName.trim()) { setError('Please enter the vendor name.'); return; }
+    setStep('busy');
+    setBusyMessage('Uploading file from Cowork…');
+    setError(null);
+    try {
+      const file = await expandZipFile(coworkFile) || coworkFile;
+      const formData = new FormData();
+      formData.append('file', file);
+      formData.append('originalName', coworkFile.name);
+      formData.append('selections', JSON.stringify(Array.from(selected)));
+      formData.append('sourceType', 'claude_cowork');
+      formData.append('vendorLabel', coworkVendorName.trim());
+      const res = await fetch(`/api/engagements/${engagementId}/import-options/upload`, {
+        method: 'POST', body: formData,
+      });
+      if (!res.ok) {
+        const j = await res.json().catch(() => ({}));
+        throw new Error(j.error || `Upload failed (${res.status})`);
+      }
+      const json = await res.json();
+      onComplete(json.importOptions as ImportOptionsState, { extractionId: json.extractionId });
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Upload failed');
+      setStep('cowork');
+    }
+  }
+
   async function startHandoff(vendorLabel: string) {
     setStep('busy');
     setBusyMessage('Connecting to vendor…');
@@ -333,11 +377,27 @@ export function ImportOptionsModal({ engagementId, clientName, periodEnd, auditT
               setChosenConnectorId={setChosenConnectorId}
               otherVendorName={otherVendorName}
               setOtherVendorName={setOtherVendorName}
+              coworkVendorName={coworkVendorName}
+              setCoworkVendorName={setCoworkVendorName}
+              coworkLoginUrl={coworkLoginUrl}
+              setCoworkLoginUrl={setCoworkLoginUrl}
             />
           )}
 
           {step === 'upload' && (
             <UploadStep uploadFile={uploadFile} setUploadFile={setUploadFile} />
+          )}
+
+          {step === 'cowork' && (
+            <CoworkStep
+              vendorLabel={coworkVendorName}
+              loginUrl={coworkLoginUrl}
+              clientName={clientName}
+              periodEnd={periodEnd}
+              auditTypeLabel={auditTypeLabel}
+              file={coworkFile}
+              setFile={setCoworkFile}
+            />
           )}
 
           {step === 'busy' && (
@@ -385,7 +445,14 @@ export function ImportOptionsModal({ engagementId, clientName, periodEnd, auditT
                 {sourceType === 'upload' && (
                   <button onClick={() => setStep('upload')} className="text-sm px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 font-medium">Continue</button>
                 )}
-                {sourceType === 'cloud' && (
+                {sourceType === 'claude_cowork' && (
+                  <button
+                    disabled={!coworkVendorName.trim()}
+                    onClick={() => setStep('cowork')}
+                    className="text-sm px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:opacity-50 font-medium"
+                  >Continue</button>
+                )}
+                {ORCHESTRATOR_ENABLED && sourceType === 'cloud' && (
                   <button
                     disabled={!chosenConnectorId}
                     onClick={() => {
@@ -395,7 +462,7 @@ export function ImportOptionsModal({ engagementId, clientName, periodEnd, auditT
                     className="text-sm px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:opacity-50 font-medium"
                   >Continue</button>
                 )}
-                {sourceType === 'cloud_other' && (
+                {ORCHESTRATOR_ENABLED && sourceType === 'cloud_other' && (
                   <button
                     disabled={!otherVendorName.trim()}
                     onClick={() => void startHandoff(otherVendorName.trim())}
@@ -413,6 +480,19 @@ export function ImportOptionsModal({ engagementId, clientName, periodEnd, auditT
                 <button
                   disabled={!uploadFile}
                   onClick={handleUploadProceed}
+                  className="text-sm px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:opacity-50 font-medium"
+                >Upload &amp; Continue</button>
+              </div>
+            </>
+          )}
+          {step === 'cowork' && (
+            <>
+              <button onClick={() => setStep('expand')} className="text-sm px-4 py-2 text-slate-600 hover:text-slate-800">← Back</button>
+              <div className="flex gap-2">
+                <button onClick={handleClose} className="text-sm px-4 py-2 text-slate-600 hover:text-slate-800">Cancel</button>
+                <button
+                  disabled={!coworkFile}
+                  onClick={handleCoworkProceed}
                   className="text-sm px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:opacity-50 font-medium"
                 >Upload &amp; Continue</button>
               </div>
@@ -457,7 +537,9 @@ function SelectStep({ selected, onToggle }: { selected: Set<ImportSelection>; on
 }
 
 function ExpandStep({
-  sourceType, setSourceType, connectors, chosenConnectorId, setChosenConnectorId, otherVendorName, setOtherVendorName,
+  sourceType, setSourceType, connectors, chosenConnectorId, setChosenConnectorId,
+  otherVendorName, setOtherVendorName,
+  coworkVendorName, setCoworkVendorName, coworkLoginUrl, setCoworkLoginUrl,
 }: {
   sourceType: ImportSourceType | null;
   setSourceType: (t: ImportSourceType) => void;
@@ -466,11 +548,19 @@ function ExpandStep({
   setChosenConnectorId: (s: string) => void;
   otherVendorName: string;
   setOtherVendorName: (s: string) => void;
+  coworkVendorName: string;
+  setCoworkVendorName: (s: string) => void;
+  coworkLoginUrl: string;
+  setCoworkLoginUrl: (s: string) => void;
 }) {
+  // The grid switches between 2 columns (Cowork-only mode) and 4
+  // (orchestrator flag enabled) so the cards stay equally sized.
+  const cardsCount = ORCHESTRATOR_ENABLED ? 4 : 2;
+  const gridCls = cardsCount === 4 ? 'sm:grid-cols-4' : 'sm:grid-cols-2';
   return (
     <>
       <p className="text-sm text-slate-700 mb-3">Where is the source audit file?</p>
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-5">
+      <div className={`grid grid-cols-1 ${gridCls} gap-3 mb-5`}>
         <button
           onClick={() => setSourceType('upload')}
           className={`text-left p-3 border-2 rounded-lg ${sourceType === 'upload' ? 'border-blue-500 bg-blue-50' : 'border-slate-200 hover:border-slate-300'}`}
@@ -479,22 +569,58 @@ function ExpandStep({
           <p className="text-xs text-slate-500 mt-1">Browse for a local file (zip or PDF).</p>
         </button>
         <button
-          onClick={() => setSourceType('cloud')}
-          className={`text-left p-3 border-2 rounded-lg ${sourceType === 'cloud' ? 'border-blue-500 bg-blue-50' : 'border-slate-200 hover:border-slate-300'}`}
+          onClick={() => setSourceType('claude_cowork')}
+          className={`text-left p-3 border-2 rounded-lg ${sourceType === 'claude_cowork' ? 'border-blue-500 bg-blue-50' : 'border-slate-200 hover:border-slate-300'}`}
         >
-          <div className="text-sm font-semibold text-slate-800">☁ Connect to Cloud Audit Software</div>
-          <p className="text-xs text-slate-500 mt-1">Acumon logs in for you and downloads the prior file.</p>
+          <div className="text-sm font-semibold text-slate-800">🤖 Use Claude Cowork</div>
+          <p className="text-xs text-slate-500 mt-1">Open the vendor in your browser; let Cowork download the file and drop it here.</p>
         </button>
-        <button
-          onClick={() => setSourceType('cloud_other')}
-          className={`text-left p-3 border-2 rounded-lg ${sourceType === 'cloud_other' ? 'border-blue-500 bg-blue-50' : 'border-slate-200 hover:border-slate-300'}`}
-        >
-          <div className="text-sm font-semibold text-slate-800">＋ Other Cloud Audit Software</div>
-          <p className="text-xs text-slate-500 mt-1">Type any vendor — Acumon will figure it out.</p>
-        </button>
+        {ORCHESTRATOR_ENABLED && (
+          <button
+            onClick={() => setSourceType('cloud')}
+            className={`text-left p-3 border-2 rounded-lg ${sourceType === 'cloud' ? 'border-blue-500 bg-blue-50' : 'border-slate-200 hover:border-slate-300'}`}
+          >
+            <div className="text-sm font-semibold text-slate-800">☁ Connect to Cloud Audit Software</div>
+            <p className="text-xs text-slate-500 mt-1">Acumon logs in for you and downloads the prior file.</p>
+          </button>
+        )}
+        {ORCHESTRATOR_ENABLED && (
+          <button
+            onClick={() => setSourceType('cloud_other')}
+            className={`text-left p-3 border-2 rounded-lg ${sourceType === 'cloud_other' ? 'border-blue-500 bg-blue-50' : 'border-slate-200 hover:border-slate-300'}`}
+          >
+            <div className="text-sm font-semibold text-slate-800">＋ Other Cloud Audit Software</div>
+            <p className="text-xs text-slate-500 mt-1">Type any vendor — Acumon will figure it out.</p>
+          </button>
+        )}
       </div>
 
-      {sourceType === 'cloud' && (
+      {sourceType === 'claude_cowork' && (
+        <div className="border border-slate-200 rounded-lg p-4 bg-slate-50 space-y-3">
+          <div>
+            <label className="block text-xs font-medium text-slate-600 mb-1">Vendor name</label>
+            <input
+              type="text"
+              value={coworkVendorName}
+              onChange={e => setCoworkVendorName(e.target.value)}
+              placeholder="e.g. MyWorkPapers, CaseWare Cloud, Inflo, AuditBoard"
+              className="w-full border border-slate-200 rounded px-3 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-blue-400"
+            />
+          </div>
+          <div>
+            <label className="block text-xs font-medium text-slate-600 mb-1">Login URL <span className="text-slate-400 font-normal">(optional — helps Cowork open the right page)</span></label>
+            <input
+              type="url"
+              value={coworkLoginUrl}
+              onChange={e => setCoworkLoginUrl(e.target.value)}
+              placeholder="https://…"
+              className="w-full border border-slate-200 rounded px-3 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-blue-400"
+            />
+          </div>
+        </div>
+      )}
+
+      {ORCHESTRATOR_ENABLED && sourceType === 'cloud' && (
         <div className="border border-slate-200 rounded-lg p-4 bg-slate-50">
           <label className="block text-xs font-medium text-slate-600 mb-1">Cloud Audit Software</label>
           <select
@@ -508,7 +634,7 @@ function ExpandStep({
         </div>
       )}
 
-      {sourceType === 'cloud_other' && (
+      {ORCHESTRATOR_ENABLED && sourceType === 'cloud_other' && (
         <div className="border border-slate-200 rounded-lg p-4 bg-slate-50">
           <label className="block text-xs font-medium text-slate-600 mb-1">Vendor name</label>
           <input
@@ -539,6 +665,124 @@ function UploadStep({ uploadFile, setUploadFile }: { uploadFile: File | null; se
           Selected: <span className="font-medium">{uploadFile.name}</span> ({(uploadFile.size / 1024).toFixed(0)} KB)
         </p>
       )}
+    </div>
+  );
+}
+
+function CoworkStep({
+  vendorLabel, loginUrl, clientName, periodEnd, auditTypeLabel, file, setFile,
+}: {
+  vendorLabel: string;
+  loginUrl: string;
+  clientName: string;
+  periodEnd?: string;
+  auditTypeLabel?: string;
+  file: File | null;
+  setFile: (f: File | null) => void;
+}) {
+  const [copied, setCopied] = useState(false);
+  const [dragOver, setDragOver] = useState(false);
+  const prompt = useMemo(() => buildCoworkPrompt({
+    vendorLabel: vendorLabel || 'the vendor',
+    loginUrl: loginUrl?.trim() || undefined,
+    clientName,
+    periodEnd,
+    auditTypeLabel,
+    acumonReturnLabel: typeof document !== 'undefined' ? document.title : 'Acumon',
+  }), [vendorLabel, loginUrl, clientName, periodEnd, auditTypeLabel]);
+
+  async function copyPrompt() {
+    try {
+      await navigator.clipboard.writeText(prompt);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch {
+      setCopied(false);
+    }
+  }
+
+  function onDrop(e: React.DragEvent<HTMLDivElement>) {
+    e.preventDefault();
+    setDragOver(false);
+    const f = e.dataTransfer?.files?.[0];
+    if (f) setFile(f);
+  }
+
+  return (
+    <div className="space-y-4">
+      <p className="text-sm text-slate-700">
+        Three steps. Cowork can do all of them, or you can do steps 1–3 manually and just drop the file in.
+      </p>
+
+      {/* Step 1 — open vendor */}
+      <div className="border border-slate-200 rounded-lg p-3 bg-slate-50">
+        <p className="text-xs font-semibold text-slate-700 mb-2">1. Open {vendorLabel || 'the vendor'} in a new tab</p>
+        {loginUrl?.trim() ? (
+          <a
+            href={loginUrl.trim()}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="inline-flex items-center gap-1 text-xs px-3 py-1.5 bg-white border border-slate-300 rounded-md text-slate-700 hover:bg-slate-100"
+          >Open {loginUrl.trim()} ↗</a>
+        ) : (
+          <p className="text-[11px] text-slate-500">No URL provided — open the vendor manually, or go back and add one.</p>
+        )}
+      </div>
+
+      {/* Step 2 — copy prompt */}
+      <div className="border border-slate-200 rounded-lg p-3 bg-slate-50">
+        <div className="flex items-center justify-between mb-2">
+          <p className="text-xs font-semibold text-slate-700">2. Paste this into Claude Cowork</p>
+          <button
+            type="button"
+            onClick={copyPrompt}
+            className="text-[11px] px-2 py-1 bg-white border border-slate-300 rounded text-slate-700 hover:bg-slate-100"
+          >{copied ? 'Copied ✓' : 'Copy prompt'}</button>
+        </div>
+        <textarea
+          readOnly
+          value={prompt}
+          rows={10}
+          className="w-full text-[11px] font-mono text-slate-700 bg-white border border-slate-200 rounded p-2 resize-y focus:outline-none"
+        />
+      </div>
+
+      {/* Step 3 — drop file */}
+      <div className="border border-slate-200 rounded-lg p-3 bg-slate-50">
+        <p className="text-xs font-semibold text-slate-700 mb-2">3. Drop the downloaded file here</p>
+        <div
+          onDragOver={e => { e.preventDefault(); setDragOver(true); }}
+          onDragLeave={() => setDragOver(false)}
+          onDrop={onDrop}
+          className={`border-2 border-dashed rounded-lg p-5 text-center transition-colors ${dragOver ? 'border-blue-400 bg-blue-50' : 'border-slate-300 bg-white'}`}
+        >
+          {file ? (
+            <div className="space-y-1">
+              <p className="text-xs text-slate-700">
+                <span className="font-medium">{file.name}</span> ({(file.size / 1024).toFixed(0)} KB)
+              </p>
+              <button
+                type="button"
+                onClick={() => setFile(null)}
+                className="text-[11px] text-slate-500 underline hover:text-slate-700"
+              >Remove</button>
+            </div>
+          ) : (
+            <>
+              <p className="text-xs text-slate-500 mb-2">Drag a .zip or .pdf here, or</p>
+              <label className="text-xs px-3 py-1.5 bg-white border border-slate-300 rounded-md text-slate-700 hover:bg-slate-100 cursor-pointer inline-block">
+                Browse for file
+                <input
+                  type="file"
+                  accept=".zip,.pdf"
+                  className="hidden"
+                  onChange={e => setFile(e.target.files?.[0] || null)}
+                />
+              </label>
+            </>
+          )}
+        </div>
+      </div>
     </div>
   );
 }
