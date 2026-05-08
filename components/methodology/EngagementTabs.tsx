@@ -1193,66 +1193,93 @@ export function EngagementTabs({ engagement, auditType, clientName, periodEndDat
             without specialists keep the action bar clean. */}
         <SpecialistRequestsPanel engagementId={engagement.id} />
         <div className="flex-1" />
-        {!isPreStart && lastCompletionTab && !showCompletion && (
-          <button
-            onClick={() => {
-              setShowCompletion(true);
-              setShowAuditPlan(false);
-            }}
-            data-howto-id="eng.action.back-to-completion"
-            className="inline-flex items-center gap-1.5 px-2.5 py-1 text-[10px] font-medium bg-emerald-50 text-emerald-700 border border-emerald-200 rounded hover:bg-emerald-100 transition-colors"
-            title={`Return to the Completion section you were on: ${lastCompletionTab.label}`}
-          >
-            ← Completion: {lastCompletionTab.label}
-          </button>
-        )}
-        {!isPreStart && (
-          <>
-            <button
-              onClick={() => {
-                if (showAuditPlan) return;
-                setShowAuditPlan(true);
-                setShowCompletion(false);
-                if (!planCreated) {
-                  setPlanCreated(true);
-                  fetch(`/api/engagements/${engagement.id}`, {
-                    method: 'PUT', headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ planCreated: true }),
-                  }).catch(() => {});
-                }
-              }}
-              disabled={showAuditPlan}
-              data-howto-id="eng.action.open-audit-plan"
-              className={`px-3 py-1 text-[10px] font-medium rounded transition-colors ${
-                showAuditPlan
-                  ? 'bg-slate-200 text-slate-400 cursor-default'
-                  : 'bg-blue-50 text-blue-700 border border-blue-200 hover:bg-blue-100'
-              }`}
-            >
-              <svg className="h-3 w-3 inline mr-1" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                <path strokeLinecap="round" strokeLinejoin="round" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4" />
-              </svg>
-              Audit Plan
-            </button>
-            <button
-              onClick={() => {
-                if (!planCreated || showCompletion) return;
-                setShowCompletion(true);
-                setShowAuditPlan(false);
-              }}
-              disabled={!planCreated || showCompletion}
-              data-howto-id="eng.action.open-completion"
-              className={`px-3 py-1 text-[10px] font-medium rounded transition-colors ${
-                !planCreated || showCompletion
-                  ? 'bg-slate-200 text-slate-400 cursor-default'
-                  : 'bg-green-50 text-green-700 border border-green-200 hover:bg-green-100'
-              }`}
-              title={!planCreated ? 'Open Audit Plan first' : ''}
-            >
-              Completion
-            </button>
-          </>
-        )}
+        {/* Phase toggle — shows the OTHER two phases as quick-jump
+            buttons so the user can always pivot regardless of which
+            view they're currently in. The current phase is implicit
+            (it's whatever they're looking at), so we hide its button.
+            'Back to last Completion sub-tab' lives next to the toggle
+            when they last were on Completion but aren't now. */}
+        {!isPreStart && (() => {
+          const inFieldwork = showAuditPlan;
+          const inCompletion = showCompletion;
+          const inPlanning = !inFieldwork && !inCompletion;
+
+          function goPlanning() {
+            setShowAuditPlan(false);
+            setShowCompletion(false);
+          }
+          function goFieldwork() {
+            if (showAuditPlan) return;
+            setShowAuditPlan(true);
+            setShowCompletion(false);
+            if (!planCreated) {
+              setPlanCreated(true);
+              fetch(`/api/engagements/${engagement.id}`, {
+                method: 'PUT', headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ planCreated: true }),
+              }).catch(() => {});
+            }
+          }
+          function goCompletion() {
+            if (!planCreated || showCompletion) return;
+            setShowCompletion(true);
+            setShowAuditPlan(false);
+          }
+
+          return (
+            <>
+              {lastCompletionTab && !inCompletion && (
+                <button
+                  onClick={goCompletion}
+                  data-howto-id="eng.action.back-to-completion"
+                  disabled={!planCreated}
+                  className="inline-flex items-center gap-1.5 px-2.5 py-1 text-[10px] font-medium bg-emerald-50 text-emerald-700 border border-emerald-200 rounded hover:bg-emerald-100 transition-colors disabled:opacity-50"
+                  title={`Return to the Completion section you were on: ${lastCompletionTab.label}`}
+                >
+                  ← Completion: {lastCompletionTab.label}
+                </button>
+              )}
+              {/* Show whichever two phases the user ISN'T currently in. */}
+              {!inPlanning && (
+                <button
+                  onClick={goPlanning}
+                  data-howto-id="eng.action.open-planning"
+                  className="px-3 py-1 text-[10px] font-medium rounded transition-colors bg-slate-50 text-slate-700 border border-slate-200 hover:bg-slate-100"
+                  title="Return to the engagement tabs (Planning)"
+                >
+                  ← Planning
+                </button>
+              )}
+              {!inFieldwork && (
+                <button
+                  onClick={goFieldwork}
+                  data-howto-id="eng.action.open-audit-plan"
+                  className="px-3 py-1 text-[10px] font-medium rounded transition-colors bg-blue-50 text-blue-700 border border-blue-200 hover:bg-blue-100"
+                >
+                  <svg className="h-3 w-3 inline mr-1" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4" />
+                  </svg>
+                  Audit Plan
+                </button>
+              )}
+              {!inCompletion && (
+                <button
+                  onClick={goCompletion}
+                  disabled={!planCreated}
+                  data-howto-id="eng.action.open-completion"
+                  className={`px-3 py-1 text-[10px] font-medium rounded transition-colors ${
+                    !planCreated
+                      ? 'bg-slate-200 text-slate-400 cursor-default'
+                      : 'bg-green-50 text-green-700 border border-green-200 hover:bg-green-100'
+                  }`}
+                  title={!planCreated ? 'Open Audit Plan first' : ''}
+                >
+                  Completion
+                </button>
+              )}
+            </>
+          );
+        })()}
       </div>
 
       {/* Panel modals */}
