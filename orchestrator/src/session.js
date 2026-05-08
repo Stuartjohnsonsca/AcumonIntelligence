@@ -43,45 +43,49 @@ export async function runSession({ sessionId, vendorLabel, clientName }) {
   try { await reportProgress(sessionId, 'launching_browser', 'Starting browser…'); }
   catch (err) { console.warn(`[session ${sessionId}] initial reportProgress failed:`, err.message); }
 
-  const downloadsDir = await mkdtemp(path.join(tmpdir(), 'acumon-dl-'));
-  console.log(`[session ${sessionId}] downloads dir: ${downloadsDir}`);
-
-  // Container-friendly Chromium flags. --disable-dev-shm-usage is the
-  // load-bearing one: Container Apps gives us a tiny /dev/shm (64 MB)
-  // and Chrome refuses to start when its shared-memory needs exceed it.
-  // Together with --no-sandbox these match the Playwright-recommended
-  // flags for running headless Chromium inside an unprivileged container.
-  const browser = await chromium.launch({
-    headless: true,
-    timeout: 60000,
-    args: [
-      '--no-sandbox',
-      '--disable-setuid-sandbox',
-      '--disable-dev-shm-usage',
-      '--disable-gpu',
-      '--disable-software-rasterizer',
-      '--disable-blink-features=AutomationControlled',
-    ],
-  });
-  console.log(`[session ${sessionId}] chromium launched`);
-  const context = await browser.newContext({
-    viewport: VIEWPORT,
-    acceptDownloads: true,
-    locale: 'en-GB',
-  });
-  const page = await context.newPage();
-  console.log(`[session ${sessionId}] page open`);
-
-  // Track downloads so submit_done can pick the right file.
+  let browser = null;
+  let context = null;
+  let downloadsDir = null;
   const completedDownloads = [];
-  page.on('download', async (download) => {
-    const filename = download.suggestedFilename();
-    const target = path.join(downloadsDir, filename);
-    await download.saveAs(target);
-    completedDownloads.push({ path: target, name: filename });
-  });
 
   try {
+    downloadsDir = await mkdtemp(path.join(tmpdir(), 'acumon-dl-'));
+    console.log(`[session ${sessionId}] downloads dir: ${downloadsDir}`);
+
+    // Container-friendly Chromium flags. --disable-dev-shm-usage is the
+    // load-bearing one: Container Apps gives us a tiny /dev/shm (64 MB)
+    // and Chrome refuses to start when its shared-memory needs exceed it.
+    // Together with --no-sandbox these match the Playwright-recommended
+    // flags for running headless Chromium inside an unprivileged container.
+    browser = await chromium.launch({
+      headless: true,
+      timeout: 60000,
+      args: [
+        '--no-sandbox',
+        '--disable-setuid-sandbox',
+        '--disable-dev-shm-usage',
+        '--disable-gpu',
+        '--disable-software-rasterizer',
+        '--disable-blink-features=AutomationControlled',
+      ],
+    });
+    console.log(`[session ${sessionId}] chromium launched`);
+    context = await browser.newContext({
+      viewport: VIEWPORT,
+      acceptDownloads: true,
+      locale: 'en-GB',
+    });
+    const page = await context.newPage();
+    console.log(`[session ${sessionId}] page open`);
+
+    // Track downloads so submit_done can pick the right file.
+    page.on('download', async (download) => {
+      const filename = download.suggestedFilename();
+      const target = path.join(downloadsDir, filename);
+      await download.saveAs(target);
+      completedDownloads.push({ path: target, name: filename });
+    });
+
     await reportProgress(sessionId, 'launching_browser', `Browser launched. Loading ${vendorLabel}…`);
     // Best-effort: navigate to a sensible starting URL (vendor name as a
     // search query). Claude can navigate from there. We deliberately do
@@ -145,8 +149,8 @@ export async function runSession({ sessionId, vendorLabel, clientName }) {
     try { await reportFailure(sessionId, String(err?.message || err).slice(0, 500)); }
     catch (e) { console.error('[session] reportFailure also failed:', e); }
   } finally {
-    await context.close().catch(() => {});
-    await browser.close().catch(() => {});
-    await rm(downloadsDir, { recursive: true, force: true }).catch(() => {});
+    if (context) await context.close().catch(() => {});
+    if (browser) await browser.close().catch(() => {});
+    if (downloadsDir) await rm(downloadsDir, { recursive: true, force: true }).catch(() => {});
   }
 }

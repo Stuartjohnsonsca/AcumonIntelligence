@@ -4,7 +4,7 @@
 # The base image already runs as the non-root `pwuser` (UID 1000) which
 # is the user permitted to execute the bundled Chromium binary — do
 # NOT override with a different user, otherwise chromium.launch() hangs.
-FROM mcr.microsoft.com/playwright:v1.48.0-jammy
+FROM mcr.microsoft.com/playwright:v1.59.1-jammy
 
 WORKDIR /app
 
