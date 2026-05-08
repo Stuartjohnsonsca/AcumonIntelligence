@@ -41,6 +41,7 @@ import {
   type TriggerContext,
 } from '@/lib/schedule-triggers';
 import { setCurrentLocation, subscribeNav } from '@/lib/engagement-nav';
+import { TABS } from './engagement-tabs-list';
 
 interface Props {
   engagement: EngagementData;
@@ -53,27 +54,14 @@ interface Props {
 
 const PRE_PLAN_KEYS = new Set(['opening', 'prior-period', 'permanent-file', 'ethics', 'continuance', 'new-client', 'tb', 'materiality', 'par', 'walkthroughs', 'rmm']);
 
-export const TABS = [
-  { key: 'opening', label: 'Opening' },
-  { key: 'prior-period', label: 'Prior Period' },
-  { key: 'permanent-file', label: 'Permanent' },
-  { key: 'ethics', label: 'Ethics' },
-  { key: 'continuance', label: 'Continuance' },
-  { key: 'new-client', label: 'New Client Take-On' },
-  { key: 'tb', label: 'TBCYvPY' },
-  { key: 'materiality', label: 'Materiality' },
-  { key: 'par', label: 'PAR' },
-  { key: 'walkthroughs', label: 'Walkthroughs' },
-  { key: 'rmm', label: 'Identifying & Assessing RMM' },
-  { key: 'documents', label: 'Documents' },
-  { key: 'outstanding', label: 'Outstanding' },
-  { key: 'portal', label: 'Portal' },
-  { key: 'communication', label: 'Communication' },
-  // Tab key kept as 'tax-technical' for back-compat with existing
-  // PF sections + sign-off entries; the user-facing label is
-  // "Specialists" and the body renders SpecialistsTab.
-  { key: 'tax-technical', label: 'Specialists' },
-] as const;
+// TABS is the canonical engagement-tab list. It used to live here, but
+// DocumentRepositoryTab needs to read it for its filter dropdown — and
+// importing it from this file produced a circular dependency (this
+// file imports DocumentRepositoryTab; DocumentRepositoryTab imports
+// TABS back). Now sits in a leaf module both can import safely; we
+// re-export so any existing import path that still points at this
+// file keeps working.
+export { TABS };
 
 // Tabs that get sign-off dots — everything except Documents and Portal
 const SIGNOFF_TABS: Record<string, string> = {

@@ -3,7 +3,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { useSession } from 'next-auth/react';
 import { expandZipFile } from '@/lib/client-unzip';
-import { TABS } from '@/components/methodology/EngagementTabs';
+import { TABS } from '@/components/methodology/engagement-tabs-list';
 
 // Lookup helpers for the live engagement-tab list. Used to render the
 // 'Allocated to' badge on each document row and to drive the location
