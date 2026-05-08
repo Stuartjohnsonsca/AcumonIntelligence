@@ -307,6 +307,18 @@ export async function runComputerUseLoop({ page, sessionId, systemPrompt, initia
   for (let iter = 0; iter < MAX_ITERATIONS; iter++) {
     pruneOldScreenshots(messages);
     console.log(`[session ${sessionId}] iter ${iter + 1}/${MAX_ITERATIONS}: thinking…`);
+    // Heartbeat to the modal so the operator sees that Claude IS working
+    // — without this, the activity message stays on the previous tool's
+    // summary for the entire 5-15 s API call, which feels "hung" on
+    // complex post-login pages where each screenshot is 6 K+ tokens.
+    {
+      let pagePathHb = '?';
+      try {
+        const u = getActivePage()?.url() || '';
+        if (u && u !== 'about:blank') pagePathHb = new URL(u).pathname || '/';
+      } catch { /* leave as ? */ }
+      reportProgress(sessionId, currentStage, `Thinking about next step on ${pagePathHb} (iter ${iter + 1})…`).catch(() => {});
+    }
     const t0 = Date.now();
     const response = await anthropic.beta.messages.create({
       model: MODEL,
