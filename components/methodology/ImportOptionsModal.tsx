@@ -20,11 +20,12 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Eye, EyeOff } from 'lucide-react';
 import { buildCoworkPrompt } from '@/lib/import-options/cowork-prompt';
-import type {
-  ImportOptionsState,
-  ImportSelection,
-  ImportSourceType,
-  CloudConnectorRecord,
+import {
+  IMPORT_SELECTION_OPTIONS,
+  type ImportOptionsState,
+  type ImportSelection,
+  type ImportSourceType,
+  type CloudConnectorRecord,
 } from '@/lib/import-options/types';
 
 // When false (the default), the orchestrator-driven cloud-audit-software
@@ -96,23 +97,27 @@ interface Props {
   clientName: string;
   periodEnd?: string;
   auditTypeLabel?: string;
+  /**
+   * Pre-selected tile choices made on the upstream audit-setup screen.
+   * When non-empty the modal skips the 'select' step on mount: if
+   * 'import_data' is included it jumps straight to 'expand'; otherwise
+   * it commits the selections and closes immediately. Empty / omitted
+   * means render the select step normally.
+   */
+  initialSelections?: ImportSelection[];
   onComplete: (state: ImportOptionsState, opts: { extractionId?: string }) => void;
   onClose?: () => void;
 }
 
-const CHECKBOX_OPTIONS: { key: ImportSelection; label: string }[] = [
-  { key: 'import_data',         label: 'Import data from another audit file' },
-  { key: 'copy_documents',      label: 'Copy documents from another audit file' },
-  { key: 'ai_populate_current', label: 'Use AI to populate current year' },
-];
+const CHECKBOX_OPTIONS = IMPORT_SELECTION_OPTIONS.map(o => ({ key: o.key, label: o.label }));
 
 type Step = 'select' | 'expand' | 'upload' | 'cowork' | 'busy' | 'handoff';
 
 // ─── Component ───────────────────────────────────────────────────────
 
-export function ImportOptionsModal({ engagementId, clientName, periodEnd, auditTypeLabel, onComplete, onClose }: Props) {
+export function ImportOptionsModal({ engagementId, clientName, periodEnd, auditTypeLabel, initialSelections, onComplete, onClose }: Props) {
   const [step, setStep] = useState<Step>('select');
-  const [selected, setSelected] = useState<Set<ImportSelection>>(new Set());
+  const [selected, setSelected] = useState<Set<ImportSelection>>(() => new Set(initialSelections ?? []));
   const [sourceType, setSourceType] = useState<ImportSourceType | null>(null);
   const [busyMessage, setBusyMessage] = useState('Working…');
   const [error, setError] = useState<string | null>(null);
@@ -140,6 +145,18 @@ export function ImportOptionsModal({ engagementId, clientName, periodEnd, auditT
   const [handoffFailureMessage, setHandoffFailureMessage] = useState<string | null>(null);
   const [orchestratorConfigured, setOrchestratorConfigured] = useState<boolean | null>(null);
   const [pendingPrompt, setPendingPrompt] = useState<PendingPrompt | null>(null);
+
+  // Auto-advance past 'select' when the upstream setup card already
+  // captured the user's tile choices. Empty array is a legitimate
+  // signal ("user reviewed and picked nothing") and just commits the
+  // empty selections + closes; non-empty either commits-and-closes or
+  // jumps to 'expand' depending on whether 'import_data' is included.
+  useEffect(() => {
+    if (initialSelections === undefined) return;
+    void handleProceedFromSelect();
+    // Run exactly once on mount with whatever the prop carried.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // Load connectors when entering the cloud step
   useEffect(() => {

@@ -4,6 +4,27 @@
 
 export type ImportSelection = 'import_data' | 'copy_documents' | 'ai_populate_current';
 
+/** Three "big tile" options shown both inline on the audit setup card
+ *  and inside the Import Options modal. Single source of truth so
+ *  copy doesn't drift between the two surfaces. */
+export const IMPORT_SELECTION_OPTIONS: { key: ImportSelection; label: string; description: string }[] = [
+  {
+    key: 'import_data',
+    label: 'Import data from another audit file',
+    description: 'Pull questionnaire answers, materiality, plan and similar from a prior period or another vendor.',
+  },
+  {
+    key: 'copy_documents',
+    label: 'Copy documents from another audit file',
+    description: 'Bring across the prior period’s evidence files so they’re available on the matching tabs.',
+  },
+  {
+    key: 'ai_populate_current',
+    label: 'Use AI to populate current year',
+    description: 'Let Claude draft initial answers across the file based on the source you provide.',
+  },
+];
+
 export type ImportSourceType = 'upload' | 'cloud' | 'cloud_other' | 'claude_cowork';
 
 export interface ImportSource {

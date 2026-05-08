@@ -11,6 +11,10 @@ import { ImportReviewModal } from '@/components/methodology/ImportReviewModal';
 import { AUDIT_TYPE_LABELS } from '@/types/methodology';
 import type { AuditType } from '@/types/methodology';
 import type { EngagementData } from '@/hooks/useEngagement';
+import {
+  IMPORT_SELECTION_OPTIONS,
+  type ImportSelection,
+} from '@/lib/import-options/types';
 
 interface ClientOption {
   id: string;
@@ -62,6 +66,21 @@ export function AuditEngagementPage({ auditType }: Props) {
   // proceeded/cancelled the pop-up never re-opens for this engagement.
   const [importOptionsExtractionId, setImportOptionsExtractionId] = useState<string | null>(null);
   const [showReviewModal, setShowReviewModal] = useState(false);
+
+  // Tile choices made INLINE on the setup card. Empty Set = user
+  // hasn't ticked anything. When the user clicks "Open Audit File"
+  // we snapshot this into `pendingInitialSelections`, which is what
+  // the modal reads on mount; the modal then auto-skips its own
+  // 'select' step and either commits or jumps to 'expand'.
+  const [setupSelections, setSetupSelections] = useState<Set<ImportSelection>>(new Set());
+  const [pendingInitialSelections, setPendingInitialSelections] = useState<ImportSelection[] | undefined>(undefined);
+  function toggleSetupSelection(key: ImportSelection) {
+    setSetupSelections(prev => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key); else next.add(key);
+      return next;
+    });
+  }
 
   const isEngagementPhase = !!engagement;
 
@@ -233,6 +252,12 @@ export function AuditEngagementPage({ auditType }: Props) {
     const period = periods.find(p => p.id === pId);
     const pLabel = period ? `${formatDate(period.startDate)} \u2013 ${formatDate(period.endDate)}` : '';
 
+    // Freeze the setup-card tile choices into the value the modal will
+    // read on mount. Skipped on the auto-open path (overridePeriodId
+    // present) \u2014 that's a deep-link round-trip and the user hasn't
+    // touched the setup card on this load.
+    setPendingInitialSelections(overridePeriodId ? undefined : Array.from(setupSelections));
+
     setLoading(true);
     setError('');
     setPeriodLabel(pLabel);
@@ -387,9 +412,14 @@ export function AuditEngagementPage({ auditType }: Props) {
           </div>
         )}
 
-        {/* Setup: Period selector + Open Audit File */}
+        {/* Setup: Period selector + tile selections + Open Audit File.
+            All three "selections" sit on a single screen so the user
+            can see client (header), period, and what they want to
+            do with the file before committing. The tile state is
+            captured into pendingInitialSelections at click time and
+            handed to the modal so its own 'select' step is skipped. */}
         {clientId && !engagement && !loading && (
-          <div className="max-w-xl mx-auto">
+          <div className="max-w-2xl mx-auto">
             <div className="bg-white rounded-lg border border-slate-200 p-5">
               {/* Period dropdown + Add */}
               <div className="flex items-end gap-3 mb-4">
@@ -452,6 +482,38 @@ export function AuditEngagementPage({ auditType }: Props) {
                 </div>
               )}
 
+              {/* Tile selections — optional. Pre-pick to skip the
+                  'select' step inside the Import Options modal. */}
+              <div className="mb-4">
+                <p className="text-xs font-medium text-slate-600 mb-2">What do you want to do with this audit file? <span className="text-slate-400 font-normal">(optional — pick none to start a clean file)</span></p>
+                <div className="grid grid-cols-1 gap-2">
+                  {IMPORT_SELECTION_OPTIONS.map(opt => {
+                    const checked = setupSelections.has(opt.key);
+                    return (
+                      <label
+                        key={opt.key}
+                        className={`flex items-start gap-2 p-3 rounded-lg border text-xs cursor-pointer transition-colors ${
+                          checked
+                            ? 'border-blue-400 bg-blue-50'
+                            : 'border-slate-200 hover:border-slate-300 hover:bg-slate-50'
+                        }`}
+                      >
+                        <input
+                          type="checkbox"
+                          checked={checked}
+                          onChange={() => toggleSetupSelection(opt.key)}
+                          className="mt-0.5 h-3.5 w-3.5 accent-blue-600"
+                        />
+                        <span className="flex-1">
+                          <span className="font-medium text-slate-800 block">{opt.label}</span>
+                          <span className="text-slate-500 block mt-0.5">{opt.description}</span>
+                        </span>
+                      </label>
+                    );
+                  })}
+                </div>
+              </div>
+
               {/* Open Audit File */}
               <button
                 onClick={() => { void handleOpenAuditFile(); }}
@@ -504,6 +566,7 @@ export function AuditEngagementPage({ auditType }: Props) {
             clientName={clientName}
             periodEnd={periodEndDate ? String(periodEndDate).slice(0, 10) : undefined}
             auditTypeLabel={AUDIT_TYPE_LABELS[auditType]}
+            initialSelections={pendingInitialSelections}
             onComplete={async (state, opts) => {
               // Update local state so the modal does not re-open.
               setEngagement(prev => prev ? { ...prev, importOptions: state } : prev);
