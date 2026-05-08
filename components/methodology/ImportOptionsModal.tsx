@@ -19,7 +19,6 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import { Eye, EyeOff } from 'lucide-react';
-import { expandZipFile } from '@/lib/client-unzip';
 import { buildCoworkPrompt } from '@/lib/import-options/cowork-prompt';
 import type {
   ImportOptionsState,
@@ -257,9 +256,12 @@ export function ImportOptionsModal({ engagementId, clientName, periodEnd, auditT
     setBusyMessage('Uploading prior audit file…');
     setError(null);
     try {
-      const file = await expandZipFile(uploadFile) || uploadFile;
+      // Send the ORIGINAL file (which may be a multi-file ZIP). The
+      // server unzips and aggregates content from every member. This
+      // replaces the old client-side single-file unzip — which silently
+      // dropped everything except the first file inside.
       const formData = new FormData();
-      formData.append('file', file);
+      formData.append('file', uploadFile);
       formData.append('originalName', uploadFile.name);
       formData.append('selections', JSON.stringify(Array.from(selected)));
       const res = await fetch(`/api/engagements/${engagementId}/import-options/upload`, {
@@ -284,9 +286,10 @@ export function ImportOptionsModal({ engagementId, clientName, periodEnd, auditT
     setBusyMessage('Uploading file from Cowork…');
     setError(null);
     try {
-      const file = await expandZipFile(coworkFile) || coworkFile;
+      // Same as the manual Upload card — send the original (often a
+      // ZIP), let the server unzip + extract every relevant file inside.
       const formData = new FormData();
-      formData.append('file', file);
+      formData.append('file', coworkFile);
       formData.append('originalName', coworkFile.name);
       formData.append('selections', JSON.stringify(Array.from(selected)));
       formData.append('sourceType', 'claude_cowork');

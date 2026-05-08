@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server';
+import JSZip from 'jszip';
 import { auth } from '@/lib/auth';
 import { prisma } from '@/lib/db';
 import { uploadToInbox } from '@/lib/azure-blob';
@@ -11,6 +12,84 @@ import {
 } from '@/lib/import-options/types';
 
 const PRIOR_PERIOD_ARCHIVE_TAG = '__prior_period_archive__';
+
+// File-classification helpers for the multi-file archive extractor.
+// We do NOT recurse into nested zips (one level only) — same policy as
+// lib/client-unzip.ts. Adversarial inputs would otherwise let a tiny
+// outer zip expand to gigabytes of inner content.
+const SKIP_PATTERNS = [/^__MACOSX\//, /\/\.DS_Store$/, /^\.DS_Store$/, /\/Thumbs\.db$/i];
+function isPdfName(name: string, mime?: string): boolean {
+  return /\.pdf$/i.test(name) || (mime || '').includes('pdf');
+}
+function isPlainTextName(name: string): boolean {
+  return /\.(txt|md)$/i.test(name);
+}
+function isStructuredName(name: string): boolean {
+  return /\.(csv|json|xml|xbrl)$/i.test(name);
+}
+function isZipName(name: string, mime?: string): boolean {
+  return /\.zip$/i.test(name) || (mime || '').includes('zip');
+}
+
+interface ExpandedFile {
+  /** Path inside the archive, e.g. "subfolder/fs.pdf". For top-level files, just the filename. */
+  relativePath: string;
+  buffer: Buffer;
+  mime?: string;
+}
+
+// Unwrap an uploaded file's buffer into a flat list of {relativePath, buffer}
+// entries. If the file is a ZIP we open it with JSZip and emit one entry
+// per non-skipped, non-nested-zip member; otherwise we emit one entry
+// for the file itself. Caller passes the already-loaded buffer so we
+// don't re-read the File.
+async function expandUploadedFile(name: string, mime: string | undefined, fileBuffer: Buffer): Promise<ExpandedFile[]> {
+  if (!isZipName(name, mime)) {
+    return [{ relativePath: name, buffer: fileBuffer, mime }];
+  }
+  try {
+    const zip = await JSZip.loadAsync(fileBuffer);
+    const out: ExpandedFile[] = [];
+    for (const entry of Object.values(zip.files)) {
+      if (entry.dir) continue;
+      if (SKIP_PATTERNS.some(p => p.test(entry.name))) continue;
+      // One-level only — don't recurse into nested zips.
+      if (/\.zip$/i.test(entry.name)) continue;
+      const buf = Buffer.from(await entry.async('arraybuffer'));
+      out.push({ relativePath: entry.name, buffer: buf });
+    }
+    return out;
+  } catch (err) {
+    console.warn(`[import-options/upload] failed to unzip ${name}, treating as opaque blob:`, err);
+    return [{ relativePath: name, buffer: fileBuffer, mime }];
+  }
+}
+
+// Try to parse a buffer as JSON. Returns null if it doesn't look like JSON.
+function tryParseJson(buf: Buffer): unknown | null {
+  try { return JSON.parse(buf.toString('utf8')); } catch { return null; }
+}
+// Tiny CSV-ish reader: split on newlines, then each line on commas with
+// naive quote handling. Good enough to feed an LLM as structured rows;
+// does NOT replace a real CSV parser for ingestion.
+function parseCsvNaive(text: string): string[][] {
+  const rows: string[][] = [];
+  for (const rawLine of text.split(/\r?\n/)) {
+    if (!rawLine.trim()) continue;
+    const cells: string[] = [];
+    let cur = '';
+    let inQ = false;
+    for (let i = 0; i < rawLine.length; i++) {
+      const c = rawLine[i];
+      if (c === '"') { inQ = !inQ; continue; }
+      if (c === ',' && !inQ) { cells.push(cur); cur = ''; continue; }
+      cur += c;
+    }
+    cells.push(cur);
+    rows.push(cells);
+  }
+  return rows;
+}
 
 const ALLOWED_TAB_KEYS = [
   'opening', 'prior-period', 'permanent-file', 'ethics', 'continuance',
@@ -83,21 +162,53 @@ export async function POST(
     },
   });
 
-  // Extract text — for PDF use processPdf, for zip we treat the bytes as-is
-  // and let the AI handle whatever falls out (often nothing if it's a binary
-  // zip — we don't fabricate content). User can still see the archive in the
-  // Prior Period section even if extraction is empty.
-  let textContent = '';
-  if ((file.type || '').includes('pdf') || /\.pdf$/i.test(originalName)) {
-    try {
-      const pdf = await processPdf(buffer, 50);
-      textContent = pdf.text || '';
-    } catch (err) {
-      console.warn('[import-options/upload] PDF text extraction failed:', err);
+  // Extract content from the uploaded file. If it's a ZIP, we unpack
+  // server-side and process EVERY member (one level deep — no recursive
+  // expansion). PDFs are OCR'd via processPdf, plain-text members are
+  // read directly, and structured members (CSV / JSON / XML / XBRL) are
+  // shipped to the AI as the `structured` field rather than text — which
+  // lets the LLM reason over rows/objects instead of guessing at flat
+  // text. This is the difference between extracting from "the first PDF
+  // in the archive" (old behaviour) and "every relevant file in the
+  // archive" (new behaviour) — quality + completeness improve, AI cost
+  // is unchanged (still one Together AI call).
+  const expanded = await expandUploadedFile(originalName, file.type || undefined, buffer);
+  const textParts: string[] = [];
+  const structuredParts: Array<{ name: string; kind: 'json' | 'csv' | 'xml'; content: unknown }> = [];
+  for (const entry of expanded) {
+    if (isPdfName(entry.relativePath, entry.mime)) {
+      try {
+        const pdf = await processPdf(entry.buffer, 50);
+        if (pdf.text) textParts.push(`=== ${entry.relativePath} ===\n${pdf.text}`);
+      } catch (err) {
+        console.warn(`[import-options/upload] PDF extraction failed for ${entry.relativePath}:`, err);
+      }
+    } else if (isPlainTextName(entry.relativePath)) {
+      textParts.push(`=== ${entry.relativePath} ===\n${entry.buffer.toString('utf8')}`);
+    } else if (isStructuredName(entry.relativePath)) {
+      const text = entry.buffer.toString('utf8');
+      if (/\.json$/i.test(entry.relativePath)) {
+        const parsed = tryParseJson(entry.buffer);
+        if (parsed !== null) {
+          structuredParts.push({ name: entry.relativePath, kind: 'json', content: parsed });
+        } else {
+          textParts.push(`=== ${entry.relativePath} ===\n${text}`);
+        }
+      } else if (/\.csv$/i.test(entry.relativePath)) {
+        structuredParts.push({ name: entry.relativePath, kind: 'csv', content: parseCsvNaive(text) });
+      } else {
+        // XML / XBRL — pass as raw text under structured so the LLM
+        // knows to expect tags. Future: parse XBRL deterministically.
+        structuredParts.push({ name: entry.relativePath, kind: 'xml', content: text });
+      }
+    } else {
+      // Binary, image, or unknown — skip. Original archive is still
+      // stored in blob; user can browse the file directly.
     }
-  } else if (/\.(txt|csv|json|xml|md)$/i.test(originalName)) {
-    textContent = buffer.toString('utf8');
   }
+  const textContent = textParts.join('\n\n');
+  const structured = structuredParts.length > 0 ? structuredParts : undefined;
+  console.log(`[import-options/upload] expanded ${file.name} -> ${expanded.length} entries; text=${textContent.length}c, structured=${structuredParts.length} files`);
 
   // Decide which tab keys the AI may target. Always exclude RMM + TB
   // for the import flow too (the user's hard rule applies to current-year
@@ -106,12 +217,12 @@ export async function POST(
   const allowedTabKeys = ALLOWED_TAB_KEYS.filter(k => !AI_POPULATE_EXCLUDED_TABS.has(k));
 
   let extractionId: string | undefined;
-  if (selections.includes('import_data') && textContent) {
+  if (selections.includes('import_data') && (textContent || structured)) {
     const proposalSourceLabel = sourceType === 'claude_cowork' && vendorLabel
       ? `${vendorLabel} (via Claude Cowork) — ${originalName}`
       : originalName;
     try {
-      const result = await aiExtractProposals({ textContent, allowedTabKeys });
+      const result = await aiExtractProposals({ textContent, structured, allowedTabKeys });
       const proposal = await prisma.importExtractionProposal.create({
         data: {
           engagementId,
