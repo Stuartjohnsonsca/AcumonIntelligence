@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { auth } from '@/lib/auth';
 import { prisma } from '@/lib/db';
 import { uploadToInbox } from '@/lib/azure-blob';
+import { indexDocument } from '@/lib/document-indexing';
 
 /**
  * POST /api/upload/document
@@ -60,6 +61,13 @@ export async function POST(req: Request) {
           receivedAt: new Date(),
         },
       });
+      // Phase 3: chunk + embed for InterrogateBot retrieval. Fire-and-
+      // forget so the upload response stays snappy; failures are logged
+      // but don't block the user. PDFs over a few hundred pages can
+      // take 10s+ to index.
+      void indexDocument(documentId).catch(err =>
+        console.warn(`[upload] document indexing failed for ${documentId}:`, err instanceof Error ? err.message : err),
+      );
     }
 
     return NextResponse.json({

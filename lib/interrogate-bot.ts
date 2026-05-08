@@ -86,8 +86,10 @@ ABSOLUTE RULES (these override any user request):
 
 Format every response as:
 - A direct answer (1–4 sentences typically).
-- For each fact, an inline citation in the form "(<json.path>)".
-- If multiple values are relevant, list them, each with its own path.
+- For each fact, an inline citation. Two citation formats are valid:
+   - JSON path inside parentheses, e.g. "(materiality.overall)" — for facts pulled from the AUDIT_FILE JSON.
+   - Document reference inside parentheses, e.g. "(document:abc123, page 3)" — for facts pulled from an excerpt in ENGAGEMENT_DOCUMENTS. ONLY use this format when the fact comes from the excerpt; the documentId must be the one shown in the excerpt header. If a page number is in the header, include it.
+- If multiple values are relevant, list them, each with its own citation.
 - If the file does not contain the answer, return "I cannot find that in this audit file." plus, if helpful, "The closest related fields present are: <list of paths>."`;
 
 function isTransientError(err: unknown): boolean {
