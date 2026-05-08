@@ -104,6 +104,18 @@ export function ClientPortalTab({ engagementId, clientName }: Props) {
   // Home tiles + their service area.
   const [viewingAs, setViewingAs] = useState<string>('all');
 
+  // Snap the active view back to Home whenever the auditor picks a
+  // portal user who can't see Principal-only sub-views. Done in an
+  // effect (not during render) so we never call setState mid-render.
+  useEffect(() => {
+    if (!data) return;
+    const principalId = data.principal?.id || null;
+    const isPrincipalSelected = viewingAs === 'all' || viewingAs === principalId;
+    if (!isPrincipalSelected && view !== 'home') {
+      setView('home');
+    }
+  }, [viewingAs, data, view]);
+
   useEffect(() => {
     setLoading(true); setError(null);
     fetch(`/api/engagements/${engagementId}/portal-preview`, { cache: 'no-store' })
@@ -161,37 +173,20 @@ export function ClientPortalTab({ engagementId, clientName }: Props) {
             person sees. Selecting a regular staff member hides the
             Principal-only sub-views (Manage Staff, Principal
             Dashboard) and snaps the active view to Home. */}
-        {(() => {
-          // Build the pickable list. Includes the Principal (always)
-          // and any staff member who has a real portal account
-          // (portalUserId set — staff invited but not signed up yet
-          // can't be impersonated because they have no portal data).
-          const pickableStaff = data.staff.filter(s => !!s.portalUserId);
-          const principalId = data.principal?.id || null;
-          const isPrincipalSelected = viewingAs === 'all' || viewingAs === principalId;
-          // Snap an invalid view back to Home when the selected user
-          // can't see it. Regular staff don't get Manage / Dashboard.
-          if (!isPrincipalSelected && view !== 'home') {
-            // Use a microtask to avoid setState-during-render warning.
-            queueMicrotask(() => setView('home'));
-          }
-          return (
-            <div className="bg-slate-100 border-b border-slate-200 px-3 py-2 flex items-center gap-2">
-              <div className="flex items-center gap-1">
-                <span className="w-2.5 h-2.5 rounded-full bg-red-400" />
-                <span className="w-2.5 h-2.5 rounded-full bg-amber-400" />
-                <span className="w-2.5 h-2.5 rounded-full bg-emerald-400" />
-              </div>
-              <div className="flex-1 bg-white border border-slate-300 rounded px-2 py-0.5 text-[11px] text-slate-500 font-mono truncate">
-                acumon-website.vercel.app
-                {view === 'home'      && '/portal/dashboard'}
-                {view === 'dashboard' && `/portal/principal/${engagementId}`}
-                {view === 'manage'    && `/portal/setup/${engagementId}`}
-              </div>
-              <span className="text-[10px] uppercase tracking-wide px-2 py-0.5 rounded-full bg-amber-50 border border-amber-200 text-amber-700 font-medium">Preview — read only</span>
-            </div>
-          );
-        })()}
+        <div className="bg-slate-100 border-b border-slate-200 px-3 py-2 flex items-center gap-2">
+          <div className="flex items-center gap-1">
+            <span className="w-2.5 h-2.5 rounded-full bg-red-400" />
+            <span className="w-2.5 h-2.5 rounded-full bg-amber-400" />
+            <span className="w-2.5 h-2.5 rounded-full bg-emerald-400" />
+          </div>
+          <div className="flex-1 bg-white border border-slate-300 rounded px-2 py-0.5 text-[11px] text-slate-500 font-mono truncate">
+            acumon-website.vercel.app
+            {view === 'home'      && '/portal/dashboard'}
+            {view === 'dashboard' && `/portal/principal/${engagementId}`}
+            {view === 'manage'    && `/portal/setup/${engagementId}`}
+          </div>
+          <span className="text-[10px] uppercase tracking-wide px-2 py-0.5 rounded-full bg-amber-50 border border-amber-200 text-amber-700 font-medium">Preview — read only</span>
+        </div>
 
         {/* Viewing-as + sub-view switcher row. Auditor picks which
             client-portal user to impersonate, and which page in that

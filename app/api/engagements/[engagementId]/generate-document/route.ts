@@ -23,15 +23,19 @@ export async function GET(req: Request, { params }: { params: Promise<{ engageme
   const engagement = await verifyAccess(engagementId, session.user.firmId, session.user.isSuperAdmin);
   if (!engagement) return NextResponse.json({ error: 'Not found' }, { status: 404 });
 
-  // List available templates for this engagement's audit type
+  // List available templates for this engagement's audit type. Include
+  // `kind` so the UI can split the dropdown between Email Templates and
+  // Document Templates — they share the model but the user picks
+  // different things for each: emails go via send_email, documents
+  // generate a PDF.
   const templates = await prisma.documentTemplate.findMany({
     where: {
       firmId: session.user.firmId,
       isActive: true,
       auditType: { in: [engagement.auditType, 'ALL'] },
     },
-    select: { id: true, name: true, category: true, subject: true, recipients: true },
-    orderBy: [{ category: 'asc' }, { name: 'asc' }],
+    select: { id: true, name: true, category: true, subject: true, recipients: true, kind: true },
+    orderBy: [{ kind: 'asc' }, { category: 'asc' }, { name: 'asc' }],
   });
 
   return NextResponse.json({ templates });
@@ -220,6 +224,35 @@ export async function POST(req: Request, { params }: { params: Promise<{ engagem
     const connectionString = process.env.AZURE_COMMUNICATION_CONNECTION_STRING;
     if (!connectionString) return NextResponse.json({ error: 'Email service not configured' }, { status: 503 });
 
+    // Optional extra attachments — picked by the user from existing
+    // engagement documents. We download each blob server-side and
+    // base64-encode for Azure Communication Email. Quietly skip any
+    // doc whose blob can't be fetched (deleted, permission issue) so
+    // the rest of the email still goes out.
+    const requestedAttachmentIds: string[] = Array.isArray(body.attachmentDocumentIds)
+      ? body.attachmentDocumentIds.filter((x: unknown) => typeof x === 'string')
+      : [];
+    const extraAttachments: { name: string; contentType: string; contentInBase64: string }[] = [];
+    if (requestedAttachmentIds.length > 0) {
+      const extras = await prisma.auditDocument.findMany({
+        where: { id: { in: requestedAttachmentIds }, engagementId },
+        select: { id: true, documentName: true, storagePath: true, containerName: true, mimeType: true },
+      });
+      for (const d of extras) {
+        if (!d.storagePath) continue;
+        try {
+          const buf = await downloadBlob(d.storagePath, d.containerName || 'audit-documents');
+          extraAttachments.push({
+            name: d.documentName,
+            contentType: d.mimeType || 'application/octet-stream',
+            contentInBase64: Buffer.from(buf).toString('base64'),
+          });
+        } catch (err) {
+          console.warn(`[Generate Document] Could not attach ${d.documentName}:`, err);
+        }
+      }
+    }
+
     try {
       const { EmailClient } = await import('@azure/communication-email');
       const client = new EmailClient(connectionString);
@@ -230,16 +263,19 @@ export async function POST(req: Request, { params }: { params: Promise<{ engagem
         content: {
           subject: populatedSubject,
           html: `<div style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;padding:20px">
-            <p>Please find the attached document.</p>
+            <p>Please find the attached document${extraAttachments.length > 0 ? 's' : ''}.</p>
             <p style="color:#64748b;font-size:12px;margin-top:20px">Sent from ${firm?.name || 'Acumon Intelligence'}</p>
           </div>`,
         },
         recipients: { to: [{ address: recipientEmail, displayName: body.recipientName || '' }] },
-        attachments: [{
-          name: `${template.name.replace(/[^a-zA-Z0-9 ]/g, '_')}.pdf`,
-          contentType: 'application/pdf',
-          contentInBase64: pdfBuffer.toString('base64'),
-        }],
+        attachments: [
+          {
+            name: `${template.name.replace(/[^a-zA-Z0-9 ]/g, '_')}.pdf`,
+            contentType: 'application/pdf',
+            contentInBase64: pdfBuffer.toString('base64'),
+          },
+          ...extraAttachments,
+        ],
       });
 
       const result = await poller.pollUntilDone();

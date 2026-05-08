@@ -366,16 +366,24 @@ export function SpecialistsTab({ engagementId, specialists, teamMembers, current
   // role; 'partial' when ANY sign-off exists anywhere; 'none'
   // otherwise. Mirrors the rule used by aggregateAcrossSubTabs but
   // returns the SignOffDots subsidiaryProgress shape.
+  //
+  // Defensive: legacy PF blobs may carry shapes that aren't
+  // { items: [...] } (older code wrote different keys here). Filter
+  // to entries that genuinely look like sub-tab buckets so a single
+  // odd row in the persisted blob doesn't throw on .items access and
+  // crash the whole tab.
   const overallSubsidiaryProgress = useMemo<Record<string, 'none' | 'partial' | 'full'>>(() => {
     const out: Record<string, 'none' | 'partial' | 'full'> = { preparer: 'none', reviewer: 'none', ri: 'none' };
+    const buckets = Object.values(state).filter(
+      (v): v is { items: SpecialistItem[] } =>
+        !!v && typeof v === 'object' && Array.isArray((v as { items?: unknown }).items),
+    );
     for (const role of ['preparer', 'reviewer', 'ri']) {
-      const subStates = Object.values(state).map(r => aggregateForRole(r.items, role));
-      const populated = subStates.filter(s => s !== 'none' || subStates.length === 1);
+      const subStates = buckets.map(r => aggregateForRole(r.items, role));
       if (subStates.length === 0) { out[role] = 'none'; continue; }
       if (subStates.every(s => s === 'all')) { out[role] = 'full'; continue; }
       if (subStates.some(s => s !== 'none')) { out[role] = 'partial'; continue; }
       out[role] = 'none';
-      void populated; // keep the variable for readability above; unused intentionally
     }
     return out;
   }, [state]);

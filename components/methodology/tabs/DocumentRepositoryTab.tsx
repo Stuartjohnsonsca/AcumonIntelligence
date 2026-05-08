@@ -93,9 +93,15 @@ export function DocumentRepositoryTab({ engagementId }: Props) {
 
   // Generate from Template state
   const [showGenerate, setShowGenerate] = useState(false);
-  const [templates, setTemplates] = useState<{ id: string; name: string; category: string }[]>([]);
+  const [templates, setTemplates] = useState<{ id: string; name: string; category: string; kind?: string }[]>([]);
   const [selectedTemplate, setSelectedTemplate] = useState('');
   const [generateAction, setGenerateAction] = useState<'download' | 'send_email' | 'send_portal'>('download');
+  // Optional document repository attachments to include on the email
+  // when generateAction === 'send_email'. The list comes from the
+  // engagement's existing AuditDocument rows that have a storagePath
+  // (i.e. files actually uploaded). The generated template PDF is
+  // always attached automatically — this list adds extras alongside.
+  const [emailAttachmentIds, setEmailAttachmentIds] = useState<string[]>([]);
   // Detail level removed from the UI per user request — the server-
   // side template engine still accepts the parameter so we always
   // pass 'detailed' (the more useful default) so the rendered audit
@@ -327,8 +333,12 @@ export function DocumentRepositoryTab({ engagementId }: Props) {
           }
         } catch { /* tolerant — fall through and let the generate call surface any real error */ }
       }
-      const body: Record<string, string> = { templateId: selectedTemplate, action: generateAction, auditPlanDetail };
-      if (generateAction === 'send_email') { body.recipientEmail = recipientEmail; body.recipientName = recipientName; }
+      const body: Record<string, unknown> = { templateId: selectedTemplate, action: generateAction, auditPlanDetail };
+      if (generateAction === 'send_email') {
+        body.recipientEmail = recipientEmail;
+        body.recipientName = recipientName;
+        if (emailAttachmentIds.length > 0) body.attachmentDocumentIds = emailAttachmentIds;
+      }
 
       if (generateAction === 'download') {
         const res = await fetch(`/api/engagements/${engagementId}/generate-document`, {
@@ -442,11 +452,46 @@ export function DocumentRepositoryTab({ engagementId }: Props) {
           <div className="grid grid-cols-2 gap-3 mb-3">
             <div>
               <label className="block text-xs text-slate-500 mb-1">Template *</label>
-              <select value={selectedTemplate} onChange={e => setSelectedTemplate(e.target.value)}
-                className="w-full border border-slate-200 rounded px-3 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-purple-400">
+              <select
+                value={selectedTemplate}
+                onChange={e => {
+                  const id = e.target.value;
+                  setSelectedTemplate(id);
+                  // Auto-pick a sensible action based on the chosen
+                  // template's kind: emails default to Send via Email,
+                  // documents default to Download PDF. The user can
+                  // still override afterwards via the Action dropdown.
+                  const t = templates.find(x => x.id === id);
+                  if (t?.kind === 'email') setGenerateAction('send_email');
+                  else if (t?.kind === 'document') setGenerateAction('download');
+                }}
+                className="w-full border border-slate-200 rounded px-3 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-purple-400"
+              >
                 <option value="">— Select template —</option>
-                {templates.map(t => <option key={t.id} value={t.id}>{t.name} ({t.category})</option>)}
+                {(() => {
+                  const emails = templates.filter(t => t.kind === 'email');
+                  const docs = templates.filter(t => t.kind === 'document');
+                  const other = templates.filter(t => t.kind !== 'email' && t.kind !== 'document');
+                  return (
+                    <>
+                      {emails.length > 0 && (
+                        <optgroup label="Email Templates">
+                          {emails.map(t => <option key={t.id} value={t.id}>{t.name} ({t.category})</option>)}
+                        </optgroup>
+                      )}
+                      {docs.length > 0 && (
+                        <optgroup label="Document Templates">
+                          {docs.map(t => <option key={t.id} value={t.id}>{t.name} ({t.category})</option>)}
+                        </optgroup>
+                      )}
+                      {other.length > 0 && other.map(t => <option key={t.id} value={t.id}>{t.name} ({t.category})</option>)}
+                    </>
+                  );
+                })()}
               </select>
+              {templates.length === 0 && (
+                <p className="text-[10px] text-slate-400 mt-0.5">No templates configured for this firm yet — methodology admins manage them under Methodology Admin → Document Templates.</p>
+              )}
             </div>
             <div>
               <label className="block text-xs text-slate-500 mb-1">Action</label>
@@ -472,6 +517,40 @@ export function DocumentRepositoryTab({ engagementId }: Props) {
               </div>
             </div>
           )}
+          {/* Attachments — only relevant when emailing. The generated
+              PDF is always attached automatically; this multi-select
+              lets the user add other documents already on this
+              engagement (anything with file content). */}
+          {generateAction === 'send_email' && (() => {
+            const attachable = documents.filter(d => !!d.storagePath);
+            return (
+              <div className="mb-3">
+                <label className="block text-xs text-slate-500 mb-1">
+                  Additional attachments
+                  <span className="text-slate-400 font-normal ml-1">(optional — the generated PDF is attached automatically)</span>
+                </label>
+                {attachable.length === 0 ? (
+                  <p className="text-[10px] text-slate-400 italic">No other uploaded documents on this engagement to attach.</p>
+                ) : (
+                  <select
+                    multiple
+                    value={emailAttachmentIds}
+                    onChange={e => setEmailAttachmentIds(Array.from(e.target.selectedOptions).map(o => o.value))}
+                    size={Math.min(4, attachable.length)}
+                    className="w-full border border-slate-200 rounded px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-purple-400 bg-white"
+                  >
+                    {attachable.map(d => (
+                      <option key={d.id} value={d.id}>
+                        {d.documentName}
+                        {d.fileSize ? ` (${(d.fileSize / 1024).toFixed(0)} KB)` : ''}
+                      </option>
+                    ))}
+                  </select>
+                )}
+                <p className="text-[10px] text-slate-400 mt-0.5">Hold Ctrl/Cmd to pick more than one.</p>
+              </div>
+            );
+          })()}
           {generateResult && (
             <div className={`text-xs mb-2 p-2 rounded ${generateResult.includes('Failed') || generateResult.includes('Error') ? 'bg-red-50 text-red-600' : 'bg-green-50 text-green-600'}`}>
               {generateResult}
