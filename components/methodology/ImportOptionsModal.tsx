@@ -682,13 +682,7 @@ function PromptForm({ prompt, onAnswer }: { prompt: PendingPrompt; onAnswer: (id
                     type={f.secret && !revealed ? 'password' : 'text'}
                     value={credentialValues[f.name] || ''}
                     onChange={e => setCredentialValues({ ...credentialValues, [f.name]: e.target.value })}
-                    autoComplete="off"
-                    autoCorrect="off"
-                    autoCapitalize="off"
-                    spellCheck={false}
-                    data-1p-ignore
-                    data-lpignore="true"
-                    data-form-type="other"
+                    autoComplete={f.secret ? 'current-password' : 'username'}
                     className={`w-full border border-slate-200 rounded px-3 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-blue-400 ${f.secret ? 'pr-16' : ''}`}
                   />
                   {f.secret && (
@@ -711,7 +705,7 @@ function PromptForm({ prompt, onAnswer }: { prompt: PendingPrompt; onAnswer: (id
             >Send</button>
           </div>
           <p className="text-[10px] text-slate-500 italic">
-            Streamed to the live browser session only — never stored on Acumon. Browser autofill is disabled here so saved passwords won't silently fill in.
+            Streamed to the live browser session only — never stored on Acumon.
           </p>
         </div>
       )}
