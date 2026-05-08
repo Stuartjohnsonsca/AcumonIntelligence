@@ -50,9 +50,23 @@ export async function reportFailure(sessionId, message) {
 // Queues a prompt and long-polls for the user's answer. Returns the
 // answer payload (shape depends on prompt type) or throws on
 // timeout/expiry/cancellation.
+//
+// Claude's ask_user tool input is flat: { type, message, fields?, options? }.
+// Acumon's /prompt API expects { type, message, options: { fields?, options? } }
+// so the modal can pull `prompt.options.fields` for credentials forms.
+// Re-shape here.
 export async function askUser(sessionId, prompt) {
   const promptId = `p_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
-  await postJson(`/api/internal/handoff/${sessionId}/prompt`, { promptId, ...prompt });
+  const body = {
+    promptId,
+    type: prompt.type,
+    message: prompt.message,
+    options: {
+      ...(prompt.fields ? { fields: prompt.fields } : {}),
+      ...(prompt.options ? { options: prompt.options } : {}),
+    },
+  };
+  await postJson(`/api/internal/handoff/${sessionId}/prompt`, body);
 
   // Long-poll until answered (or session terminates). Each request
   // waits up to 25s server-side, then we re-arm — keeps connections
