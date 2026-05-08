@@ -38,12 +38,33 @@ const COLOUR_LINE = rgb(203 / 255, 213 / 255, 225 / 255);// slate-300
 const COLOUR_HEADER_BG = rgb(241 / 255, 249 / 255, 248 / 255); // #f1f9f8
 const COLOUR_BLUE = rgb(37 / 255, 99 / 255, 235 / 255);  // blue-600
 
+// pdf-lib's StandardFonts use WinAnsi (Windows-1252) encoding which
+// blows up at draw time on anything outside Latin-1 + a small set of
+// extras (em/en dash, smart quotes, bullet, ellipsis, …). We can't
+// switch to a TTF without bundling fontkit + a font file, so instead
+// we route every string we draw through `safe()`: it transliterates
+// common offenders (→ ✓ ✗ ≤ ≥ ≠) into ASCII and replaces anything
+// else outside WinAnsi with '?'. Belt-and-braces — drawing source
+// literals that are already ASCII still pass through unchanged.
+const WIN_ANSI_EXTRAS = '€‚ƒ„…†‡ˆ‰Š‹ŒŽ‘’“”•–—˜™š›œžŸ';
+const SAFE_FALLBACK_RE = new RegExp(`[^\\x00-\\xff${WIN_ANSI_EXTRAS}]`, 'g');
+function safe(s: string | null | undefined): string {
+  if (!s) return '';
+  return s
+    .replace(/→/g, 'to').replace(/←/g, 'from').replace(/↔/g, '<->')
+    .replace(/✓/g, 'Yes').replace(/✗/g, 'No')
+    .replace(/≤/g, '<=').replace(/≥/g, '>=').replace(/≠/g, '!=')
+    .replace(SAFE_FALLBACK_RE, '?');
+}
+
 /** Lightweight word-wrap. Splits on spaces and emits chunks no wider
  *  than `maxWidth` at the given font size. Doesn't try to be smart
- *  about hyphenation or punctuation — fine for audit-file body text. */
+ *  about hyphenation or punctuation — fine for audit-file body text.
+ *  Sanitises through `safe()` first so widths and rendered glyphs
+ *  agree on the same string. */
 function wrap(text: string, font: PDFFont, fontSize: number, maxWidth: number): string[] {
   if (!text) return [];
-  const words = text.replace(/\r/g, '').split(/\s+/);
+  const words = safe(text).replace(/\r/g, '').split(/\s+/);
   const out: string[] = [];
   let line = '';
   for (const w of words) {
@@ -104,7 +125,7 @@ function ensureRoom(ctx: RenderCtx, needed: number): void {
 
 function drawHeading(ctx: RenderCtx, text: string, size: number) {
   ensureRoom(ctx, size + 12);
-  ctx.page.drawText(text, {
+  ctx.page.drawText(safe(text), {
     x: MARGIN_X,
     y: ctx.cursorY - size,
     size,
@@ -140,7 +161,7 @@ function drawKeyValueRows(ctx: RenderCtx, rows: Array<{ label: string; value: st
     const lines = wrap(r.value || '—', ctx.font, fontSize, valueMaxW);
     const blockH = Math.max(lineHeight, lines.length * lineHeight) + 2;
     ensureRoom(ctx, blockH + 2);
-    ctx.page.drawText(r.label, {
+    ctx.page.drawText(safe(r.label), {
       x: MARGIN_X,
       y: ctx.cursorY - fontSize,
       size: fontSize,
@@ -173,7 +194,7 @@ function drawTable(ctx: RenderCtx, table: { headers: string[]; rows: string[][] 
     color: COLOUR_HEADER_BG,
   });
   for (let c = 0; c < table.headers.length; c++) {
-    ctx.page.drawText(table.headers[c], {
+    ctx.page.drawText(safe(table.headers[c]), {
       x: MARGIN_X + c * colW + cellPad,
       y: ctx.cursorY - cellPad - fontSize,
       size: fontSize,
@@ -250,7 +271,7 @@ async function loadSections(engagementId: string): Promise<{ title: string; subt
       { label: 'Company Number', value: ctx.client.companyNumber || '—' },
       { label: 'Sector', value: ctx.client.sector || '—' },
       { label: 'Registered Address', value: ctx.client.registeredAddress || '—' },
-      { label: 'Period', value: `${ctx.period.periodStart || '—'}  →  ${ctx.period.periodEnd || '—'}` },
+      { label: 'Period', value: `${ctx.period.periodStart || '—'} – ${ctx.period.periodEnd || '—'}` },
       { label: 'Audit Type', value: ctx.engagement.auditType || '—' },
       { label: 'Framework', value: ctx.engagement.framework || '—' },
       { label: 'Status', value: ctx.engagement.status || '—' },
@@ -476,7 +497,7 @@ async function loadSections(engagementId: string): Promise<{ title: string; subt
       title: 'Prior Period (linked)',
       rows: [
         { label: 'Prior Engagement ID', value: ctx.priorPeriod.engagement?.id || '—' },
-        { label: 'Prior Period', value: `${ctx.priorPeriod.period?.periodStart || '—'} → ${ctx.priorPeriod.period?.periodEnd || '—'}` },
+        { label: 'Prior Period', value: `${ctx.priorPeriod.period?.periodStart || '—'} – ${ctx.priorPeriod.period?.periodEnd || '—'}` },
         { label: 'Prior Materiality', value: fmtNum(ctx.priorPeriod.materiality?.overall) },
         { label: 'Prior Status', value: ctx.priorPeriod.engagement?.status || '—' },
       ],
@@ -536,7 +557,7 @@ export async function generatePdfReport(engagementId: string, opts: { generatedB
     cover.drawText(line, { x: MARGIN_X, y: PAGE_H - 140 - i * 32, size: 28, font: bold, color: COLOUR_NAVY });
   }
   cover.drawText('Generated', { x: MARGIN_X, y: PAGE_H - 240, size: 10, font: bold, color: COLOUR_SLATE });
-  cover.drawText(`${new Date().toISOString().slice(0, 10)} by ${opts.generatedByName}`, {
+  cover.drawText(safe(`${new Date().toISOString().slice(0, 10)} by ${opts.generatedByName}`), {
     x: MARGIN_X, y: PAGE_H - 256, size: 11, font, color: COLOUR_NAVY,
   });
   cover.drawText('CONFIDENTIAL — internal audit working file', {
@@ -548,7 +569,7 @@ export async function generatePdfReport(engagementId: string, opts: { generatedB
   toc.drawText('Contents', { x: MARGIN_X, y: PAGE_H - MARGIN_Y, size: 22, font: bold, color: COLOUR_NAVY });
   let tocY = PAGE_H - MARGIN_Y - 36;
   for (const [i, s] of sections.entries()) {
-    toc.drawText(`${i + 1}.  ${s.title}`, { x: MARGIN_X, y: tocY, size: 12, font, color: COLOUR_NAVY });
+    toc.drawText(safe(`${i + 1}.  ${s.title}`), { x: MARGIN_X, y: tocY, size: 12, font, color: COLOUR_NAVY });
     tocY -= 18;
   }
 
