@@ -3,7 +3,11 @@ import { randomBytes } from 'node:crypto';
 import { auth } from '@/lib/auth';
 import { prisma } from '@/lib/db';
 
-const SESSION_TTL_MINUTES = 30;
+// Generous window: an import involves human waits (typing credentials,
+// fetching the MFA email, choosing the right engagement) PLUS Claude
+// driving the browser, which can run 30+ iterations on a complex flow.
+// 30 min was uncomfortably tight in practice; 60 leaves headroom.
+const SESSION_TTL_MINUTES = 60;
 
 function newSessionId(): string {
   const ALPHABET = 'abcdefghjkmnpqrstvwxyz23456789';
