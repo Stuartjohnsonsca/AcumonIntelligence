@@ -170,7 +170,7 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ engagement
         answer: result.answer,
         sources: sources as object,
         documentReferences: documentReferences as object,
-        questionEmbedding: questionEmbedding as object | null,
+        questionEmbedding: (questionEmbedding ?? undefined) as object | undefined,
         embeddingModel: questionEmbedding ? EMBEDDING_MODEL_NAME : null,
         aiModel: result.model,
         promptTokens: result.usage?.promptTokens,
