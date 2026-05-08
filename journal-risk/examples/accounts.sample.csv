@@ -1,0 +1,10 @@
+accountId,accountName,category,isJudgmental,materialityGroup
+1000,Bank,Cash,false,Cash
+2000,Trade Debtors,Receivables,false,WorkingCapital
+2100,Trade Creditors,Payables,false,WorkingCapital
+2200,Accruals,Liabilities,true,Estimates
+2900,Provisions,Liabilities,true,Estimates
+4000,Sales,Revenue,false,Revenue
+5000,Cost of Sales,Expense,false,PnL
+7000,Repairs and Maintenance,Expense,false,PnL
+9999,Suspense,Other,false,Other

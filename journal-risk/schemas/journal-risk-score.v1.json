@@ -1,0 +1,208 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://acumon.example/schemas/journal-risk-score.v1.json",
+  "title": "Journal Risk Scoring Schema (v1)",
+  "type": "object",
+  "required": ["version", "engagement", "population", "riskModel", "results"],
+  "properties": {
+    "version": { "type": "string", "const": "1.0.0" },
+    "engagement": {
+      "type": "object",
+      "required": ["engagementId", "entityName", "periodStart", "periodEnd", "baseCurrency"],
+      "properties": {
+        "engagementId": { "type": "string" },
+        "entityName": { "type": "string" },
+        "periodStart": { "type": "string", "format": "date" },
+        "periodEnd": { "type": "string", "format": "date" },
+        "baseCurrency": { "type": "string", "minLength": 3, "maxLength": 3 }
+      },
+      "additionalProperties": false
+    },
+    "population": {
+      "type": "object",
+      "required": ["sourceSystem", "extractRunId", "recordCount", "hashTotals", "coverage"],
+      "properties": {
+        "sourceSystem": { "type": "string" },
+        "extractRunId": { "type": "string" },
+        "recordCount": { "type": "integer", "minimum": 0 },
+        "hashTotals": {
+          "type": "object",
+          "required": ["totalDebits", "totalCredits"],
+          "properties": {
+            "totalDebits": { "type": "number" },
+            "totalCredits": { "type": "number" }
+          },
+          "additionalProperties": false
+        },
+        "coverage": {
+          "type": "object",
+          "required": ["fromDate", "toDate", "includesPostClose", "includesOpening"],
+          "properties": {
+            "fromDate": { "type": "string", "format": "date" },
+            "toDate": { "type": "string", "format": "date" },
+            "includesPostClose": { "type": "boolean" },
+            "includesOpening": { "type": "boolean" }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "riskModel": {
+      "type": "object",
+      "required": ["modelId", "scoring", "dimensions", "thresholds", "keywordLists"],
+      "properties": {
+        "modelId": { "type": "string" },
+        "scoring": {
+          "type": "object",
+          "required": ["method", "maxScore", "explainability"],
+          "properties": {
+            "method": { "type": "string", "enum": ["weighted_additive", "rules_only"] },
+            "maxScore": { "type": "integer", "minimum": 1, "default": 100 },
+            "explainability": {
+              "type": "object",
+              "required": ["storeDrivers", "storePerRuleContribution"],
+              "properties": {
+                "storeDrivers": { "type": "boolean", "const": true },
+                "storePerRuleContribution": { "type": "boolean", "const": true }
+              },
+              "additionalProperties": false
+            }
+          },
+          "additionalProperties": false
+        },
+        "dimensions": {
+          "type": "object",
+          "required": ["timing", "userAccess", "content", "behaviour", "description", "accountingRisk"],
+          "properties": {
+            "timing": { "$ref": "#/$defs/dimension" },
+            "userAccess": { "$ref": "#/$defs/dimension" },
+            "content": { "$ref": "#/$defs/dimension" },
+            "behaviour": { "$ref": "#/$defs/dimension" },
+            "description": { "$ref": "#/$defs/dimension" },
+            "accountingRisk": { "$ref": "#/$defs/dimension" }
+          },
+          "additionalProperties": false
+        },
+        "thresholds": {
+          "type": "object",
+          "required": ["highRiskMinScore", "mandatorySelectMinScore", "mandatorySelectMinCriticalTags"],
+          "properties": {
+            "highRiskMinScore": { "type": "integer", "minimum": 0, "maximum": 100 },
+            "mandatorySelectMinScore": { "type": "integer", "minimum": 0, "maximum": 100 },
+            "mandatorySelectMinCriticalTags": { "type": "integer", "minimum": 0, "maximum": 99 }
+          },
+          "additionalProperties": false
+        },
+        "keywordLists": {
+          "type": "object",
+          "required": ["suspicious"],
+          "properties": {
+            "suspicious": { "type": "array", "items": { "type": "string" }, "minItems": 1 }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "results": {
+      "type": "object",
+      "required": ["run", "journals"],
+      "properties": {
+        "run": {
+          "type": "object",
+          "required": ["runId", "runAtUtc", "engineVersion"],
+          "properties": {
+            "runId": { "type": "string" },
+            "runAtUtc": { "type": "string", "format": "date-time" },
+            "engineVersion": { "type": "string" }
+          },
+          "additionalProperties": false
+        },
+        "journals": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/journalRiskResult" }
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "$defs": {
+    "dimension": {
+      "type": "object",
+      "required": ["rules"],
+      "properties": {
+        "rules": { "type": "array", "items": { "$ref": "#/$defs/rule" } }
+      },
+      "additionalProperties": false
+    },
+    "rule": {
+      "type": "object",
+      "required": ["ruleId", "name", "severity", "weight", "condition", "tags"],
+      "properties": {
+        "ruleId": { "type": "string" },
+        "name": { "type": "string" },
+        "severity": { "type": "string", "enum": ["info", "low", "medium", "high", "critical"] },
+        "weight": { "type": "integer", "minimum": 0, "maximum": 100 },
+        "condition": {
+          "type": "object",
+          "required": ["type", "field"],
+          "properties": {
+            "type": { "type": "string", "enum": ["equals", "in", "regex", "range", "exists", "derived"] },
+            "field": { "type": "string" },
+            "value": {},
+            "min": {},
+            "max": {},
+            "pattern": { "type": "string" },
+            "derivedFn": { "type": "string" }
+          },
+          "additionalProperties": false
+        },
+        "tags": { "type": "array", "items": { "type": "string" }, "minItems": 1 }
+      },
+      "additionalProperties": false
+    },
+    "journalRiskResult": {
+      "type": "object",
+      "required": ["journalId", "isManual", "riskScore", "riskBand", "riskTags", "drivers", "selection"],
+      "properties": {
+        "journalId": { "type": "string" },
+        "postedAt": { "type": "string", "format": "date-time" },
+        "period": { "type": "string" },
+        "isManual": { "type": "boolean" },
+        "preparedByUserId": { "type": "string" },
+        "approvedByUserId": { "type": ["string", "null"] },
+        "riskScore": { "type": "integer", "minimum": 0, "maximum": 100 },
+        "riskBand": { "type": "string", "enum": ["low", "medium", "high"] },
+        "riskTags": { "type": "array", "items": { "type": "string" } },
+        "drivers": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["ruleId", "ruleName", "severity", "weightApplied", "explanation"],
+            "properties": {
+              "ruleId": { "type": "string" },
+              "ruleName": { "type": "string" },
+              "severity": { "type": "string" },
+              "weightApplied": { "type": "integer" },
+              "explanation": { "type": "string" }
+            },
+            "additionalProperties": false
+          }
+        },
+        "selection": {
+          "type": "object",
+          "required": ["selected", "selectionLayer", "mandatory", "rationale"],
+          "properties": {
+            "selected": { "type": "boolean" },
+            "selectionLayer": { "type": "string", "enum": ["layer1_mandatory_high_risk", "layer2_targeted_coverage", "layer3_unpredictable", "not_selected"] },
+            "mandatory": { "type": "boolean" },
+            "rationale": { "type": "string" }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    }
+  }
+}

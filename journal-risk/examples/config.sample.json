@@ -1,0 +1,42 @@
+{
+  "version": "1.0.0",
+  "timezone": "Europe/London",
+  "businessHours": { "start": "09:00", "end": "18:00" },
+  "periodStartDate": "2025-01-01",
+  "periodEndDate": "2025-12-31",
+  "postCloseCutoffDate": "2026-01-10",
+  "periodEndWindowDays": 7,
+  "seniorRoles": ["Director", "Finance Director", "CFO", "CEO"],
+  "suspiciousKeywords": [
+    "director", "adjustment", "true-up", "error", "write off",
+    "requested by", "off the books", "cover", "as instructed",
+    "cover up", "illegal", "nobody will find out", "grey area",
+    "do not volunteer information", "not ethical"
+  ],
+  "thresholds": {
+    "highRiskMinScore": 70,
+    "mandatorySelectMinScore": 85,
+    "mandatorySelectMinCriticalTags": 2
+  },
+  "selection": {
+    "layer2CoverageTargets": {
+      "timing_high_risk": 2,
+      "access_override_risk": 2,
+      "seldom_used_account": 2,
+      "unusual_account_pair": 2,
+      "suspicious_keywords": 2,
+      "weak_description": 2,
+      "estimate_account": 2
+    },
+    "layer3UnpredictableCount": 2,
+    "maxSampleSize": 25
+  },
+  "weights": {
+    "T01": 25, "T02": 15, "T03": 8,
+    "U01": 25, "U02": 12, "U03": 12,
+    "C01": 14, "C02": 12, "C03": 8,
+    "D01": 10, "D02": 14,
+    "A01": 15,
+    "B01": 12
+  }
+}

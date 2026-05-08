@@ -1,0 +1,11 @@
+journalId,postedAt,period,source,preparedByUserId,approvedByUserId,description,amount,debitAccountId,creditAccountId,reversalJournalId,entity,currency
+JE-0001,2025-06-15T10:12:00Z,2025-06,AP,u4,,AP invoice batch posting,1245.33,5000,2100,,SampleCo,GBP
+JE-0002,2025-12-29T16:45:00Z,2025-12,GL,u1,u4,Year-end accrual true-up,5000.00,2200,7000,,SampleCo,GBP
+JE-0003,2026-01-05T09:10:00Z,2026-01,GL,u2,u4,Post close adjustment as instructed by director,10000.00,4000,9999,,SampleCo,GBP
+JE-0004,2025-11-02T23:15:00Z,2025-11,GL,u1,u4,Reclass,2500.00,7000,5000,,SampleCo,GBP
+JE-0005,2025-08-20T11:00:00Z,2025-08,GL,u3,u4,adj,750.00,9999,2100,,SampleCo,GBP
+JE-0006,2025-10-10T14:20:00Z,2025-10,GL,u2,u2,Manual journal - director requested,9000.00,2900,7000,,SampleCo,GBP
+JE-0007,2025-07-07T10:05:00Z,2025-07,GL,u1,u4,Monthly depreciation journal,200.00,7000,5000,,SampleCo,GBP
+JE-0008,2025-12-30T12:00:00Z,2025-12,GL,u1,u4,Reverse JE-0002 due to error,5000.00,7000,2200,JE-0002,SampleCo,GBP
+JE-0009,2025-09-01T09:30:00Z,2025-09,GL,u1,u4,Routine payroll accrual,1800.00,2200,7000,,SampleCo,GBP
+JE-0010,2025-12-31T17:50:00Z,2025-12,GL,u1,u4,,3000.00,4000,5000,,SampleCo,GBP

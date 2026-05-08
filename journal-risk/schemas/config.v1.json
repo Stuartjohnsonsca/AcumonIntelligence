@@ -1,0 +1,84 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://acumon.example/schemas/config.v1.json",
+  "title": "Journal Risk Module Config Schema (v1)",
+  "type": "object",
+  "required": [
+    "version", "timezone", "businessHours", "periodStartDate", "periodEndDate",
+    "postCloseCutoffDate", "periodEndWindowDays", "seniorRoles", "suspiciousKeywords",
+    "thresholds", "selection", "weights"
+  ],
+  "properties": {
+    "version": { "type": "string", "const": "1.0.0" },
+    "timezone": { "type": "string", "minLength": 1 },
+    "businessHours": {
+      "type": "object",
+      "required": ["start", "end"],
+      "properties": {
+        "start": { "type": "string", "pattern": "^[0-2][0-9]:[0-5][0-9]$" },
+        "end": { "type": "string", "pattern": "^[0-2][0-9]:[0-5][0-9]$" }
+      },
+      "additionalProperties": false
+    },
+    "periodStartDate": { "type": "string", "format": "date" },
+    "periodEndDate": { "type": "string", "format": "date" },
+    "postCloseCutoffDate": { "type": "string", "format": "date" },
+    "periodEndWindowDays": { "type": "integer", "minimum": 1, "maximum": 60 },
+    "seniorRoles": { "type": "array", "items": { "type": "string" }, "minItems": 1 },
+    "suspiciousKeywords": { "type": "array", "items": { "type": "string" }, "minItems": 1 },
+    "thresholds": {
+      "type": "object",
+      "required": ["highRiskMinScore", "mandatorySelectMinScore", "mandatorySelectMinCriticalTags"],
+      "properties": {
+        "highRiskMinScore": { "type": "integer", "minimum": 0, "maximum": 100 },
+        "mandatorySelectMinScore": { "type": "integer", "minimum": 0, "maximum": 100 },
+        "mandatorySelectMinCriticalTags": { "type": "integer", "minimum": 0, "maximum": 99 }
+      },
+      "additionalProperties": false
+    },
+    "selection": {
+      "type": "object",
+      "required": ["layer2CoverageTargets", "layer3UnpredictableCount", "maxSampleSize"],
+      "properties": {
+        "layer2CoverageTargets": {
+          "type": "object",
+          "required": ["timing_high_risk", "access_override_risk", "seldom_used_account", "unusual_account_pair", "suspicious_keywords", "weak_description", "estimate_account"],
+          "properties": {
+            "timing_high_risk": { "type": "integer", "minimum": 0, "maximum": 50 },
+            "access_override_risk": { "type": "integer", "minimum": 0, "maximum": 50 },
+            "seldom_used_account": { "type": "integer", "minimum": 0, "maximum": 50 },
+            "unusual_account_pair": { "type": "integer", "minimum": 0, "maximum": 50 },
+            "suspicious_keywords": { "type": "integer", "minimum": 0, "maximum": 50 },
+            "weak_description": { "type": "integer", "minimum": 0, "maximum": 50 },
+            "estimate_account": { "type": "integer", "minimum": 0, "maximum": 50 }
+          },
+          "additionalProperties": false
+        },
+        "layer3UnpredictableCount": { "type": "integer", "minimum": 0, "maximum": 50 },
+        "maxSampleSize": { "type": "integer", "minimum": 1, "maximum": 5000 }
+      },
+      "additionalProperties": false
+    },
+    "weights": {
+      "type": "object",
+      "required": ["T01", "T02", "T03", "U01", "U02", "U03", "C01", "C02", "C03", "D01", "D02", "A01", "B01"],
+      "properties": {
+        "T01": { "type": "integer", "minimum": 0, "maximum": 100 },
+        "T02": { "type": "integer", "minimum": 0, "maximum": 100 },
+        "T03": { "type": "integer", "minimum": 0, "maximum": 100 },
+        "U01": { "type": "integer", "minimum": 0, "maximum": 100 },
+        "U02": { "type": "integer", "minimum": 0, "maximum": 100 },
+        "U03": { "type": "integer", "minimum": 0, "maximum": 100 },
+        "C01": { "type": "integer", "minimum": 0, "maximum": 100 },
+        "C02": { "type": "integer", "minimum": 0, "maximum": 100 },
+        "C03": { "type": "integer", "minimum": 0, "maximum": 100 },
+        "D01": { "type": "integer", "minimum": 0, "maximum": 100 },
+        "D02": { "type": "integer", "minimum": 0, "maximum": 100 },
+        "A01": { "type": "integer", "minimum": 0, "maximum": 100 },
+        "B01": { "type": "integer", "minimum": 0, "maximum": 100 }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}
