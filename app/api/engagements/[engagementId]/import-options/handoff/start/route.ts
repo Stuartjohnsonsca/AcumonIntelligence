@@ -75,22 +75,40 @@ export async function POST(
   // but do not fail the user.
   const orchestratorUrl = process.env.ORCHESTRATOR_URL;
   const orchestratorSecret = process.env.ORCHESTRATOR_SECRET;
+  console.log('[handoff/start]', {
+    sessionId,
+    orchestratorUrlSet: Boolean(orchestratorUrl),
+    orchestratorUrlLen: orchestratorUrl?.length || 0,
+    orchestratorSecretSet: Boolean(orchestratorSecret),
+    orchestratorSecretLen: orchestratorSecret?.length || 0,
+  });
   if (orchestratorUrl && orchestratorSecret) {
-    void fetch(`${orchestratorUrl.replace(/\/+$/, '')}/sessions`, {
-      method: 'POST',
-      headers: {
-        'content-type': 'application/json',
-        'x-orchestrator-secret': orchestratorSecret,
-      },
-      body: JSON.stringify({
-        sessionId,
-        engagementId,
-        firmId: session.user.firmId,
-        userId: session.user.id,
-        vendorLabel,
-        clientName: engagement.client?.clientName,
-      }),
-    }).catch(err => console.warn('[handoff/start] orchestrator notify failed:', err));
+    // Await the response so we get visibility into success/failure;
+    // 'created' status is already set on the DB row by this point so
+    // even a slow orchestrator doesn't block the user-facing API.
+    try {
+      const orchRes = await fetch(`${orchestratorUrl.replace(/\/+$/, '')}/sessions`, {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          'x-orchestrator-secret': orchestratorSecret,
+        },
+        body: JSON.stringify({
+          sessionId,
+          engagementId,
+          firmId: session.user.firmId,
+          userId: session.user.id,
+          vendorLabel,
+          clientName: engagement.client?.clientName,
+        }),
+      });
+      const orchText = await orchRes.text().catch(() => '');
+      console.log(`[handoff/start] orchestrator notified — ${orchRes.status} ${orchText.slice(0, 200)}`);
+    } catch (err) {
+      console.warn('[handoff/start] orchestrator notify failed:', err instanceof Error ? err.message : String(err));
+    }
+  } else {
+    console.warn('[handoff/start] orchestrator NOT notified — env vars missing');
   }
 
   return NextResponse.json({
