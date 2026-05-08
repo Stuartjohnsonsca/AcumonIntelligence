@@ -3,6 +3,7 @@ import { auth } from '@/lib/auth';
 import { prisma } from '@/lib/db';
 import { uploadToContainer } from '@/lib/azure-blob';
 import { assertEngagementWriteAccess } from '@/lib/auth/engagement-auth';
+import { classifyDocumentType } from '@/lib/document-type-classifier';
 import crypto from 'crypto';
 
 /**
@@ -48,6 +49,8 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ engagement
   }
   const file = formData.get('file') as File | null;
   const source = String(formData.get('source') || 'Documents upload').trim() || 'Documents upload';
+  // Optional caller-supplied document type (mirrors the per-tab route).
+  const userDocumentType = String(formData.get('documentType') || '').trim() || null;
   if (!file || typeof (file as any).arrayBuffer !== 'function') {
     return NextResponse.json({ error: 'file is required' }, { status: 400 });
   }
@@ -65,6 +68,18 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ engagement
     return NextResponse.json({ error: `Blob upload failed: ${err?.message || 'unknown'}` }, { status: 500 });
   }
 
+  // Same AI classifier fallback as the per-tab route. Repo uploads
+  // also get the yellow-dashed UI affordance until the user confirms.
+  let documentType: string | null = userDocumentType;
+  let documentTypeAiSuggested = false;
+  if (!userDocumentType) {
+    const suggested = await classifyDocumentType({ fileName: file.name, mimeType: file.type });
+    if (suggested) {
+      documentType = suggested;
+      documentTypeAiSuggested = true;
+    }
+  }
+
   const doc = await prisma.auditDocument.create({
     data: {
       id: docId,
@@ -77,6 +92,8 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ engagement
       uploadedDate: new Date(),
       uploadedById: session.user.id,
       source,
+      documentType,
+      documentTypeAiSuggested,
       // utilisedTab intentionally null — repository-only.
       receivedByName: session.user.name || session.user.email || null,
       receivedAt: new Date(),

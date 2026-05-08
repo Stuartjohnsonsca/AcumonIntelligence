@@ -2752,6 +2752,11 @@ model AuditDocument {
   source          String?   @map("source") // e.g. Client, Bank, Solicitor, Third Party, Team
   usageLocation   String?   @map("usage_location") // which tab/section: Ethics, Materiality, etc.
   documentType    String?   @map("document_type") // e.g. Bank Statement, Confirmation, Invoice
+  /// When true, the value in `documentType` was filled by AI on upload
+  /// and the user hasn't confirmed/edited it yet. UI surfaces this with
+  /// a yellow dashed outline so an auditor knows to verify the guess.
+  /// Cleared when the user changes documentType via update_categories.
+  documentTypeAiSuggested Boolean @default(false) @map("document_type_ai_suggested")
   createdAt       DateTime  @default(now()) @map("created_at")
 
   engagement      AuditEngagement              @relation(fields: [engagementId], references: [id], onDelete: Cascade)

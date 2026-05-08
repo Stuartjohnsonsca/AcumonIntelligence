@@ -150,7 +150,11 @@ export async function POST(req: Request, { params }: { params: Promise<{ engagem
       data: {
         ...(source !== undefined && { source: source || null }),
         ...(usageLocation !== undefined && { usageLocation: usageLocation || null }),
-        ...(documentType !== undefined && { documentType: documentType || null }),
+        // When the user explicitly sets documentType (whether to a new
+        // value or to none), clear the AI-suggested flag — the human
+        // has now confirmed/edited the value, so the yellow dashed
+        // outline should drop.
+        ...(documentType !== undefined && { documentType: documentType || null, documentTypeAiSuggested: false }),
       },
     });
     return NextResponse.json({ document: doc });

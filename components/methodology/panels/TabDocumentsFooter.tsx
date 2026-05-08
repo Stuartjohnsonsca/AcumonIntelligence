@@ -5,6 +5,7 @@ import { Paperclip, Upload, FolderOpen, Copy, Loader2, FileText, X, Download, Pe
 import { ImportOptionsModal } from '@/components/methodology/ImportOptionsModal';
 import { ImportReviewModal } from '@/components/methodology/ImportReviewModal';
 import { expandZipFiles } from '@/lib/client-unzip';
+import { DOCUMENT_TYPE_CATALOGUE } from '@/lib/document-type-classifier';
 
 /**
  * Per-tab document attachments — appears as a footer at the bottom of
@@ -35,6 +36,8 @@ interface TabDocument {
   uploadedByName: string | null;
   hasContent: boolean;
   viewUrl: string | null;
+  documentType: string | null;
+  documentTypeAiSuggested: boolean;
 }
 
 interface AvailableDocument {
@@ -98,6 +101,11 @@ export function TabDocumentsFooter({ engagementId, tab, tabLabel, clientName, pe
   // cancel). Until the user chooses, the chosen file sits here.
   const [pendingZip, setPendingZip] = useState<File | null>(null);
 
+  // Document type the user wants on the next upload. Empty = let the
+  // server's AI classifier guess (the row lands with a yellow dashed
+  // border until the user confirms).
+  const [pendingDocType, setPendingDocType] = useState('');
+
   const niceLabel = tabLabel || humanise(tab);
   const isPriorPeriodTab = tab === 'prior-period';
 
@@ -156,6 +164,7 @@ export function TabDocumentsFooter({ engagementId, tab, tabLabel, clientName, pe
       fd.append('tab', tab);
       fd.append('file', file);
       fd.append('source', 'Tab upload');
+      if (pendingDocType) fd.append('documentType', pendingDocType);
       const res = await fetch(`/api/engagements/${engagementId}/tab-documents`, {
         method: 'POST',
         body: fd,
@@ -165,6 +174,10 @@ export function TabDocumentsFooter({ engagementId, tab, tabLabel, clientName, pe
         setError(data?.error || `Upload failed (${res.status})`);
         return false;
       }
+      // Single-upload only resets the type select on success — the
+      // user typically sets it once before picking the file.
+      setPendingDocType('');
+      await load();
       return true;
     } catch (err: any) {
       setError(err?.message || 'Upload failed');
@@ -200,10 +213,14 @@ export function TabDocumentsFooter({ engagementId, tab, tabLabel, clientName, pe
         fd.append('tab', tab);
         fd.append('file', member);
         fd.append('source', `Tab upload (zip: ${archive.name})`);
+        // If the user pre-selected a type, apply it to every member;
+        // otherwise let the server-side AI classifier pick each one.
+        if (pendingDocType) fd.append('documentType', pendingDocType);
         const res = await fetch(`/api/engagements/${engagementId}/tab-documents`, { method: 'POST', body: fd });
         if (!res.ok) failed++;
       }
       if (failed > 0) setError(`${failed} of ${usable.length} files in the ZIP failed to upload.`);
+      setPendingDocType('');
       await load();
     } catch (err: any) {
       setError(err?.message || 'Failed to unzip');
@@ -222,6 +239,7 @@ export function TabDocumentsFooter({ engagementId, tab, tabLabel, clientName, pe
       const fd = new FormData();
       fd.append('file', archive);
       fd.append('source', 'Documents upload');
+      if (pendingDocType) fd.append('documentType', pendingDocType);
       const res = await fetch(`/api/engagements/${engagementId}/documents/upload-file`, { method: 'POST', body: fd });
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
@@ -437,6 +455,18 @@ export function TabDocumentsFooter({ engagementId, tab, tabLabel, clientName, pe
             className="hidden"
             onChange={onFilePicked}
           />
+          <select
+            value={pendingDocType}
+            onChange={e => setPendingDocType(e.target.value)}
+            disabled={busy}
+            title="Document type for the next upload — leave blank to let AI guess"
+            className="text-[11px] px-1.5 py-1 border border-slate-200 rounded bg-white text-slate-600 focus:outline-none focus:ring-1 focus:ring-blue-300 disabled:opacity-50"
+          >
+            <option value="">Type: AI detect</option>
+            {DOCUMENT_TYPE_CATALOGUE.map(t => (
+              <option key={t} value={t}>{t}</option>
+            ))}
+          </select>
           <button
             onClick={() => fileInputRef.current?.click()}
             disabled={busy}
@@ -494,10 +524,20 @@ export function TabDocumentsFooter({ engagementId, tab, tabLabel, clientName, pe
         <ul className="space-y-1">
           {docs.map(d => {
             const isRenaming = renamingId === d.id;
+            // Yellow dashed outline = AI-suggested document type that
+            // the user hasn't confirmed yet. The Documents repository
+            // tab carries the editor where they confirm/change the
+            // value (which clears the flag).
+            const aiPending = d.documentTypeAiSuggested && d.documentType;
             return (
               <li
                 key={d.id}
-                className="flex items-center gap-2 px-2 py-1.5 bg-slate-50 border border-slate-200 rounded text-xs"
+                className={`flex items-center gap-2 px-2 py-1.5 rounded text-xs ${
+                  aiPending
+                    ? 'bg-amber-50 border-2 border-dashed border-amber-300'
+                    : 'bg-slate-50 border border-slate-200'
+                }`}
+                title={aiPending ? `AI suggested type: ${d.documentType}. Confirm or change on the Documents tab.` : undefined}
               >
                 <FileText className="h-3.5 w-3.5 text-slate-500 flex-none" />
                 {isRenaming ? (

@@ -45,6 +45,9 @@ interface AuditDocument {
   source: string | null;
   usageLocation: string | null;
   documentType: string | null;
+  /** True when documentType was filled by the upload-time AI
+   *  classifier and the user hasn't confirmed/edited it yet. */
+  documentTypeAiSuggested?: boolean;
   createdAt: string;
 }
 
@@ -499,8 +502,19 @@ export function DocumentRepositoryTab({ engagementId }: Props) {
           const isExpanded = expandedDoc === doc.id;
           const mappedItems = Array.isArray(doc.mappedItems) ? doc.mappedItems : [];
 
+          // Yellow dashed border for AI-suggested types the user
+          // hasn't confirmed yet. Becomes a normal border the moment
+          // the user changes the type via the per-row editor.
+          const aiPending = !!(doc.documentTypeAiSuggested && doc.documentType);
           return (
-            <div key={doc.id} className="border border-slate-200 rounded-lg overflow-hidden">
+            <div
+              key={doc.id}
+              className={`rounded-lg overflow-hidden ${
+                aiPending
+                  ? 'border-2 border-dashed border-amber-300 bg-amber-50/30'
+                  : 'border border-slate-200'
+              }`}
+            >
               {/* Document row */}
               <div className="flex items-center px-3 py-2.5 hover:bg-slate-50/50 gap-3">
                 {/* Status dot */}
@@ -651,9 +665,14 @@ export function DocumentRepositoryTab({ engagementId }: Props) {
                       </select>
                     </div>
                     <div>
-                      <label className="block text-[10px] text-slate-400 mb-0.5 font-medium">Document Type</label>
+                      <label className="block text-[10px] text-slate-400 mb-0.5 font-medium">
+                        Document Type
+                        {aiPending && <span className="ml-1 text-[9px] text-amber-700 font-semibold">(AI suggested — confirm)</span>}
+                      </label>
                       <select value={doc.documentType || ''} onChange={e => updateCategory(doc.id, 'documentType', e.target.value)}
-                        className="w-full text-xs border border-slate-200 rounded px-2 py-1 focus:outline-none focus:ring-1 focus:ring-blue-300 bg-white">
+                        className={`w-full text-xs border rounded px-2 py-1 focus:outline-none focus:ring-1 focus:ring-blue-300 bg-white ${
+                          aiPending ? 'border-amber-300 bg-amber-50' : 'border-slate-200'
+                        }`}>
                         <option value="">— None —</option>
                         {allDocTypes.map(s => <option key={s} value={s}>{s}</option>)}
                       </select>

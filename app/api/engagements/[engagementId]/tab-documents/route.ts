@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { auth } from '@/lib/auth';
 import { prisma } from '@/lib/db';
 import { uploadToContainer } from '@/lib/azure-blob';
+import { classifyDocumentType } from '@/lib/document-type-classifier';
 import crypto from 'crypto';
 
 /**
@@ -67,6 +68,8 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ engagementI
       uploadedAt: d.uploadedDate?.toISOString() || d.createdAt.toISOString(),
       uploadedByName: d.uploadedBy?.name || null,
       hasContent: Boolean(d.storagePath),
+      documentType: d.documentType,
+      documentTypeAiSuggested: d.documentTypeAiSuggested,
       // Inline view URL — returns a SAS redirect to the blob.
       viewUrl: d.storagePath
         ? `/api/engagements/${engagementId}/tab-documents/${d.id}/view`
@@ -95,6 +98,11 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ engagement
   // populated — previously every per-tab upload landed with source=null
   // and was invisible to the source filter.
   const source = String(formData.get('source') || 'Tab upload').trim() || 'Tab upload';
+  // Optional caller-supplied document type. When the user pre-selects
+  // one in the upload UI we trust it (no AI fallback). When omitted we
+  // classify after blob upload and mark the row as AI-suggested so the
+  // UI can surface a yellow dashed border for the user to confirm.
+  const userDocumentType = String(formData.get('documentType') || '').trim() || null;
   if (!tab) return NextResponse.json({ error: 'tab is required' }, { status: 400 });
   if (!file || typeof (file as any).arrayBuffer !== 'function') {
     return NextResponse.json({ error: 'file is required' }, { status: 400 });
@@ -113,6 +121,20 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ engagement
     return NextResponse.json({ error: `Blob upload failed: ${err?.message || 'unknown'}` }, { status: 500 });
   }
 
+  // AI document-type classifier — only when the user didn't pre-pick.
+  // Best-effort: failures (no API key, network) leave documentType null
+  // and the upload still succeeds. Runs BEFORE the row insert so the
+  // initial GET response already carries the suggestion + flag.
+  let documentType: string | null = userDocumentType;
+  let documentTypeAiSuggested = false;
+  if (!userDocumentType) {
+    const suggested = await classifyDocumentType({ fileName: file.name, mimeType: file.type });
+    if (suggested) {
+      documentType = suggested;
+      documentTypeAiSuggested = true;
+    }
+  }
+
   const doc = await prisma.auditDocument.create({
     data: {
       id: docId,
@@ -125,6 +147,8 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ engagement
       uploadedDate: new Date(),
       uploadedById: session.user.id,
       source,
+      documentType,
+      documentTypeAiSuggested,
       utilisedTab: tab,
       utilisedOn: new Date(),
       utilisedByName: session.user.name || session.user.email || null,
