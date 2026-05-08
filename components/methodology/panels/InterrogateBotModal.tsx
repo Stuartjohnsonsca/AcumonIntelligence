@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { MessageSquare, Loader2, Send, X, ShieldAlert, ThumbsUp, ThumbsDown, FileText } from 'lucide-react';
+import { MessageSquare, Loader2, Send, X, ShieldAlert, ThumbsUp, ThumbsDown, FileText, Sparkles } from 'lucide-react';
 import { extractCitations, jsonPathToTab } from '@/lib/interrogate-citations';
 
 interface Citation {
@@ -150,7 +150,17 @@ export function InterrogateBotModal({ engagementId, onClose }: Props) {
             This bot answers <strong>only</strong> from this engagement&rsquo;s audit-file content. It cites the JSON
             path it relied on, refuses questions it cannot answer from the file, and never imports outside knowledge.
             Use it to query what is recorded — not to ask for professional judgements that haven&rsquo;t been made yet.
-            Ratings (👍/👎) and corrections feed the model so it gets better at your firm&rsquo;s style over time.
+          </span>
+        </div>
+
+        {/* Learning / feedback banner */}
+        <div className="px-5 py-2 bg-indigo-50 border-b border-indigo-200 flex items-start gap-2 text-[11px] text-indigo-800">
+          <Sparkles className="h-4 w-4 flex-none mt-0.5" />
+          <span>
+            <strong>This bot is learning.</strong> Please rate every answer with 👍 or 👎, and use
+            &ldquo;Suggest improvement&rdquo; to tell it what a better answer would have been.
+            High-rated answers and your corrections become reference examples for similar questions
+            on future engagements — the more feedback you give, the more it sounds like your firm.
           </span>
         </div>
 
