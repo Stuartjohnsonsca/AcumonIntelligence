@@ -81,6 +81,11 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ engagement
   }
   const tab = String(formData.get('tab') || '').trim();
   const file = formData.get('file') as File | null;
+  // Optional caller-supplied source label. Defaults to 'Tab upload' so
+  // the Documents repository's filter dropdown always has something
+  // populated — previously every per-tab upload landed with source=null
+  // and was invisible to the source filter.
+  const source = String(formData.get('source') || 'Tab upload').trim() || 'Tab upload';
   if (!tab) return NextResponse.json({ error: 'tab is required' }, { status: 400 });
   if (!file || typeof (file as any).arrayBuffer !== 'function') {
     return NextResponse.json({ error: 'file is required' }, { status: 400 });
@@ -110,6 +115,7 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ engagement
       mimeType: file.type || null,
       uploadedDate: new Date(),
       uploadedById: session.user.id,
+      source,
       utilisedTab: tab,
       utilisedOn: new Date(),
       utilisedByName: session.user.name || session.user.email || null,

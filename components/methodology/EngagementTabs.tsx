@@ -53,7 +53,7 @@ interface Props {
 
 const PRE_PLAN_KEYS = new Set(['opening', 'prior-period', 'permanent-file', 'ethics', 'continuance', 'new-client', 'tb', 'materiality', 'par', 'walkthroughs', 'rmm']);
 
-const TABS = [
+export const TABS = [
   { key: 'opening', label: 'Opening' },
   { key: 'prior-period', label: 'Prior Period' },
   { key: 'permanent-file', label: 'Permanent' },

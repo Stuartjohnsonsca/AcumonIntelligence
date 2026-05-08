@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from 'react';
 import { Paperclip, Upload, FolderOpen, Copy, Loader2, FileText, X, Download, Pencil, Trash2, Check } from 'lucide-react';
 import { ImportOptionsModal } from '@/components/methodology/ImportOptionsModal';
 import { ImportReviewModal } from '@/components/methodology/ImportReviewModal';
+import { expandZipFiles } from '@/lib/client-unzip';
 
 /**
  * Per-tab document attachments — appears as a footer at the bottom of
@@ -91,6 +92,12 @@ export function TabDocumentsFooter({ engagementId, tab, tabLabel, clientName, pe
   const [renamingId, setRenamingId] = useState<string | null>(null);
   const [renameValue, setRenameValue] = useState('');
 
+  // ZIP-pick gate — when the file picker hands us a .zip we DON'T
+  // upload it directly. The user picks one of three paths (unzip into
+  // the tab, keep the zip and stash it on the Documents repo, or
+  // cancel). Until the user chooses, the chosen file sits here.
+  const [pendingZip, setPendingZip] = useState<File | null>(null);
+
   const niceLabel = tabLabel || humanise(tab);
   const isPriorPeriodTab = tab === 'prior-period';
 
@@ -120,15 +127,35 @@ export function TabDocumentsFooter({ engagementId, tab, tabLabel, clientName, pe
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [engagementId, tab]);
 
+  function isZip(f: File): boolean {
+    return /\.zip$/i.test(f.name) || f.type === 'application/zip' || f.type === 'application/x-zip-compressed';
+  }
+
   async function onFilePicked(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
+    if (fileInputRef.current) fileInputRef.current.value = '';
     if (!file) return;
+    setError(null);
+
+    // ZIPs branch into a 3-option confirm panel — we used to hand the
+    // archive straight to the per-tab POST which silently uploaded it
+    // as an opaque blob. The popup forces the user to choose.
+    if (isZip(file)) {
+      setPendingZip(file);
+      return;
+    }
+
+    await uploadSingleToTab(file);
+  }
+
+  async function uploadSingleToTab(file: File) {
     setBusy(true);
     setError(null);
     try {
       const fd = new FormData();
       fd.append('tab', tab);
       fd.append('file', file);
+      fd.append('source', 'Tab upload');
       const res = await fetch(`/api/engagements/${engagementId}/tab-documents`, {
         method: 'POST',
         body: fd,
@@ -136,14 +163,78 @@ export function TabDocumentsFooter({ engagementId, tab, tabLabel, clientName, pe
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
         setError(data?.error || `Upload failed (${res.status})`);
+        return false;
+      }
+      return true;
+    } catch (err: any) {
+      setError(err?.message || 'Upload failed');
+      return false;
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function unzipPendingAndUpload() {
+    if (!pendingZip) return;
+    const archive = pendingZip;
+    setPendingZip(null);
+    setBusy(true);
+    setError(null);
+    try {
+      const members = await expandZipFiles([archive]);
+      // expandZipFiles returns the original file when the archive is
+      // unreadable — in that case treat it the same as the user picking
+      // the zip directly to upload.
+      if (members.length === 1 && members[0] === archive) {
+        setError('ZIP could not be opened — it may be password-protected or corrupt.');
         return;
       }
+      const usable = members.filter(m => !isZip(m)); // expandZipFiles already strips nested zips, but be defensive
+      if (usable.length === 0) {
+        setError('ZIP contained no usable files.');
+        return;
+      }
+      let failed = 0;
+      for (const member of usable) {
+        const fd = new FormData();
+        fd.append('tab', tab);
+        fd.append('file', member);
+        fd.append('source', `Tab upload (zip: ${archive.name})`);
+        const res = await fetch(`/api/engagements/${engagementId}/tab-documents`, { method: 'POST', body: fd });
+        if (!res.ok) failed++;
+      }
+      if (failed > 0) setError(`${failed} of ${usable.length} files in the ZIP failed to upload.`);
       await load();
+    } catch (err: any) {
+      setError(err?.message || 'Failed to unzip');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function uploadPendingZipToRepo() {
+    if (!pendingZip) return;
+    const archive = pendingZip;
+    setPendingZip(null);
+    setBusy(true);
+    setError(null);
+    try {
+      const fd = new FormData();
+      fd.append('file', archive);
+      fd.append('source', 'Documents upload');
+      const res = await fetch(`/api/engagements/${engagementId}/documents/upload-file`, { method: 'POST', body: fd });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        setError(data?.error || `Upload failed (${res.status})`);
+        return;
+      }
+      // The zip lands on the Documents repository, NOT this tab — so
+      // there's nothing to add to docs[]. Just clear and let the
+      // Documents tab show it next time it loads.
     } catch (err: any) {
       setError(err?.message || 'Upload failed');
     } finally {
       setBusy(false);
-      if (fileInputRef.current) fileInputRef.current.value = '';
     }
   }
 
@@ -494,6 +585,49 @@ export function TabDocumentsFooter({ engagementId, tab, tabLabel, clientName, pe
             );
           })}
         </ul>
+      )}
+
+      {/* ZIP-pick popup — when the user picks a .zip in the file
+          dialog we don't upload it directly. They choose to expand
+          into the tab (one document per file inside), keep the zip
+          intact on the Documents repository, or back out. */}
+      {pendingZip && (
+        <div className="fixed inset-0 z-50 bg-slate-900/60 flex items-center justify-center p-4" onClick={() => setPendingZip(null)}>
+          <div className="bg-white rounded-lg shadow-xl w-full max-w-md" onClick={e => e.stopPropagation()}>
+            <div className="px-4 py-3 border-b">
+              <h4 className="text-sm font-semibold text-slate-800">ZIP file detected</h4>
+              <p className="text-xs text-slate-500 mt-0.5 truncate" title={pendingZip.name}>{pendingZip.name}</p>
+            </div>
+            <div className="p-4 space-y-2">
+              <button
+                type="button"
+                onClick={unzipPendingAndUpload}
+                disabled={busy}
+                className="w-full text-left px-3 py-2 rounded border border-slate-200 hover:border-blue-400 hover:bg-blue-50 disabled:opacity-50"
+              >
+                <p className="text-xs font-medium text-slate-800">Unzip and upload individual files</p>
+                <p className="text-[11px] text-slate-500 mt-0.5">Expand the archive and add each file inside as its own document on the {niceLabel} tab.</p>
+              </button>
+              <button
+                type="button"
+                onClick={uploadPendingZipToRepo}
+                disabled={busy}
+                className="w-full text-left px-3 py-2 rounded border border-slate-200 hover:border-blue-400 hover:bg-blue-50 disabled:opacity-50"
+              >
+                <p className="text-xs font-medium text-slate-800">Upload zip file to Documents tab</p>
+                <p className="text-[11px] text-slate-500 mt-0.5">Keep the archive intact and store it on the engagement-wide Documents repository (not allocated to this tab).</p>
+              </button>
+              <button
+                type="button"
+                onClick={() => setPendingZip(null)}
+                disabled={busy}
+                className="w-full text-left px-3 py-2 rounded border border-slate-200 hover:border-slate-400 disabled:opacity-50"
+              >
+                <p className="text-xs font-medium text-slate-600">Cancel</p>
+              </button>
+            </div>
+          </div>
+        </div>
       )}
 
       {/* Allocate-from-Documents picker */}

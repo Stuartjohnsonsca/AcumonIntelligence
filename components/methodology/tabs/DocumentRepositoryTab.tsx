@@ -3,6 +3,17 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { useSession } from 'next-auth/react';
 import { expandZipFile } from '@/lib/client-unzip';
+import { TABS } from '@/components/methodology/EngagementTabs';
+
+// Lookup helpers for the live engagement-tab list. Used to render the
+// 'Allocated to' badge on each document row and to drive the location
+// filter dropdown — both stay in lockstep with whatever tabs the
+// engagement actually has rather than a hard-coded "audit phase" list.
+const TAB_LABEL_BY_KEY: Record<string, string> = Object.fromEntries(TABS.map(t => [t.key, t.label]));
+function tabLabelForKey(key: string | null | undefined): string {
+  if (!key) return '';
+  return TAB_LABEL_BY_KEY[key] || key;
+}
 
 interface Props {
   engagementId: string;
@@ -36,7 +47,6 @@ interface AuditDocument {
 
 // ─── Default category options ───
 const DEFAULT_SOURCES = ['Client', 'Bank', 'Solicitor', 'HMRC', 'Companies House', 'Third Party', 'Team', 'Other'];
-const DEFAULT_USAGE_LOCATIONS = ['Opening', 'Prior Period', 'Permanent File', 'Ethics', 'Continuance', 'Trial Balance', 'Materiality', 'PAR', 'Walkthroughs', 'RMM', 'Audit Plan', 'Completion', 'General'];
 const DEFAULT_DOCUMENT_TYPES = ['Bank Statement', 'Bank Confirmation', 'Invoice', 'Contract', 'Lease Agreement', 'Board Minutes', 'Financial Statements', 'Tax Return', 'Payroll Report', 'Fixed Asset Register', 'Debtor Listing', 'Creditor Listing', 'Stock Listing', 'Management Accounts', 'Letter of Representation', 'Letter of Comment', 'Engagement Letter', 'Solicitor Confirmation', 'Other'];
 
 // Documents arriving from the Import Options pop-up (uploaded prior
@@ -96,7 +106,21 @@ export function DocumentRepositoryTab({ engagementId }: Props) {
   // Derive all available types (defaults + customs from data + customs added this session)
   const allDocTypes = [...new Set([...DEFAULT_DOCUMENT_TYPES, ...customDocTypes, ...documents.map(d => d.documentType).filter(Boolean) as string[]])].sort();
   const allSources = [...new Set([...DEFAULT_SOURCES, ...documents.map(d => d.source).filter(Boolean) as string[]])].sort();
-  const allLocations = [...new Set([...DEFAULT_USAGE_LOCATIONS, ...documents.map(d => d.usageLocation).filter(Boolean) as string[]])].sort();
+  // Location filter mirrors the live engagement tabs — picking 'Ethics'
+  // shows only docs allocated (utilisedTab) to the Ethics tab. Tabs
+  // that no document references yet still appear so the user can
+  // scan-through the list visually.
+  const locationFilterOptions = TABS.map(t => ({ key: t.key, label: t.label }));
+  // Per-document `usageLocation` editor still uses free-text category
+  // values — these are auditor-friendly groupings (e.g. "General",
+  // "Audit Plan") rather than tab keys. Seed with live tab labels +
+  // any extant values so admins don't need to retype.
+  const allLocations = [
+    ...new Set([
+      ...TABS.map(t => t.label),
+      ...documents.map(d => d.usageLocation).filter(Boolean) as string[],
+    ]),
+  ].sort();
 
   const loadDocuments = useCallback(async () => {
     try {
@@ -204,10 +228,13 @@ export function DocumentRepositoryTab({ engagementId }: Props) {
     setAddingCustomType(false);
   }
 
-  // Apply filters
+  // Apply filters. Location matches against utilisedTab (the live
+  // engagement-tab key) rather than the free-text usageLocation field
+  // — that's what the user actually asks "where is this document
+  // referenced from?" with.
   const filtered = documents.filter(doc => {
     if (filterSource && doc.source !== filterSource) return false;
-    if (filterLocation && doc.usageLocation !== filterLocation) return false;
+    if (filterLocation && doc.utilisedTab !== filterLocation) return false;
     if (filterDocType && doc.documentType !== filterDocType) return false;
     return true;
   });
@@ -243,7 +270,7 @@ export function DocumentRepositoryTab({ engagementId }: Props) {
         <select value={filterLocation} onChange={e => setFilterLocation(e.target.value)}
           className={`text-[10px] border rounded px-2 py-1 focus:outline-none focus:ring-1 focus:ring-blue-300 ${filterLocation ? 'border-green-400 bg-green-50 text-green-700' : 'border-slate-200 text-slate-500'}`}>
           <option value="">All Locations</option>
-          {allLocations.map(s => <option key={s} value={s}>{s}</option>)}
+          {locationFilterOptions.map(o => <option key={o.key} value={o.key}>{o.label}</option>)}
         </select>
         <select value={filterDocType} onChange={e => setFilterDocType(e.target.value)}
           className={`text-[10px] border rounded px-2 py-1 focus:outline-none focus:ring-1 focus:ring-blue-300 ${filterDocType ? 'border-green-400 bg-green-50 text-green-700' : 'border-slate-200 text-slate-500'}`}>
@@ -475,7 +502,25 @@ export function DocumentRepositoryTab({ engagementId }: Props) {
                 <div className="flex-1 min-w-0 cursor-pointer" onClick={() => setExpandedDoc(isExpanded ? null : doc.id)}>
                   <div className="flex items-center gap-2 flex-wrap">
                     <span className="text-xs font-medium text-slate-700">{doc.documentName}</span>
-                    {doc.source && <span className="text-[8px] bg-violet-100 text-violet-600 px-1.5 py-0.5 rounded font-medium">{doc.source}</span>}
+                    {doc.source && (
+                      <span
+                        className="text-[8px] bg-violet-100 text-violet-600 px-1.5 py-0.5 rounded font-medium"
+                        title={`Source: ${doc.source}`}
+                      >
+                        {doc.source}
+                      </span>
+                    )}
+                    {/* Allocation — which engagement tab references this
+                        document. utilisedTab is the legacy single-tab
+                        field; Phase B will add a multi-tab variant. */}
+                    {doc.utilisedTab && (
+                      <span
+                        className="text-[8px] bg-emerald-100 text-emerald-700 px-1.5 py-0.5 rounded font-medium"
+                        title={`Allocated to: ${tabLabelForKey(doc.utilisedTab)}`}
+                      >
+                        {tabLabelForKey(doc.utilisedTab)}
+                      </span>
+                    )}
                     {doc.usageLocation && <span className="text-[8px] bg-teal-100 text-teal-600 px-1.5 py-0.5 rounded font-medium">{doc.usageLocation}</span>}
                     {doc.documentType && <span className="text-[8px] bg-amber-100 text-amber-600 px-1.5 py-0.5 rounded font-medium">{doc.documentType}</span>}
                     {mappedItems.length > 0 && mappedItems.map((item, i) => (
@@ -616,10 +661,11 @@ export function DocumentRepositoryTab({ engagementId }: Props) {
       }} />
 
       {/* Legend */}
-      <div className="mt-3 flex items-center gap-6 text-[10px] text-slate-400">
+      <div className="mt-3 flex items-center gap-6 text-[10px] text-slate-400 flex-wrap">
         <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-orange-400 inline-block" /> Pending</span>
         <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-green-400 inline-block" /> Uploaded</span>
         <span className="flex items-center gap-1"><span className="w-2 h-2 bg-violet-100 text-violet-600 px-1 rounded text-[8px] inline-block">Source</span></span>
+        <span className="flex items-center gap-1"><span className="w-2 h-2 bg-emerald-100 text-emerald-700 px-1 rounded text-[8px] inline-block">Allocated</span></span>
         <span className="flex items-center gap-1"><span className="w-2 h-2 bg-teal-100 text-teal-600 px-1 rounded text-[8px] inline-block">Location</span></span>
         <span className="flex items-center gap-1"><span className="w-2 h-2 bg-amber-100 text-amber-600 px-1 rounded text-[8px] inline-block">Type</span></span>
       </div>
