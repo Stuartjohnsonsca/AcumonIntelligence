@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useRef, useState } from 'react';
-import { Paperclip, Upload, FolderOpen, Copy, Loader2, FileText, X, Download } from 'lucide-react';
+import { Paperclip, Upload, FolderOpen, Copy, Loader2, FileText, X, Download, Pencil, Trash2, Check } from 'lucide-react';
 import { ImportOptionsModal } from '@/components/methodology/ImportOptionsModal';
 import { ImportReviewModal } from '@/components/methodology/ImportReviewModal';
 
@@ -87,6 +87,10 @@ export function TabDocumentsFooter({ engagementId, tab, tabLabel, clientName, pe
   const [showImportOptions, setShowImportOptions] = useState(false);
   const [importExtractionId, setImportExtractionId] = useState<string | null>(null);
 
+  // Rename / delete state for the per-document action row.
+  const [renamingId, setRenamingId] = useState<string | null>(null);
+  const [renameValue, setRenameValue] = useState('');
+
   const niceLabel = tabLabel || humanise(tab);
   const isPriorPeriodTab = tab === 'prior-period';
 
@@ -140,6 +144,64 @@ export function TabDocumentsFooter({ engagementId, tab, tabLabel, clientName, pe
     } finally {
       setBusy(false);
       if (fileInputRef.current) fileInputRef.current.value = '';
+    }
+  }
+
+  function startRename(d: TabDocument) {
+    setRenamingId(d.id);
+    setRenameValue(d.documentName);
+    setError(null);
+  }
+
+  function cancelRename() {
+    setRenamingId(null);
+    setRenameValue('');
+  }
+
+  async function commitRename() {
+    if (!renamingId) return;
+    const next = renameValue.trim();
+    const current = docs.find(x => x.id === renamingId)?.documentName || '';
+    if (!next || next === current) { cancelRename(); return; }
+    setBusy(true);
+    setError(null);
+    try {
+      const res = await fetch(`/api/engagements/${engagementId}/tab-documents/${renamingId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ documentName: next }),
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        setError(data?.error || `Rename failed (${res.status})`);
+        return;
+      }
+      // Update in place so the list doesn't flash through a load.
+      setDocs(prev => prev.map(x => x.id === renamingId ? { ...x, documentName: next } : x));
+      cancelRename();
+    } catch (err: any) {
+      setError(err?.message || 'Rename failed');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function deleteDoc(d: TabDocument) {
+    if (!confirm(`Delete "${d.documentName}" from this tab? This removes the attachment record; the underlying file is retained.`)) return;
+    setBusy(true);
+    setError(null);
+    try {
+      const res = await fetch(`/api/engagements/${engagementId}/tab-documents/${d.id}`, { method: 'DELETE' });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        setError(data?.error || `Delete failed (${res.status})`);
+        return;
+      }
+      setDocs(prev => prev.filter(x => x.id !== d.id));
+    } catch (err: any) {
+      setError(err?.message || 'Delete failed');
+    } finally {
+      setBusy(false);
     }
   }
 
@@ -337,36 +399,100 @@ export function TabDocumentsFooter({ engagementId, tab, tabLabel, clientName, pe
         <div className="text-xs text-slate-400 italic">No documents attached to this tab yet.</div>
       ) : (
         <ul className="space-y-1">
-          {docs.map(d => (
-            <li
-              key={d.id}
-              className="flex items-center gap-2 px-2 py-1.5 bg-slate-50 border border-slate-200 rounded text-xs"
-            >
-              <FileText className="h-3.5 w-3.5 text-slate-500 flex-none" />
-              {d.viewUrl ? (
-                <a
-                  href={d.viewUrl}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="flex-1 text-blue-700 hover:text-blue-900 hover:underline truncate"
-                  title={d.documentName}
-                >
-                  {d.documentName}
-                </a>
-              ) : (
-                <span className="flex-1 text-slate-700 truncate" title={d.documentName}>
-                  {d.documentName} <span className="text-slate-400">(no file uploaded)</span>
-                </span>
-              )}
-              <span className="text-[10px] text-slate-400">{formatSize(d.fileSize)}</span>
-              <span className="text-[10px] text-slate-400">{formatDate(d.uploadedAt)}</span>
-              {d.uploadedByName && (
-                <span className="text-[10px] text-slate-400" title={`Uploaded by ${d.uploadedByName}`}>
-                  · {d.uploadedByName}
-                </span>
-              )}
-            </li>
-          ))}
+          {docs.map(d => {
+            const isRenaming = renamingId === d.id;
+            return (
+              <li
+                key={d.id}
+                className="flex items-center gap-2 px-2 py-1.5 bg-slate-50 border border-slate-200 rounded text-xs"
+              >
+                <FileText className="h-3.5 w-3.5 text-slate-500 flex-none" />
+                {isRenaming ? (
+                  <input
+                    type="text"
+                    autoFocus
+                    value={renameValue}
+                    onChange={e => setRenameValue(e.target.value)}
+                    onKeyDown={e => {
+                      if (e.key === 'Enter') commitRename();
+                      if (e.key === 'Escape') cancelRename();
+                    }}
+                    disabled={busy}
+                    className="flex-1 border border-blue-300 rounded px-1.5 py-0.5 text-xs bg-white focus:outline-none focus:ring-1 focus:ring-blue-400 disabled:opacity-60"
+                  />
+                ) : d.viewUrl ? (
+                  <a
+                    href={d.viewUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="flex-1 text-blue-700 hover:text-blue-900 hover:underline truncate"
+                    title={d.documentName}
+                  >
+                    {d.documentName}
+                  </a>
+                ) : (
+                  <span className="flex-1 text-slate-700 truncate" title={d.documentName}>
+                    {d.documentName} <span className="text-slate-400">(no file uploaded)</span>
+                  </span>
+                )}
+                <span className="text-[10px] text-slate-400">{formatSize(d.fileSize)}</span>
+                <span className="text-[10px] text-slate-400">{formatDate(d.uploadedAt)}</span>
+                {d.uploadedByName && (
+                  <span className="text-[10px] text-slate-400" title={`Uploaded by ${d.uploadedByName}`}>
+                    · {d.uploadedByName}
+                  </span>
+                )}
+                {/* Rename / delete actions. While renaming, the icons swap
+                    to Save / Cancel. Disabled when another mutation is
+                    in flight. */}
+                <div className="flex items-center gap-0.5 ml-1">
+                  {isRenaming ? (
+                    <>
+                      <button
+                        type="button"
+                        onClick={commitRename}
+                        disabled={busy}
+                        title="Save name"
+                        className="p-1 text-green-600 hover:text-green-700 hover:bg-green-50 rounded disabled:opacity-50"
+                      >
+                        <Check className="h-3.5 w-3.5" />
+                      </button>
+                      <button
+                        type="button"
+                        onClick={cancelRename}
+                        disabled={busy}
+                        title="Cancel"
+                        className="p-1 text-slate-500 hover:text-slate-700 hover:bg-slate-100 rounded disabled:opacity-50"
+                      >
+                        <X className="h-3.5 w-3.5" />
+                      </button>
+                    </>
+                  ) : (
+                    <>
+                      <button
+                        type="button"
+                        onClick={() => startRename(d)}
+                        disabled={busy}
+                        title="Rename"
+                        className="p-1 text-slate-500 hover:text-blue-600 hover:bg-blue-50 rounded disabled:opacity-50"
+                      >
+                        <Pencil className="h-3.5 w-3.5" />
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => deleteDoc(d)}
+                        disabled={busy}
+                        title="Delete"
+                        className="p-1 text-slate-500 hover:text-red-600 hover:bg-red-50 rounded disabled:opacity-50"
+                      >
+                        <Trash2 className="h-3.5 w-3.5" />
+                      </button>
+                    </>
+                  )}
+                </div>
+              </li>
+            );
+          })}
         </ul>
       )}
 

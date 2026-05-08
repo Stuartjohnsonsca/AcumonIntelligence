@@ -2,6 +2,7 @@
 
 import { useState } from 'react';
 import type { QuestionInputType } from '@/types/methodology';
+import { useFormulaTooltipsEnabled } from '@/lib/user-preferences';
 
 interface Props {
   questionId: string;
@@ -33,6 +34,12 @@ export function FormField({
   className = '',
 }: Props) {
   const baseClass = 'w-full border border-slate-200 rounded px-2 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-blue-400 disabled:bg-slate-50 disabled:text-slate-400';
+  // User preference (defaults to OFF on every login). Drives whether
+  // we attach the formula explanation to the cell's title attribute —
+  // when off the cell still works as before but doesn't hover-reveal
+  // the underlying expression. Methodology / super admins use this to
+  // dismiss the constant tooltip flicker.
+  const showFormulaTooltips = useFormulaTooltipsEnabled();
 
   // Ad-hoc formula: a text/textarea answer the user typed starting with '='.
   // Different from a template-configured formula question — the formula
@@ -53,7 +60,11 @@ export function FormField({
       <button
         type="button"
         onClick={() => { if (isAdHocFormula && !disabled) setEditingAdHoc(true); }}
-        title={isAdHocFormula ? `Click to edit formula: ${value}` : 'Auto-calculated'}
+        title={
+          showFormulaTooltips
+            ? (isAdHocFormula ? `Click to edit formula: ${value}` : 'Auto-calculated')
+            : (isAdHocFormula && !disabled ? 'Click to edit formula' : undefined)
+        }
         className={`${baseClass} bg-blue-50/30 text-slate-700 min-h-[36px] text-left ${isAdHocFormula && !disabled ? 'cursor-text hover:bg-blue-100/40' : 'cursor-default'} ${className}`}
       >
         {computedValue !== null && computedValue !== '' ? String(computedValue) : <span className="text-slate-300 italic">Auto-calculated</span>}

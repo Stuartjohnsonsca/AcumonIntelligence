@@ -8,6 +8,7 @@ import { SubscriptionsTab } from './SubscriptionsTab';
 import { AiUsageTab } from './AiUsageTab';
 import { FirmSettingsTab } from './FirmSettingsTab';
 import { ToolsExtensionsTab } from './ToolsExtensionsTab';
+import { PreferencesTab } from './PreferencesTab';
 import { OutstandingActionsSection } from './OutstandingActionsSection';
 import { Shield, BookOpen, Keyboard, Users } from 'lucide-react';
 import Link from 'next/link';
@@ -88,6 +89,7 @@ export function MyAccountClient({ userId, firmId, isSuperAdmin, isFirmAdmin, isP
           {canManageClients && <TabsTrigger value="ai-usage">AI Usage</TabsTrigger>}
           {(isSuperAdmin || isFirmAdmin) && <TabsTrigger value="firm-settings">Firm Settings</TabsTrigger>}
           <TabsTrigger value="tools">Tools & Extensions</TabsTrigger>
+          <TabsTrigger value="preferences">Preferences</TabsTrigger>
         </TabsList>
 
         {canManageUsers && (
@@ -120,6 +122,10 @@ export function MyAccountClient({ userId, firmId, isSuperAdmin, isFirmAdmin, isP
 
         <TabsContent value="tools">
           <ToolsExtensionsTab />
+        </TabsContent>
+
+        <TabsContent value="preferences">
+          <PreferencesTab />
         </TabsContent>
 
       </Tabs>
