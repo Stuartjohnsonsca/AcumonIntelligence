@@ -11,27 +11,31 @@ import { reportProgress, reportFailure, fetchRecipe, saveRecipe, submitArchive }
 const VIEWPORT = { width: 1280, height: 800 };
 
 function buildSystemPrompt({ vendorLabel, clientName, recipe }) {
+  const knownUrl = recipe?.data?.loginUrl || recipe?.data?.finalUrl;
   return [
     `You are an audit assistant operating a real Chromium browser to import a prior-period audit file from ${vendorLabel} on behalf of an auditor.`,
     '',
     `The auditor wants the prior period file for client: ${clientName || 'TBD — confirm with the user'}.`,
     '',
     'Procedure:',
-    '1. Use the `computer` tool to take screenshots and click through the vendor\'s site.',
-    '2. If the site needs a login, call `ask_user` with type="credentials" listing the fields needed (e.g. email + password). DO NOT attempt to guess. The operator will reply via the tool.',
-    '3. If the site challenges with MFA, call `ask_user` with type="mfa".',
+    knownUrl
+      ? `1. The browser is on about:blank. First action: call the \`navigate\` tool with url="${knownUrl}".`
+      : `1. The browser is on about:blank. The auditor has NOT provided a login URL for ${vendorLabel}. Your first action MUST be to call \`ask_user\` with type="text" asking for the login URL of ${vendorLabel}. Once you have it, call the \`navigate\` tool with that URL.`,
+    '2. Once on the vendor login page: call `ask_user` with type="credentials" listing the fields the page asks for (typically email + password). DO NOT attempt to guess credentials. The operator will reply via the tool.',
+    '3. If the site challenges with MFA after submitting credentials, call `ask_user` with type="mfa".',
     '4. Navigate to the client and the most recent CLOSED prior audit period.',
     '5. If you are unsure which client / period is correct, call `ask_user` with type="confirm" or type="select" to disambiguate.',
     '6. Find the option to download the engagement archive (zip preferred; otherwise the financial statements + working papers PDF).',
-    '7. Wait for the download to complete. The browser is configured so downloads land in /tmp/downloads inside this container.',
+    '7. Wait for the download to complete. Downloads land in /tmp/acumon-dl-* inside this container — you can `key` "ctrl+j" to open Chrome\'s downloads page if you need to confirm the file.',
     '8. Call `submit_done` with the absolute file path. Do NOT call any other tool after that.',
     '',
     'Hard rules:',
     '- NEVER click anything that looks destructive (delete, archive, sign-off, finalise, lock).',
-    '- NEVER navigate away from the vendor\'s site once logged in.',
+    '- NEVER navigate to a search engine like google.com — they reject headless browsers with reCAPTCHA. Always go directly to the vendor URL.',
+    '- NEVER type passwords or MFA codes you have invented. Always ask via the `ask_user` tool.',
     '- If you cannot complete the task after several retries, call `fail` with a short explanation.',
     '',
-    recipe ? `Saved recipe for this client (use as a guide; verify selectors still apply): ${JSON.stringify(recipe.data).slice(0, 2000)}` : 'No saved recipe for this client yet — discover the path from the live UI.',
+    recipe ? `Saved recipe for this client (use as a guide; verify selectors still apply): ${JSON.stringify(recipe.data).slice(0, 2000)}` : 'No saved recipe for this client yet — discover the path from the live UI and ask when uncertain.',
   ].join('\n');
 }
 
@@ -86,12 +90,12 @@ export async function runSession({ sessionId, vendorLabel, clientName }) {
       completedDownloads.push({ path: target, name: filename });
     });
 
-    await reportProgress(sessionId, 'launching_browser', `Browser launched. Loading ${vendorLabel}…`);
-    // Best-effort: navigate to a sensible starting URL (vendor name as a
-    // search query). Claude can navigate from there. We deliberately do
-    // NOT hard-code MyWorkPapers' URL — claude figures it out and we
-    // capture into the recipe.
-    await page.goto(`https://www.google.com/search?q=${encodeURIComponent(vendorLabel + ' login')}`, { waitUntil: 'domcontentloaded' }).catch(() => {});
+    await reportProgress(sessionId, 'launching_browser', `Browser launched. Asking for ${vendorLabel} URL…`);
+    // Start on a blank page. We deliberately do NOT navigate to a search
+    // engine first — Google et al. reject headless browsers with reCAPTCHA.
+    // The system prompt instructs Claude to either use a saved recipe URL
+    // or ask the user for the vendor login URL via the ask_user tool.
+    await page.goto('about:blank', { waitUntil: 'domcontentloaded' }).catch(() => {});
 
     const recipe = await fetchRecipe(sessionId, clientName || 'unknown').catch(() => null);
 

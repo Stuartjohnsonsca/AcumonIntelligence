@@ -94,6 +94,18 @@ const FAIL_TOOL = {
   },
 };
 
+const NAVIGATE_TOOL = {
+  name: 'navigate',
+  description: 'Navigate the browser tab to a specific URL. The browser is headless so the URL '
+    + 'bar is not part of the rendered page — use this tool instead of trying to type into it. '
+    + 'Always use absolute URLs (https://...).',
+  input_schema: {
+    type: 'object',
+    properties: { url: { type: 'string', description: 'Absolute URL to navigate to.' } },
+    required: ['url'],
+  },
+};
+
 // Convert a Playwright key chord like "Ctrl+a" to Anthropic's format.
 // Anthropic computer-use uses xdotool-style strings: "ctrl+a", "Return".
 function normaliseKeyChord(s) { return String(s || '').toLowerCase().replace(/\s+/g, ''); }
@@ -174,6 +186,7 @@ export async function runComputerUseLoop({ page, sessionId, systemPrompt, initia
     ASK_USER_TOOL,
     SUBMIT_DONE_TOOL,
     FAIL_TOOL,
+    NAVIGATE_TOOL,
   ];
 
   const messages = [{ role: 'user', content: initialUserMessage }];
@@ -212,6 +225,23 @@ export async function runComputerUseLoop({ page, sessionId, systemPrompt, initia
             tool_use_id: tu.id,
             content: [{ type: 'text', text: JSON.stringify(answer) }],
           });
+        } else if (tu.name === 'navigate') {
+          try {
+            const url = String(tu.input.url || '').trim();
+            if (!/^https?:\/\//i.test(url)) {
+              throw new Error('navigate requires absolute http(s) URL');
+            }
+            await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 30000 });
+            toolResults.push({
+              type: 'tool_result', tool_use_id: tu.id,
+              content: [{ type: 'text', text: `navigated to ${page.url()}` }],
+            });
+          } catch (err) {
+            toolResults.push({
+              type: 'tool_result', tool_use_id: tu.id, is_error: true,
+              content: [{ type: 'text', text: String(err?.message || err).slice(0, 300) }],
+            });
+          }
         } else if (tu.name === 'submit_done') {
           await onComplete(tu.input);
           return;
