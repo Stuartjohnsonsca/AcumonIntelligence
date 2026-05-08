@@ -637,7 +637,20 @@ function PromptForm({ prompt, onAnswer }: { prompt: PendingPrompt; onAnswer: (id
   const [credentialValues, setCredentialValues] = useState<Record<string, string>>({});
   const [selectValue, setSelectValue] = useState('');
 
-  const fields = useMemo(() => prompt.options?.fields || [], [prompt.options]);
+  // Defensive defaults — if Claude calls ask_user(type='credentials')
+  // without an explicit `fields` array, render email + password as the
+  // standard pair. Same idea for options on a select prompt.
+  const fields = useMemo(() => {
+    const supplied = prompt.options?.fields;
+    if (supplied && supplied.length > 0) return supplied;
+    if (prompt.type === 'credentials') {
+      return [
+        { name: 'email', label: 'Email', secret: false },
+        { name: 'password', label: 'Password', secret: true },
+      ];
+    }
+    return [];
+  }, [prompt.options, prompt.type]);
   const options = useMemo(() => prompt.options?.options || [], [prompt.options]);
 
   async function submit(answer: unknown) {

@@ -57,12 +57,22 @@ export async function reportFailure(sessionId, message) {
 // Re-shape here.
 export async function askUser(sessionId, prompt) {
   const promptId = `p_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+  // Defensive default: if Claude calls type='credentials' without an
+  // explicit fields array, fall back to email + password so the modal
+  // always renders something the user can fill in.
+  let fields = prompt.fields;
+  if (prompt.type === 'credentials' && (!fields || fields.length === 0)) {
+    fields = [
+      { name: 'email', label: 'Email', secret: false },
+      { name: 'password', label: 'Password', secret: true },
+    ];
+  }
   const body = {
     promptId,
     type: prompt.type,
     message: prompt.message,
     options: {
-      ...(prompt.fields ? { fields: prompt.fields } : {}),
+      ...(fields ? { fields } : {}),
       ...(prompt.options ? { options: prompt.options } : {}),
     },
   };
