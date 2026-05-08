@@ -255,15 +255,36 @@ function buildAuditFileJson(trimmed: unknown): { json: string; droppedKeys: stri
 }
 
 /**
+ * Optional few-shot examples — high-rated prior interactions on this
+ * firm with similar questions. Phase 2 retrieves these by embedding
+ * cosine-similarity. The bot sees them as prior assistant turns
+ * (NOT as instructions) so it learns the firm's preferred phrasing
+ * without those examples being treated as authoritative facts about
+ * the current engagement.
+ */
+export interface FewShotExample {
+  question: string;
+  answer: string;
+  /** Optional reviewer correction — when present we use this in place of the original answer. */
+  correction?: string | null;
+}
+
+/**
  * Run a single Q&A turn. `history` provides earlier turns so the bot
  * can resolve follow-ups ("what about for prior year?") relative to
  * the previous answer, but every turn is grounded again on the same
  * AUDIT_FILE — the bot doesn't accumulate state outside the file.
+ *
+ * `fewShot` is an optional list of similar past Q&As for this firm
+ * (Phase 2). `documentChunks` is an optional list of relevant uploaded-
+ * document text snippets retrieved by vector search (Phase 3).
  */
 export async function askInterrogateBot(
   ctx: TemplateContext,
   question: string,
   history: InterrogateMessage[] = [],
+  fewShot: FewShotExample[] = [],
+  documentChunks: { documentId: string; documentName: string; content: string; page?: number }[] = [],
 ): Promise<InterrogateResponse> {
   const trimmed = trimContextForPrompt(ctx);
   const { json: auditFileJson, droppedKeys } = buildAuditFileJson(trimmed);
@@ -279,15 +300,42 @@ export async function askInterrogateBot(
   const droppedNote = droppedKeys.length > 0
     ? `\n\nNote: the following fields were omitted from AUDIT_FILE because the engagement file exceeded the prompt size budget: ${droppedKeys.join(', ')}. If a question requires those fields, reply that they were not included in this prompt and recommend re-running with a smaller engagement scope or a model with a larger context window.`
     : '';
+
+  // Phase 3 — uploaded document chunks. Each gets a (document:<id>) tag
+  // the bot can cite directly so the modal renders a preview link.
+  const documentSection = documentChunks.length > 0
+    ? '\n\n=== ENGAGEMENT_DOCUMENTS (text excerpts from uploaded files) ===\n'
+      + documentChunks.map((c, i) =>
+        `[Excerpt ${i + 1} from ${c.documentName}${c.page ? `, page ${c.page}` : ''} — cite as (document:${c.documentId}${c.page ? `, page ${c.page}` : ''})]\n${c.content}`
+      ).join('\n\n---\n\n')
+      + '\n=== END ENGAGEMENT_DOCUMENTS ==='
+    : '';
+
+  const fewShotPreamble = fewShot.length > 0
+    ? '\n\nFor reference, here are answers your firm has rated as good for similar prior questions on different engagements. They show the firm\'s preferred TONE, FORMAT, and CITATION STYLE — but the FACTS in the current answer must come from THIS engagement\'s AUDIT_FILE, not from these examples.'
+    : '';
+
   const systemContent =
     SYSTEM_PROMPT
+    + fewShotPreamble
     + droppedNote
+    + documentSection
     + '\n\n=== AUDIT_FILE (JSON) ===\n'
     + auditFileJson
     + '\n=== END AUDIT_FILE ===';
 
+  // Build few-shot turns as user/assistant pairs. Use the reviewer's
+  // correction as the assistant turn when present — that's the answer
+  // the firm wanted. Otherwise use the bot's original (high-rated) answer.
+  const fewShotTurns: Array<{ role: 'user' | 'assistant'; content: string }> = [];
+  for (const ex of fewShot.slice(0, 5)) {
+    fewShotTurns.push({ role: 'user', content: ex.question });
+    fewShotTurns.push({ role: 'assistant', content: (ex.correction || ex.answer || '').slice(0, 2000) });
+  }
+
   const messages: Array<{ role: 'system' | 'user' | 'assistant'; content: string }> = [
     { role: 'system', content: systemContent },
+    ...fewShotTurns,
     // Cap history to last 10 turns to keep the prompt bounded.
     ...history.slice(-10),
     { role: 'user', content: question },
