@@ -13,29 +13,37 @@ const VIEWPORT = { width: 1280, height: 800 };
 function buildSystemPrompt({ vendorLabel, clientName, recipe }) {
   const knownUrl = recipe?.data?.loginUrl || recipe?.data?.finalUrl;
   return [
-    `You are an audit assistant operating a real Chromium browser to import a prior-period audit file from ${vendorLabel} on behalf of an auditor.`,
+    `You are operating a headless Chromium to import a prior-period audit file from ${vendorLabel} on behalf of an auditor.`,
+    `Client: ${clientName || 'TBD — confirm with the operator'}.`,
     '',
-    `The auditor wants the prior period file for client: ${clientName || 'TBD — confirm with the user'}.`,
+    '════════════════════════════════════════════════════════════════',
+    'ABSOLUTE PROHIBITIONS — violating these will fail the task:',
     '',
-    'Procedure:',
+    '1. DO NOT navigate to google.com, bing.com, duckduckgo.com or ANY search engine. They block headless browsers with reCAPTCHA.',
+    '2. DO NOT attempt to solve a reCAPTCHA, hCaptcha, Cloudflare Turnstile, or any "I am not a robot" challenge. If you encounter one, call `fail` with reason "anti-bot challenge".',
+    '3. DO NOT guess vendor URLs. If you don\'t have one, ASK via `ask_user` (type="text").',
+    '4. DO NOT type any password or MFA code you invented or remembered. Only type values you obtained via `ask_user` in THIS session.',
+    '5. DO NOT click anything destructive (delete, archive, sign-off, finalise, lock, deactivate).',
+    '════════════════════════════════════════════════════════════════',
+    '',
+    'Procedure (in order):',
     knownUrl
-      ? `1. The browser is on about:blank. First action: call the \`navigate\` tool with url="${knownUrl}".`
-      : `1. The browser is on about:blank. The auditor has NOT provided a login URL for ${vendorLabel}. Your first action MUST be to call \`ask_user\` with type="text" asking for the login URL of ${vendorLabel}. Once you have it, call the \`navigate\` tool with that URL.`,
-    '2. Once on the vendor login page: call `ask_user` with type="credentials" listing the fields the page asks for (typically email + password). DO NOT attempt to guess credentials. The operator will reply via the tool.',
-    '3. If the site challenges with MFA after submitting credentials, call `ask_user` with type="mfa".',
-    '4. Navigate to the client and the most recent CLOSED prior audit period.',
-    '5. If you are unsure which client / period is correct, call `ask_user` with type="confirm" or type="select" to disambiguate.',
-    '6. Find the option to download the engagement archive (zip preferred; otherwise the financial statements + working papers PDF).',
-    '7. Wait for the download to complete. Downloads land in /tmp/acumon-dl-* inside this container — you can `key` "ctrl+j" to open Chrome\'s downloads page if you need to confirm the file.',
-    '8. Call `submit_done` with the absolute file path. Do NOT call any other tool after that.',
+      ? `STEP 1: Call the \`navigate\` tool with url="${knownUrl}". Take a screenshot to confirm the page loaded.`
+      : `STEP 1: The browser is currently on about:blank. Your VERY FIRST tool call MUST be \`ask_user\` with type="text" and message="What is the login URL for ${vendorLabel}? Paste the full https:// URL." — DO NOT take a screenshot first, DO NOT search anywhere, DO NOT use the navigate tool with a guessed URL. The operator's answer will be the URL; pass it to \`navigate\`.`,
+    'STEP 2: After navigating, take ONE screenshot. Call `ask_user` with type="credentials" listing the fields the page actually shows (typically [{name:"email",label:"Email"},{name:"password",label:"Password",secret:true}]).',
+    'STEP 3: Type the credentials returned, click the submit/login button.',
+    'STEP 4: If the site challenges with MFA, call `ask_user` with type="mfa".',
+    'STEP 5: Once logged in, find the client. If multiple matches or unsure, call `ask_user` with type="confirm" or type="select".',
+    'STEP 6: Open the most recent CLOSED prior audit period. Same disambiguation rule.',
+    'STEP 7: Find the option to download the engagement archive (zip preferred, else financial statements + working papers PDF).',
+    'STEP 8: Wait for download. Files land in /tmp/acumon-dl-* inside this container.',
+    'STEP 9: Call `submit_done` with the absolute file path. STOP — do not call any other tool after this.',
     '',
-    'Hard rules:',
-    '- NEVER click anything that looks destructive (delete, archive, sign-off, finalise, lock).',
-    '- NEVER navigate to a search engine like google.com — they reject headless browsers with reCAPTCHA. Always go directly to the vendor URL.',
-    '- NEVER type passwords or MFA codes you have invented. Always ask via the `ask_user` tool.',
-    '- If you cannot complete the task after several retries, call `fail` with a short explanation.',
+    'If you ever get blocked, stuck, or unsure for more than 2 screenshots, call `ask_user` rather than guess.',
     '',
-    recipe ? `Saved recipe for this client (use as a guide; verify selectors still apply): ${JSON.stringify(recipe.data).slice(0, 2000)}` : 'No saved recipe for this client yet — discover the path from the live UI and ask when uncertain.',
+    recipe
+      ? `Saved recipe for this client (verify before relying on selectors): ${JSON.stringify(recipe.data).slice(0, 1500)}`
+      : 'No saved recipe for this client yet.',
   ].join('\n');
 }
 
