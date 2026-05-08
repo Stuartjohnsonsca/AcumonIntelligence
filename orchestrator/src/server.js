@@ -31,14 +31,14 @@ app.post('/sessions', async (req, res) => {
   if ((req.headers['x-orchestrator-secret'] || '') !== SECRET) {
     return res.status(401).json({ error: 'Unauthorized' });
   }
-  const { sessionId, vendorLabel, clientName } = req.body || {};
+  const { sessionId, vendorLabel, clientName, auditType, periodEnd } = req.body || {};
   if (!sessionId || !vendorLabel) {
     return res.status(400).json({ error: 'sessionId and vendorLabel required' });
   }
 
   // Acknowledge synchronously, run async. Acumon polls /handoff/status.
   res.json({ accepted: true });
-  void runSession({ sessionId, vendorLabel, clientName })
+  void runSession({ sessionId, vendorLabel, clientName, auditType, periodEnd })
     .catch(err => console.error(`[orchestrator] session ${sessionId} crashed:`, err));
 });
 

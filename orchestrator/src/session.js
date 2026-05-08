@@ -49,8 +49,8 @@ function buildSystemPrompt({ vendorLabel, clientName, recipe }) {
   ].join('\n');
 }
 
-export async function runSession({ sessionId, vendorLabel, clientName }) {
-  console.log(`[session ${sessionId}] starting (vendor=${vendorLabel}, client=${clientName})`);
+export async function runSession({ sessionId, vendorLabel, clientName, auditType, periodEnd }) {
+  console.log(`[session ${sessionId}] starting (vendor=${vendorLabel}, client=${clientName}, auditType=${auditType}, periodEnd=${periodEnd})`);
   // Surface progress even before Chromium is up — the modal will see
   // 'launching_browser' the moment we start, instead of sitting on
   // 'created' if the launch hangs.
@@ -111,11 +111,17 @@ export async function runSession({ sessionId, vendorLabel, clientName }) {
 
     let donePayload = null;
     let failed = false;
+    const targetBits = [
+      `Vendor: ${vendorLabel}`,
+      `Client: ${clientName || '(ask the operator)'}`,
+      auditType ? `Audit type: ${auditType}` : null,
+      periodEnd ? `Looking for the period ENDING ${periodEnd} (i.e. the audit for the year ended ${periodEnd}). When you reach the client's engagement list, pick the engagement matching this period — do NOT ask the operator to disambiguate if there is exactly one match.` : null,
+    ].filter(Boolean).join('. ');
     await runComputerUseLoop({
       page,
       sessionId,
       systemPrompt: buildSystemPrompt({ vendorLabel, clientName, recipe }),
-      initialUserMessage: `Begin. Vendor: ${vendorLabel}. Client: ${clientName || '(ask the operator)'}.`,
+      initialUserMessage: `Begin. ${targetBits}.`,
       onComplete: async (input) => { donePayload = input; },
       onFail: async (reason) => { failed = true; await reportFailure(sessionId, reason); },
     });

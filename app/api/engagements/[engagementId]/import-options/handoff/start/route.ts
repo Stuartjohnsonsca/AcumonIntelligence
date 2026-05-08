@@ -37,7 +37,12 @@ export async function POST(
 
   const engagement = await prisma.auditEngagement.findUnique({
     where: { id: engagementId },
-    select: { firmId: true, client: { select: { clientName: true } } },
+    select: {
+      firmId: true,
+      auditType: true,
+      client: { select: { clientName: true } },
+      period: { select: { periodEnd: true } },
+    },
   });
   if (!engagement || engagement.firmId !== session.user.firmId) {
     return NextResponse.json({ error: 'Engagement not found' }, { status: 404 });
@@ -100,6 +105,8 @@ export async function POST(
           userId: session.user.id,
           vendorLabel,
           clientName: engagement.client?.clientName,
+          auditType: engagement.auditType,
+          periodEnd: engagement.period?.periodEnd?.toISOString().slice(0, 10) || null,
         }),
       });
       const orchText = await orchRes.text().catch(() => '');
