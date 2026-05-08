@@ -4,6 +4,7 @@
 # The base image already runs as the non-root `pwuser` (UID 1000) which
 # is the user permitted to execute the bundled Chromium binary — do
 # NOT override with a different user, otherwise chromium.launch() hangs.
+# cache-bust 2026-05-08T01:45 — force ACR to pull v1.59.1 base
 FROM mcr.microsoft.com/playwright:v1.59.1-jammy
 
 WORKDIR /app
