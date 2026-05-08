@@ -46,9 +46,22 @@ export async function runSession({ sessionId, vendorLabel, clientName }) {
   const downloadsDir = await mkdtemp(path.join(tmpdir(), 'acumon-dl-'));
   console.log(`[session ${sessionId}] downloads dir: ${downloadsDir}`);
 
+  // Container-friendly Chromium flags. --disable-dev-shm-usage is the
+  // load-bearing one: Container Apps gives us a tiny /dev/shm (64 MB)
+  // and Chrome refuses to start when its shared-memory needs exceed it.
+  // Together with --no-sandbox these match the Playwright-recommended
+  // flags for running headless Chromium inside an unprivileged container.
   const browser = await chromium.launch({
     headless: true,
-    args: ['--no-sandbox', '--disable-blink-features=AutomationControlled'],
+    timeout: 60000,
+    args: [
+      '--no-sandbox',
+      '--disable-setuid-sandbox',
+      '--disable-dev-shm-usage',
+      '--disable-gpu',
+      '--disable-software-rasterizer',
+      '--disable-blink-features=AutomationControlled',
+    ],
   });
   console.log(`[session ${sessionId}] chromium launched`);
   const context = await browser.newContext({
