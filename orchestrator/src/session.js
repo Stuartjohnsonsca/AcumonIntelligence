@@ -36,17 +36,28 @@ function buildSystemPrompt({ vendorLabel, clientName, recipe }) {
 }
 
 export async function runSession({ sessionId, vendorLabel, clientName }) {
+  console.log(`[session ${sessionId}] starting (vendor=${vendorLabel}, client=${clientName})`);
+  // Surface progress even before Chromium is up — the modal will see
+  // 'launching_browser' the moment we start, instead of sitting on
+  // 'created' if the launch hangs.
+  try { await reportProgress(sessionId, 'launching_browser', 'Starting browser…'); }
+  catch (err) { console.warn(`[session ${sessionId}] initial reportProgress failed:`, err.message); }
+
   const downloadsDir = await mkdtemp(path.join(tmpdir(), 'acumon-dl-'));
+  console.log(`[session ${sessionId}] downloads dir: ${downloadsDir}`);
+
   const browser = await chromium.launch({
     headless: true,
     args: ['--no-sandbox', '--disable-blink-features=AutomationControlled'],
   });
+  console.log(`[session ${sessionId}] chromium launched`);
   const context = await browser.newContext({
     viewport: VIEWPORT,
     acceptDownloads: true,
     locale: 'en-GB',
   });
   const page = await context.newPage();
+  console.log(`[session ${sessionId}] page open`);
 
   // Track downloads so submit_done can pick the right file.
   const completedDownloads = [];
