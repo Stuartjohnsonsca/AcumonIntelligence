@@ -19,6 +19,12 @@ import { askUser } from './acumon.js';
 
 const MODEL = process.env.COMPUTER_USE_MODEL || 'claude-sonnet-4-5-20250929';
 const MAX_ITERATIONS = 60;
+// Keep only the N most recent screenshot tool_results in context. Older
+// ones get replaced with a tiny text placeholder so Claude still sees the
+// shape of history but the API request stays small. Each screenshot is a
+// big image — letting them accumulate makes every iteration slower than
+// the last.
+const MAX_RECENT_SCREENSHOTS = Number(process.env.MAX_RECENT_SCREENSHOTS || 3);
 // Computer-use tool versions track Anthropic's spec; bump when we move
 // model families.
 const COMPUTER_TOOL_TYPE = 'computer_20250124';
@@ -135,7 +141,7 @@ async function executeComputerAction(page, input) {
       return { type: 'text', text: 'double-clicked' };
     }
     case 'type': {
-      await page.keyboard.type(String(input.text || ''), { delay: 30 });
+      await page.keyboard.type(String(input.text || ''), { delay: 5 });
       return { type: 'text', text: 'typed' };
     }
     case 'key': {
@@ -172,6 +178,32 @@ async function executeComputerAction(page, input) {
   }
 }
 
+// ─── Context pruning ─────────────────────────────────────────────────
+//
+// Walk the message history and replace screenshot images in older
+// tool_results with a 1-line text placeholder, keeping only the
+// MAX_RECENT_SCREENSHOTS most recent. The Anthropic API charges per image
+// token and re-uploads them every iteration, so without this each turn
+// gets ~15 s slower than the last.
+function pruneOldScreenshots(messages) {
+  // Collect references to image-bearing content arrays in order.
+  const imageHolders = [];
+  for (const msg of messages) {
+    if (!Array.isArray(msg.content)) continue;
+    for (const block of msg.content) {
+      if (block.type !== 'tool_result') continue;
+      if (!Array.isArray(block.content)) continue;
+      const hasImage = block.content.some(c => c && c.type === 'image');
+      if (hasImage) imageHolders.push(block);
+    }
+  }
+  // Keep the last N untouched; redact the rest.
+  const cutoff = imageHolders.length - MAX_RECENT_SCREENSHOTS;
+  for (let i = 0; i < cutoff; i++) {
+    imageHolders[i].content = [{ type: 'text', text: '[older screenshot omitted to save context]' }];
+  }
+}
+
 // ─── Main loop ───────────────────────────────────────────────────────
 
 export async function runComputerUseLoop({ page, sessionId, systemPrompt, initialUserMessage, onComplete, onFail }) {
@@ -192,6 +224,7 @@ export async function runComputerUseLoop({ page, sessionId, systemPrompt, initia
   const messages = [{ role: 'user', content: initialUserMessage }];
 
   for (let iter = 0; iter < MAX_ITERATIONS; iter++) {
+    pruneOldScreenshots(messages);
     const response = await anthropic.beta.messages.create({
       model: MODEL,
       max_tokens: 4096,

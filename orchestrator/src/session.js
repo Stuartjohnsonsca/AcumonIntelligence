@@ -31,8 +31,8 @@ function buildSystemPrompt({ vendorLabel, clientName, recipe }) {
       ? `STEP 1: Call the \`navigate\` tool with url="${knownUrl}". Take a screenshot to confirm the page loaded.`
       : `STEP 1: The browser is currently on about:blank. Your VERY FIRST tool call MUST be \`ask_user\` with type="text" and message="What is the login URL for ${vendorLabel}? Paste the full https:// URL." — DO NOT take a screenshot first, DO NOT search anywhere, DO NOT use the navigate tool with a guessed URL. The operator's answer will be the URL; pass it to \`navigate\`.`,
     'STEP 2: After navigating, take ONE screenshot. Call `ask_user` with type="credentials" listing the fields the page actually shows (typically [{name:"email",label:"Email"},{name:"password",label:"Password",secret:true}]).',
-    'STEP 3: Type the credentials returned, click the submit/login button.',
-    'STEP 4: If the site challenges with MFA, call `ask_user` with type="mfa".',
+    'STEP 3: Type the credentials returned, click the submit/login button. Do NOT screenshot between every keystroke — type the full email, then the full password, then click login, THEN screenshot once to check the result.',
+    'STEP 4: If the site challenges with MFA, call `ask_user` with type="mfa" THE MOMENT you see the MFA page — do not wait to take extra screenshots first. Operators receive 2FA codes by email and the codes expire fast, so prompt as soon as you can identify the challenge.',
     'STEP 5: Once logged in, find the client. If multiple matches or unsure, call `ask_user` with type="confirm" or type="select".',
     'STEP 6: Open the most recent CLOSED prior audit period. Same disambiguation rule.',
     'STEP 7: Find the option to download the engagement archive (zip preferred, else financial statements + working papers PDF).',
@@ -40,6 +40,8 @@ function buildSystemPrompt({ vendorLabel, clientName, recipe }) {
     'STEP 9: Call `submit_done` with the absolute file path. STOP — do not call any other tool after this.',
     '',
     'If you ever get blocked, stuck, or unsure for more than 2 screenshots, call `ask_user` rather than guess.',
+    '',
+    'SPEED: Each screenshot adds ~10 s of API latency. Take a screenshot only when you genuinely need to inspect the page (after a navigation, after a click that changes state, before deciding which element to interact with). Do NOT screenshot between consecutive keystrokes or after every micro-action — group actions, then verify.',
     '',
     recipe
       ? `Saved recipe for this client (verify before relying on selectors): ${JSON.stringify(recipe.data).slice(0, 1500)}`
