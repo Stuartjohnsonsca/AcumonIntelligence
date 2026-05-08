@@ -15,7 +15,7 @@
 // `end_turn` or `submit_done` or we hit the iteration cap.
 
 import Anthropic from '@anthropic-ai/sdk';
-import { askUser } from './acumon.js';
+import { askUser, reportProgress } from './acumon.js';
 
 const MODEL = process.env.COMPUTER_USE_MODEL || 'claude-sonnet-4-5-20250929';
 const MAX_ITERATIONS = 60;
@@ -204,6 +204,36 @@ function pruneOldScreenshots(messages) {
   }
 }
 
+// Convert one of Claude's tool_use blocks into a one-line activity
+// summary for the operator-facing log + status feed. Keep these short
+// and human-readable.
+function describeToolUse(tu) {
+  if (tu.name === 'computer') {
+    const a = tu.input?.action;
+    switch (a) {
+      case 'screenshot': return 'Looking at the page';
+      case 'left_click': return `Clicking at (${tu.input?.coordinate?.[0]},${tu.input?.coordinate?.[1]})`;
+      case 'right_click': return `Right-clicking at (${tu.input?.coordinate?.[0]},${tu.input?.coordinate?.[1]})`;
+      case 'double_click': return `Double-clicking at (${tu.input?.coordinate?.[0]},${tu.input?.coordinate?.[1]})`;
+      case 'type': {
+        const t = String(tu.input?.text || '');
+        // Don't echo secrets — if it looks long-ish and has no spaces, redact.
+        const looksSensitive = t.length >= 6 && !/\s/.test(t);
+        return `Typing "${looksSensitive ? '•••' : t.slice(0, 40)}"`;
+      }
+      case 'key': return `Pressing ${tu.input?.text}`;
+      case 'scroll': return `Scrolling ${tu.input?.scroll_direction || 'down'}`;
+      case 'wait': return `Waiting ${tu.input?.duration || 1}s`;
+      default: return `computer.${a}`;
+    }
+  }
+  if (tu.name === 'navigate') return `Navigating to ${tu.input?.url}`;
+  if (tu.name === 'ask_user') return `Asking the operator (${tu.input?.type})`;
+  if (tu.name === 'submit_done') return 'Submitting downloaded archive';
+  if (tu.name === 'fail') return `Giving up: ${tu.input?.reason || 'no reason'}`;
+  return tu.name;
+}
+
 // ─── Main loop ───────────────────────────────────────────────────────
 
 export async function runComputerUseLoop({ page, sessionId, systemPrompt, initialUserMessage, onComplete, onFail }) {
@@ -222,9 +252,15 @@ export async function runComputerUseLoop({ page, sessionId, systemPrompt, initia
   ];
 
   const messages = [{ role: 'user', content: initialUserMessage }];
+  // Track the most-recent stage we've inferred from Claude's actions,
+  // so the modal's stepper roughly tracks reality even though we don't
+  // know with certainty when Claude has "finished logging in".
+  let currentStage = 'logging_in';
 
   for (let iter = 0; iter < MAX_ITERATIONS; iter++) {
     pruneOldScreenshots(messages);
+    console.log(`[session ${sessionId}] iter ${iter + 1}/${MAX_ITERATIONS}: thinking…`);
+    const t0 = Date.now();
     const response = await anthropic.beta.messages.create({
       model: MODEL,
       max_tokens: 4096,
@@ -233,6 +269,7 @@ export async function runComputerUseLoop({ page, sessionId, systemPrompt, initia
       messages,
       betas: ['computer-use-2025-01-24'],
     });
+    console.log(`[session ${sessionId}] iter ${iter + 1}: API ${Date.now() - t0}ms, stop=${response.stop_reason}`);
 
     messages.push({ role: 'assistant', content: response.content });
 
@@ -245,6 +282,28 @@ export async function runComputerUseLoop({ page, sessionId, systemPrompt, initia
     }
 
     const toolUses = response.content.filter(b => b.type === 'tool_use');
+    // Surface what Claude is about to do — both to container logs (for
+    // the operator running `az containerapp logs show`) and to the
+    // modal's progress message (so the user sees a live activity feed).
+    if (toolUses.length > 0) {
+      const summary = toolUses.map(describeToolUse).join('; ');
+      console.log(`[session ${sessionId}] iter ${iter + 1}: ${summary}`);
+      // Heuristic stage advancement based on the tool calls Claude is
+      // making — once we've seen MFA the user is mid-login; once we
+      // see ask_user(select|confirm) the user is past login and Claude
+      // is disambiguating clients/periods (i.e. navigating).
+      for (const tu of toolUses) {
+        if (tu.name === 'ask_user') {
+          const t = tu.input?.type;
+          if (t === 'select' || t === 'confirm') currentStage = 'navigating';
+        } else if (tu.name === 'submit_done') {
+          currentStage = 'downloading';
+        }
+      }
+      // Don't await reportProgress — fire-and-forget so a slow Acumon
+      // API call can't stall the loop. Drop errors silently.
+      reportProgress(sessionId, currentStage, summary).catch(() => {});
+    }
     const toolResults = [];
     for (const tu of toolUses) {
       try {
