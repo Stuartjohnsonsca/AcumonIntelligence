@@ -6,7 +6,6 @@ import { prisma } from '@/lib/db';
 // Generous window: an import involves human waits (typing credentials,
 // fetching the MFA email, choosing the right engagement) PLUS Claude
 // driving the browser, which can run 30+ iterations on a complex flow.
-// 30 min was uncomfortably tight in practice; 60 leaves headroom.
 const SESSION_TTL_MINUTES = 60;
 
 function newSessionId(): string {
@@ -87,9 +86,7 @@ export async function POST(
   console.log('[handoff/start]', {
     sessionId,
     orchestratorUrlSet: Boolean(orchestratorUrl),
-    orchestratorUrlLen: orchestratorUrl?.length || 0,
     orchestratorSecretSet: Boolean(orchestratorSecret),
-    orchestratorSecretLen: orchestratorSecret?.length || 0,
   });
   if (orchestratorUrl && orchestratorSecret) {
     // Await the response so we get visibility into success/failure;

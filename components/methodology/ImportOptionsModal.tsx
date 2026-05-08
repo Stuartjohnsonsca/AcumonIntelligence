@@ -856,7 +856,7 @@ function HandoffStep({
       )}
       {status === 'expired' && (
         <p className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded p-2 text-center">
-          Session expired (30-minute window). Cancel and start again.
+          Session expired (60-minute window). Cancel and start again.
         </p>
       )}
       {status === 'cancelled' && (
