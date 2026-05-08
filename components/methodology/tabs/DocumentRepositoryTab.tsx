@@ -67,6 +67,13 @@ function isPriorPeriodFolderDoc(doc: AuditDocument): boolean {
 
 function fmtDate(d: string | null) { return d ? new Date(d).toLocaleDateString('en-GB') : '—'; }
 function fmtDateTime(d: string | null) { return d ? new Date(d).toLocaleDateString('en-GB') + ' ' + new Date(d).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' }) : '—'; }
+// Browser-side email syntax check — same shape `<input type=email>`
+// uses internally. Server-side validation is the authority; this is
+// only here to drive the inline error indicator and disable the
+// submit button while the field is obviously wrong.
+function isValidEmail(s: string): boolean {
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(s.trim());
+}
 
 export function DocumentRepositoryTab({ engagementId }: Props) {
   const { data: session } = useSession();
@@ -89,7 +96,11 @@ export function DocumentRepositoryTab({ engagementId }: Props) {
   const [templates, setTemplates] = useState<{ id: string; name: string; category: string }[]>([]);
   const [selectedTemplate, setSelectedTemplate] = useState('');
   const [generateAction, setGenerateAction] = useState<'download' | 'send_email' | 'send_portal'>('download');
-  const [auditPlanDetail, setAuditPlanDetail] = useState<'high' | 'detailed'>('high');
+  // Detail level removed from the UI per user request — the server-
+  // side template engine still accepts the parameter so we always
+  // pass 'detailed' (the more useful default) so the rendered audit
+  // procedures don't silently strip themselves down to test names.
+  const auditPlanDetail = 'detailed';
   const [recipientEmail, setRecipientEmail] = useState('');
   const [recipientName, setRecipientName] = useState('');
   const [generating, setGenerating] = useState(false);
@@ -334,24 +345,6 @@ export function DocumentRepositoryTab({ engagementId }: Props) {
               </div>
             </div>
           )}
-          {/* Audit plan detail toggle — only affects templates that use {{significant_risks_table}} / {{areas_of_focus_table}} */}
-          <div className="mb-3">
-            <label className="block text-xs text-slate-500 mb-1">
-              Audit plan detail <span className="text-slate-400 italic">(applies when the template renders audit procedures)</span>
-            </label>
-            <div className="flex gap-3 text-xs">
-              <label className="inline-flex items-center gap-1 cursor-pointer">
-                <input type="radio" name="auditPlanDetail" value="high" checked={auditPlanDetail === 'high'}
-                  onChange={() => setAuditPlanDetail('high')} className="w-3 h-3" />
-                <span>High-level (test names only)</span>
-              </label>
-              <label className="inline-flex items-center gap-1 cursor-pointer">
-                <input type="radio" name="auditPlanDetail" value="detailed" checked={auditPlanDetail === 'detailed'}
-                  onChange={() => setAuditPlanDetail('detailed')} className="w-3 h-3" />
-                <span>Detailed (full procedure descriptions)</span>
-              </label>
-            </div>
-          </div>
           {generateResult && (
             <div className={`text-xs mb-2 p-2 rounded ${generateResult.includes('Failed') || generateResult.includes('Error') ? 'bg-red-50 text-red-600' : 'bg-green-50 text-green-600'}`}>
               {generateResult}
@@ -379,9 +372,19 @@ export function DocumentRepositoryTab({ engagementId }: Props) {
                 className="w-full border border-slate-200 rounded px-3 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-blue-400" placeholder="e.g. Bank Confirmation" />
             </div>
             <div>
-              <label className="block text-xs text-slate-500 mb-1">Requested From</label>
-              <input type="text" value={newFrom} onChange={e => setNewFrom(e.target.value)}
-                className="w-full border border-slate-200 rounded px-3 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-blue-400" placeholder="e.g. Client, Bank" />
+              <label className="block text-xs text-slate-500 mb-1">Requested To</label>
+              <input
+                type="email"
+                value={newFrom}
+                onChange={e => setNewFrom(e.target.value)}
+                className={`w-full border rounded px-3 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-blue-400 ${
+                  newFrom && !isValidEmail(newFrom) ? 'border-red-300 bg-red-50/30' : 'border-slate-200'
+                }`}
+                placeholder="email@example.com"
+              />
+              {newFrom && !isValidEmail(newFrom) && (
+                <p className="text-[10px] text-red-600 mt-0.5">Enter a valid email address</p>
+              )}
             </div>
             <div>
               <label className="block text-xs text-slate-500 mb-1">Mapped To (comma-separated)</label>
@@ -432,8 +435,11 @@ export function DocumentRepositoryTab({ engagementId }: Props) {
             </div>
           </div>
           <div className="flex gap-2">
-            <button onClick={requestDocument} disabled={!newName.trim() || submitting}
-              className="text-xs px-3 py-1.5 bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50 font-medium">
+            <button
+              onClick={requestDocument}
+              disabled={!newName.trim() || submitting || (!!newFrom && !isValidEmail(newFrom))}
+              className="text-xs px-3 py-1.5 bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50 font-medium"
+            >
               {submitting ? 'Requesting...' : 'Create Request'}
             </button>
             <button onClick={() => setShowForm(false)} className="text-xs px-3 py-1.5 bg-slate-100 text-slate-600 rounded hover:bg-slate-200">Cancel</button>

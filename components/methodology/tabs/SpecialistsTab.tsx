@@ -176,6 +176,11 @@ function roleLabel(roleKey: string, firmRoleLabels: Record<string, string>): str
 export function SpecialistsTab({ engagementId, specialists, teamMembers, currentUserId, currentUserName }: Props) {
   const [state, setState] = useState<SpecialistsState>({});
   const [loading, setLoading] = useState(true);
+  // Tab-level "Overall" sign-off bucket — clickable from the right of
+  // the sub-tab strip, persisted to PF section
+  // 'specialists_overall_signoffs'. Pre-existing rollup-only callers
+  // tolerate missing fields, so adding this field is back-compat.
+  const [overallSignOffs, setOverallSignOffs] = useState<SignOffMap>({});
   // Firm-configured specialist role labels keyed by role key.
   // Loaded from /api/methodology-admin/specialist-roles on mount;
   // used by roleLabel() to display the firm's chosen label instead
@@ -198,11 +203,29 @@ export function SpecialistsTab({ engagementId, specialists, teamMembers, current
     let cancelled = false;
     (async () => {
       try {
-        const res = await fetch(`/api/engagements/${engagementId}/permanent-file?section=specialists_items`);
-        if (!cancelled && res.ok) {
-          const data = await res.json();
+        const [itemsRes, overallRes] = await Promise.all([
+          fetch(`/api/engagements/${engagementId}/permanent-file?section=specialists_items`),
+          fetch(`/api/engagements/${engagementId}/permanent-file?section=specialists_overall_signoffs`),
+        ]);
+        if (!cancelled && itemsRes.ok) {
+          const data = await itemsRes.json();
           const blob = data?.data || data?.answers || {};
           if (blob && typeof blob === 'object') setState(blob as SpecialistsState);
+        }
+        if (!cancelled && overallRes.ok) {
+          const data = await overallRes.json();
+          const blob = data?.data || {};
+          // 'preparer'/'reviewer'/'ri' are real records when present;
+          // ignore the legacy 'all'/'some' aggregate strings the
+          // tax-technical loader writes to a different section.
+          const map: SignOffMap = {};
+          for (const role of ['preparer', 'reviewer', 'ri']) {
+            const rec = (blob as Record<string, unknown>)[role];
+            if (rec && typeof rec === 'object' && (rec as { timestamp?: string }).timestamp) {
+              map[role] = rec as SignOffRecord;
+            }
+          }
+          setOverallSignOffs(map);
         }
       } catch { /* tolerant */ } finally {
         if (!cancelled) setLoading(false);
@@ -308,6 +331,54 @@ export function SpecialistsTab({ engagementId, specialists, teamMembers, current
     setState(next);
     persist(next);
   }
+
+  async function persistOverall(next: SignOffMap) {
+    try {
+      await fetch(`/api/engagements/${engagementId}/permanent-file`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ sectionKey: 'specialists_overall_signoffs', data: next, replace: true }),
+      });
+      try { window.dispatchEvent(new CustomEvent('engagement:signoffs-changed')); } catch {}
+    } catch { /* tolerant */ }
+  }
+
+  function toggleOverallSignOff(role: string) {
+    if (!currentUserId) return;
+    const existing = overallSignOffs[role];
+    const isSelf = existing?.userId === currentUserId;
+    const next: SignOffMap = { ...overallSignOffs };
+    if (existing && isSelf) {
+      delete next[role];
+    } else if (!existing) {
+      next[role] = {
+        userId: currentUserId,
+        userName: currentUserName || 'User',
+        timestamp: new Date().toISOString(),
+      };
+    }
+    setOverallSignOffs(next);
+    void persistOverall(next);
+  }
+
+  // Per-role rollup feeding the right-side overall widget. We treat a
+  // role as 'full' only when every populated sub-tab is 'all' for that
+  // role; 'partial' when ANY sign-off exists anywhere; 'none'
+  // otherwise. Mirrors the rule used by aggregateAcrossSubTabs but
+  // returns the SignOffDots subsidiaryProgress shape.
+  const overallSubsidiaryProgress = useMemo<Record<string, 'none' | 'partial' | 'full'>>(() => {
+    const out: Record<string, 'none' | 'partial' | 'full'> = { preparer: 'none', reviewer: 'none', ri: 'none' };
+    for (const role of ['preparer', 'reviewer', 'ri']) {
+      const subStates = Object.values(state).map(r => aggregateForRole(r.items, role));
+      const populated = subStates.filter(s => s !== 'none' || subStates.length === 1);
+      if (subStates.length === 0) { out[role] = 'none'; continue; }
+      if (subStates.every(s => s === 'all')) { out[role] = 'full'; continue; }
+      if (subStates.some(s => s !== 'none')) { out[role] = 'partial'; continue; }
+      out[role] = 'none';
+      void populated; // keep the variable for readability above; unused intentionally
+    }
+    return out;
+  }, [state]);
 
   function getItemsFor(roleKey: string): SpecialistItem[] {
     return state[roleKey]?.items || [];
@@ -458,10 +529,13 @@ export function SpecialistsTab({ engagementId, specialists, teamMembers, current
 
   return (
     <div className="space-y-4">
-      {/* Sub-tab strip — one tab per assigned specialist OR per role
-          that has items even without a specialist assigned. Each
-          carries Reviewer + RI aggregate dots. */}
-      <div className="flex flex-wrap gap-1 border-b border-slate-200">
+      {/* Sub-tab strip + overall sign-off widget. The widget on the
+          right is the same pattern as the Communications tab: a
+          clickable Preparer/Reviewer/RI bucket whose colour is driven
+          by the union of (a) explicit sign-offs to the bucket itself
+          and (b) rollup of every sub-tab's per-role aggregate. */}
+      <div className="flex items-end justify-between gap-3 border-b border-slate-200">
+        <div className="flex flex-wrap gap-1 flex-1">
         {subTabs.map(sub => {
           const items = getItemsFor(sub.roleKey);
           const reviewer = aggregateForRole(items, 'reviewer');
@@ -489,6 +563,19 @@ export function SpecialistsTab({ engagementId, specialists, teamMembers, current
             </button>
           );
         })}
+        </div>
+        <div className="shrink-0 pb-1.5 pl-3 border-l border-slate-200">
+          <SignOffDots
+            label="Specialists"
+            signOffs={overallSignOffs}
+            teamMembers={teamMembers}
+            currentUserId={currentUserId}
+            onToggle={toggleOverallSignOff}
+            size="sm"
+            hideRoleLabels
+            subsidiaryProgress={overallSubsidiaryProgress}
+          />
+        </div>
       </div>
 
       {/* Active sub-tab content */}
