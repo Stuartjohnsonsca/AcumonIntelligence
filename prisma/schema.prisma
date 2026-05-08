@@ -2119,112 +2119,24 @@ model CloudAuditConnector {
   @@map("cloud_audit_connectors")
 }
 
-// ─── OAuth 2.1 server (for the Acumon MCP custom integration) ────────
-// Implements the subset of OAuth that MCP custom-integration clients
-// (claude.ai, Cowork CLI, etc.) need: dynamic client registration,
-// authorization-code with PKCE, refresh tokens, and access tokens
-// scoped to a User + Firm. Tokens are stored hashed (sha256, no salt
-// — they're already 256-bit random) so a DB leak doesn't yield active
-// bearers; lookup is by `tokenHash`.
-
-/// OAuth client registered against this Acumon installation. Created
-/// either via Dynamic Client Registration (RFC 7591) or by an admin via
-/// the methodology-admin UI for a fixed integration. Most rows will be
-/// claude.ai sideload registrations, one per user-install.
-model OAuthClient {
-  id                       String   @id @default(uuid())
-  clientId                 String   @unique @map("client_id")
-  /// SHA-256 hash of clientSecret, when one was issued. NULL for public
-  /// clients (PKCE-only). MCP clients are typically public.
-  clientSecretHash         String?  @map("client_secret_hash")
-  clientName               String   @map("client_name")
-  /// JSON array of permitted redirect URIs.
-  redirectUris             Json     @map("redirect_uris")
-  tokenEndpointAuthMethod  String   @default("none") @map("token_endpoint_auth_method") // none | client_secret_basic | client_secret_post
-  grantTypes               Json     @default("[\"authorization_code\", \"refresh_token\"]") @map("grant_types")
-  /// Optional firm scoping — when set, only users in this firm may
-  /// authenticate against this client. NULL means any firm.
-  firmId                   String?  @map("firm_id")
-  createdAt                DateTime @default(now()) @map("created_at")
-  updatedAt                DateTime @updatedAt @map("updated_at")
-
-  authCodes    OAuthAuthCode[]
-  accessTokens OAuthAccessToken[]
-
-  @@index([firmId])
-  @@map("oauth_clients")
-}
-
-/// Short-lived (60 s) authorization code issued at /oauth/authorize once
-/// the user has consented. Bound to the requesting client + redirectUri
-/// + PKCE code challenge; redeemed once at /oauth/token.
-model OAuthAuthCode {
-  code                  String   @id // 32 bytes random, base64url
-  clientId              String   @map("client_id")
-  userId                String   @map("user_id")
-  firmId                String   @map("firm_id")
-  redirectUri           String   @map("redirect_uri")
-  codeChallenge         String   @map("code_challenge")
-  codeChallengeMethod   String   @map("code_challenge_method") // S256 only
-  scope                 String?  // space-separated; only "mcp" supported for now
-  /// Optional resource indicator (RFC 8707) — the audience the issued
-  /// access token will be valid for. We always set this to the canonical
-  /// MCP endpoint URL.
-  resource              String?
-  expiresAt             DateTime @map("expires_at")
-  used                  Boolean  @default(false)
-  createdAt             DateTime @default(now()) @map("created_at")
-
-  client OAuthClient @relation(fields: [clientId], references: [clientId], onDelete: Cascade)
-
-  @@index([clientId])
-  @@index([expiresAt])
-  @@map("oauth_auth_codes")
-}
-
-/// Issued access token. Lookup by `tokenHash` (sha256 of the bearer);
-/// the raw token never persists. Refresh tokens follow the same pattern.
-/// `revokedAt` is set on token rotation (a refresh issues a new pair and
-/// retires the old one) and on explicit user-driven revocation.
-model OAuthAccessToken {
-  id                    String    @id @default(uuid())
-  tokenHash             String    @unique @map("token_hash")
-  refreshTokenHash      String?   @unique @map("refresh_token_hash")
-  clientId              String    @map("client_id")
-  userId                String    @map("user_id")
-  firmId                String    @map("firm_id")
-  scope                 String?
-  resource              String?
-  expiresAt             DateTime  @map("expires_at")
-  refreshTokenExpiresAt DateTime? @map("refresh_token_expires_at")
-  revokedAt             DateTime? @map("revoked_at")
-  createdAt             DateTime  @default(now()) @map("created_at")
-
-  client OAuthClient @relation(fields: [clientId], references: [clientId], onDelete: Cascade)
-
-  @@index([clientId])
-  @@index([userId])
-  @@index([expiresAt])
-  @@map("oauth_access_tokens")
-}
-
-/// One-time session that an external AI assistant (e.g. Claude Cowork
-/// with the Acumon MCP server registered) uses to drive a prior-period
-/// import on behalf of the user. Session token IS the bearer credential
-/// — no other auth required for the duration. Single-use; once a file is
-/// submitted (or the TTL elapses) the session is closed.
+/// One server-driven import session: the orchestrator (a separately
+/// hosted Node + Playwright + Claude Computer Use service) drives a
+/// headless Chrome through the vendor's UI on behalf of the user.
+/// Acumon UI polls this row to see what's happening; orchestrator
+/// authenticates to Acumon's internal API with a shared secret and
+/// writes progress + prompts here. Live in-flight prompts (credentials,
+/// MFA, click-confirms) are queued under pendingPrompt* and answered
+/// by the user via /handoff/answer; orchestrator long-polls for the
+/// answer and continues.
 ///
-/// Lifecycle: pending → submitted | expired | cancelled.
-/// On submitted: `submittedDocumentId` points at the AuditDocument row
-/// the assistant uploaded; the modal polling /handoff/status sees the
-/// flip and advances the user to the Review screen.
+/// Lifecycle: pending → submitted | expired | cancelled | failed.
 model ImportHandoffSession {
-  id                    String   @id // base32 random — 32+ chars; THIS is the bearer token
+  id                    String   @id // base32 random — short, used as session id only (NOT a bearer)
   engagementId          String   @map("engagement_id")
   firmId                String   @map("firm_id")
   createdById           String   @map("created_by_id")
-  vendorLabel           String   @map("vendor_label") // shown to the assistant via get_session_context
-  status                String   @default("pending") // pending | submitted | expired | cancelled
+  vendorLabel           String   @map("vendor_label")
+  status                String   @default("pending") // pending | submitted | expired | cancelled | failed
   // Granular progress within the pending lifecycle. The modal renders
   // this as a progress bar so the user can see what the assistant is
   // doing in real time. Stages, in order:
@@ -2238,6 +2150,28 @@ model ImportHandoffSession {
   progressStage         String   @default("created") @map("progress_stage")
   progressMessage       String?  @map("progress_message")
   progressAt            DateTime? @map("progress_at")
+  // Live in-flight prompt — orchestrator writes this when it needs
+  // user input (login credentials, MFA code, "is this the right client?"
+  // confirmation, etc.). Modal polls /handoff/status, sees the prompt,
+  // renders inline form. User submits via /handoff/answer which clears
+  // these fields and writes pendingPromptAnswer for the orchestrator to
+  // pick up.
+  //
+  // pendingPromptType: null | 'credentials' | 'mfa' | 'confirm' | 'select' | 'text'
+  pendingPromptType     String?  @map("pending_prompt_type")
+  pendingPromptMessage  String?  @map("pending_prompt_message")
+  // For 'select': { options: [{value, label}] }; for 'credentials':
+  // { fields: [{name, label, secret?}] }; etc. Free-form per type.
+  pendingPromptOptions  Json?    @map("pending_prompt_options")
+  pendingPromptId       String?  @map("pending_prompt_id") // monotonic id so answer is matched to prompt
+  pendingPromptAt       DateTime? @map("pending_prompt_at")
+  // User's answer to the most recent prompt. JSON-shaped per the type.
+  // Cleared by the orchestrator once consumed (this is where transient
+  // credentials live — orchestrator MUST clear immediately after reading).
+  pendingPromptAnswer   Json?    @map("pending_prompt_answer")
+  pendingPromptAnsweredAt DateTime? @map("pending_prompt_answered_at")
+  // Optional failure detail when status='failed'. Surfaced in the modal.
+  failureMessage        String?  @map("failure_message")
   expiresAt             DateTime @map("expires_at")
   submittedDocumentId   String?  @map("submitted_document_id")
   submittedExtractionId String?  @map("submitted_extraction_id")
@@ -2248,7 +2182,40 @@ model ImportHandoffSession {
 
   @@index([engagementId])
   @@index([status])
+  @@index([pendingPromptType])
   @@map("import_handoff_sessions")
+}
+
+/// Per-(firm, vendor, clientReference) navigation recipe accumulated
+/// from successful imports. The orchestrator looks one up before each
+/// import; if it exists, it follows the recipe (clicks selector X, then
+/// menu Y, etc.). If it doesn't, the orchestrator runs in "discover"
+/// mode (Claude figures it out from screenshots, asks the user to
+/// confirm), and on success writes the recipe back. Crowd-sources
+/// vendor knowledge through real audits — no API access from the
+/// vendor required.
+///
+/// `clientReference` is a per-firm slug for the client at the vendor —
+/// usually equal to AuditEngagement.client.clientName but can be
+/// overridden by the user during a confirmation prompt the first time.
+model VendorRecipe {
+  id              String   @id @default(uuid())
+  firmId          String   @map("firm_id")
+  vendorKey       String   @map("vendor_key") // e.g. 'my_workpapers'
+  clientReference String   @map("client_reference") // per-firm client identifier at the vendor
+  /// JSON: { loginUrl, listClientsSelector, ..., navigationSteps: [...], hints: {...} }
+  recipe          Json
+  /// Bumped each time the orchestrator updates this recipe; lets us
+  /// track recipe drift over time and roll back if needed.
+  version         Int      @default(1)
+  successCount    Int      @default(0) @map("success_count")
+  lastUsedAt      DateTime? @map("last_used_at")
+  createdAt       DateTime @default(now()) @map("created_at")
+  updatedAt       DateTime @updatedAt @map("updated_at")
+
+  @@unique([firmId, vendorKey, clientReference])
+  @@index([firmId, vendorKey])
+  @@map("vendor_recipes")
 }
 
 /// Per-engagement scratchpad of an AI-extracted "proposed mapping" of

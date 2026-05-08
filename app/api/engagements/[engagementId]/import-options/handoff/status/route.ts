@@ -46,6 +46,14 @@ export async function GET(
     progressStage: handoff.progressStage,
     progressMessage: handoff.progressMessage,
     progressAt: handoff.progressAt?.toISOString() || null,
+    failureMessage: handoff.failureMessage,
+    pendingPrompt: handoff.pendingPromptType ? {
+      id: handoff.pendingPromptId,
+      type: handoff.pendingPromptType,
+      message: handoff.pendingPromptMessage,
+      options: handoff.pendingPromptOptions,
+      at: handoff.pendingPromptAt?.toISOString() || null,
+    } : null,
   });
 }
 

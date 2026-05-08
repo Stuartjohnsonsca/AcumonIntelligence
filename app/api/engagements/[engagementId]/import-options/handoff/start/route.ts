@@ -5,8 +5,6 @@ import { prisma } from '@/lib/db';
 
 const SESSION_TTL_MINUTES = 30;
 
-// Short, human-pasteable session id. NOT a bearer; this is just a row
-// pointer the assistant carries. OAuth provides the actual auth.
 function newSessionId(): string {
   const ALPHABET = 'abcdefghjkmnpqrstvwxyz23456789';
   const bytes = randomBytes(12);
@@ -17,12 +15,16 @@ function newSessionId(): string {
 
 // POST /api/engagements/[id]/import-options/handoff/start
 // Body: { vendorLabel: string }
-// Creates an ImportHandoffSession (status='pending', 30-minute TTL) and
-// returns a short sessionId. The user's AI assistant — once authorised
-// via OAuth on the Acumon MCP server — calls list_pending_sessions /
-// get_session_context / submit_archive on the MCP, scoping operations
-// by sessionId. Acumon-side polling on /handoff/status flips to the
-// Review screen on submit.
+//
+// Creates a server-driven import session and notifies the orchestrator
+// (Azure Container Apps service) to start a headless browser run for it.
+// Modal polls /handoff/status for progress + prompts.
+//
+// Orchestrator URL is `ORCHESTRATOR_URL` (env). If not set, the session
+// is created in 'pending' state but the orchestrator is not invoked —
+// the modal will sit on stage 'created' until something picks it up.
+// This is the deliberate behaviour during the rollout window before the
+// orchestrator container is deployed.
 export async function POST(
   req: Request,
   { params }: { params: Promise<{ engagementId: string }> },
@@ -35,7 +37,7 @@ export async function POST(
 
   const engagement = await prisma.auditEngagement.findUnique({
     where: { id: engagementId },
-    select: { firmId: true },
+    select: { firmId: true, client: { select: { clientName: true } } },
   });
   if (!engagement || engagement.firmId !== session.user.firmId) {
     return NextResponse.json({ error: 'Engagement not found' }, { status: 404 });
@@ -44,8 +46,6 @@ export async function POST(
   const body = await req.json().catch(() => ({})) as { vendorLabel?: string };
   const vendorLabel = (body.vendorLabel || '').trim() || 'Cloud Audit Software';
 
-  // Generate a unique short id (collision risk negligible at this length;
-  // retry once if it happens).
   let sessionId = newSessionId();
   for (let attempt = 0; attempt < 3; attempt++) {
     const exists = await prisma.importHandoffSession.findUnique({ where: { id: sessionId } });
@@ -63,18 +63,39 @@ export async function POST(
       vendorLabel,
       status: 'pending',
       expiresAt,
+      progressStage: 'created',
+      progressMessage: 'Session created. Starting browser…',
+      progressAt: new Date(),
     },
   });
 
-  const proto = req.headers.get('x-forwarded-proto') || 'https';
-  const host = req.headers.get('x-forwarded-host') || req.headers.get('host') || '';
-  const mcpEndpoint = `${proto}://${host}/api/mcp`;
-  const setupUrl = `${proto}://${host}/methodology-admin/cloud-audit-connectors/mcp-setup`;
+  // Notify the orchestrator (fire-and-forget). If it's down or
+  // misconfigured, the session stays in 'created' and the modal still
+  // works — the user just doesn't see progress beyond stage 1. We log
+  // but do not fail the user.
+  const orchestratorUrl = process.env.ORCHESTRATOR_URL;
+  const orchestratorSecret = process.env.ORCHESTRATOR_SECRET;
+  if (orchestratorUrl && orchestratorSecret) {
+    void fetch(`${orchestratorUrl.replace(/\/+$/, '')}/sessions`, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        'x-orchestrator-secret': orchestratorSecret,
+      },
+      body: JSON.stringify({
+        sessionId,
+        engagementId,
+        firmId: session.user.firmId,
+        userId: session.user.id,
+        vendorLabel,
+        clientName: engagement.client?.clientName,
+      }),
+    }).catch(err => console.warn('[handoff/start] orchestrator notify failed:', err));
+  }
 
   return NextResponse.json({
     sessionId,
-    mcpEndpoint,
-    setupUrl,
     expiresAt: expiresAt.toISOString(),
+    orchestratorConfigured: Boolean(orchestratorUrl && orchestratorSecret),
   });
 }

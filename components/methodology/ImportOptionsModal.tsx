@@ -1,5 +1,22 @@
 'use client';
 
+// Import Options pop-up — shown when an engagement is first opened (or
+// re-summoned later from the Prior Period tab). Three source paths:
+//
+//   1. Upload — user picks a local file. Synchronous, no orchestrator.
+//   2. Connect to Cloud Audit Software — server-driven. Acumon spins up
+//      a headless browser via the orchestrator, AI navigates the
+//      vendor's site, the user is prompted inline for credentials / MFA /
+//      confirmations as needed.
+//   3. Other Cloud Audit Software — same as (2), with a free-text vendor
+//      name.
+//
+// During (2) and (3) the modal polls /handoff/status every 1.5s. The
+// response carries a progressStage (drives the progress bar), an optional
+// pendingPrompt (if set, we render an inline credentials / MFA / confirm /
+// select form), and on submit_archive flips status='submitted' so we can
+// hand off to the Review pop-up.
+
 import { useEffect, useMemo, useState } from 'react';
 import { expandZipFile } from '@/lib/client-unzip';
 import type {
@@ -7,152 +24,246 @@ import type {
   ImportSelection,
   ImportSourceType,
   CloudConnectorRecord,
-  CloudConnectorConfig,
 } from '@/lib/import-options/types';
-import { emptyMyWorkpapersConfig } from '@/lib/import-options/types';
-import { buildCoworkPrompt } from '@/lib/import-options/cowork-prompt';
 
-interface Props {
-  engagementId: string;
-  clientName: string;
-  /** Optional — passed to the Claude Cowork prompt so Claude knows which period to find. */
-  periodEnd?: string;
-  auditTypeLabel?: string;
-  /** Called once the user clicks Proceed (selections committed) OR Cancel (selections=[]). */
-  onComplete: (state: ImportOptionsState, opts: { extractionId?: string }) => void;
-  /** Called when the user dismisses the modal without proceeding. */
-  onClose?: () => void;
-}
+// ─── Stage / prompt types (mirror server) ────────────────────────────
 
-interface CheckboxOption {
-  key: ImportSelection;
-  label: string;
-}
-
-const CHECKBOX_OPTIONS: CheckboxOption[] = [
-  { key: 'import_data', label: 'Import data from Another audit file' },
-  { key: 'copy_documents', label: 'Copy documents from Another Audit file' },
-  { key: 'ai_populate_current', label: 'Use AI to populate current year' },
-];
-
-type Step =
-  | 'select'
-  | 'expand'
-  | 'busy'
-  | 'connect_credentials'
-  | 'register_connector'
-  | 'handoff'   // connected mode — uses Acumon's MCP server (preferred)
-  | 'cowork';   // manual fallback — user copy-pastes the prompt
-
-type HandoffStage = 'created' | 'discovered' | 'context_loaded' | 'uploading' | 'extracting' | 'submitted';
+type HandoffStage =
+  | 'created'
+  | 'launching_browser'
+  | 'logging_in'
+  | 'navigating'
+  | 'downloading'
+  | 'awaiting_input'
+  | 'discovered'
+  | 'context_loaded'
+  | 'uploading'
+  | 'extracting'
+  | 'submitted';
 
 interface StageMeta { key: HandoffStage; label: string; }
 const HANDOFF_STAGES: StageMeta[] = [
-  { key: 'created',        label: 'Session created' },
-  { key: 'discovered',     label: 'Assistant connected' },
-  { key: 'context_loaded', label: 'Engagement loaded' },
-  { key: 'uploading',      label: 'File uploading' },
-  { key: 'extracting',     label: 'AI extracting' },
-  { key: 'submitted',      label: 'Ready for review' },
+  { key: 'created',           label: 'Session ready' },
+  { key: 'launching_browser', label: 'Browser launched' },
+  { key: 'logging_in',        label: 'Logging in' },
+  { key: 'navigating',        label: 'Finding prior period' },
+  { key: 'downloading',       label: 'Downloading archive' },
+  { key: 'extracting',        label: 'AI extracting' },
+  { key: 'submitted',         label: 'Ready for review' },
 ];
+
+// Map old/legacy stages onto the user-facing 7 above so the bar still
+// makes sense if the orchestrator emits granular progress.
+const STAGE_ALIAS: Record<string, HandoffStage> = {
+  discovered: 'launching_browser',
+  context_loaded: 'launching_browser',
+  uploading: 'downloading',
+  awaiting_input: 'logging_in', // most prompts happen during login
+};
+function normaliseStage(s: string | null | undefined): HandoffStage {
+  if (!s) return 'created';
+  if (HANDOFF_STAGES.some(x => x.key === s)) return s as HandoffStage;
+  return STAGE_ALIAS[s] || 'created';
+}
 function stageIndex(stage: HandoffStage): number {
   const i = HANDOFF_STAGES.findIndex(s => s.key === stage);
   return i < 0 ? 0 : i;
 }
 
+interface PendingPrompt {
+  id: string;
+  type: 'credentials' | 'mfa' | 'confirm' | 'select' | 'text';
+  message: string;
+  options?: {
+    fields?: Array<{ name: string; label: string; secret?: boolean }>;
+    options?: Array<{ value: string; label: string }>;
+    placeholder?: string;
+  };
+}
+
+// ─── Modal props + selection options ─────────────────────────────────
+
+interface Props {
+  engagementId: string;
+  clientName: string;
+  periodEnd?: string;
+  auditTypeLabel?: string;
+  onComplete: (state: ImportOptionsState, opts: { extractionId?: string }) => void;
+  onClose?: () => void;
+}
+
+const CHECKBOX_OPTIONS: { key: ImportSelection; label: string }[] = [
+  { key: 'import_data',         label: 'Import data from another audit file' },
+  { key: 'copy_documents',      label: 'Copy documents from another audit file' },
+  { key: 'ai_populate_current', label: 'Use AI to populate current year' },
+];
+
+type Step = 'select' | 'expand' | 'upload' | 'busy' | 'handoff';
+
+// ─── Component ───────────────────────────────────────────────────────
+
 export function ImportOptionsModal({ engagementId, clientName, periodEnd, auditTypeLabel, onComplete, onClose }: Props) {
   const [step, setStep] = useState<Step>('select');
   const [selected, setSelected] = useState<Set<ImportSelection>>(new Set());
   const [sourceType, setSourceType] = useState<ImportSourceType | null>(null);
-  const [busyMessage, setBusyMessage] = useState('Working...');
+  const [busyMessage, setBusyMessage] = useState('Working…');
   const [error, setError] = useState<string | null>(null);
 
-  // Connector picker
+  // Cloud connector picker
   const [connectors, setConnectors] = useState<CloudConnectorRecord[]>([]);
-  const [connectorsLoading, setConnectorsLoading] = useState(false);
   const [chosenConnectorId, setChosenConnectorId] = useState('');
+  const [otherVendorName, setOtherVendorName] = useState('MyWorkPapers');
 
-  // Credential entry — never persisted; held only for the in-flight call
-  const [credToken, setCredToken] = useState('');
-  const [credUsername, setCredUsername] = useState('');
-  const [credPassword, setCredPassword] = useState('');
-  const [credClientId, setCredClientId] = useState('');
-  const [credClientSecret, setCredClientSecret] = useState('');
-
-  // New-connector registration form
-  const [newConnLabel, setNewConnLabel] = useState('');
-  const [newConnConfig, setNewConnConfig] = useState<CloudConnectorConfig>({
-    baseUrl: '',
-    authScheme: 'bearer',
-    authConfig: {},
-    endpoints: {},
-  });
-
-  // Upload
+  // Upload (manual file picker)
   const [uploadFile, setUploadFile] = useState<File | null>(null);
 
-  // Connected mode (handoff) — creates a server-side ImportHandoffSession
-  // and waits for the user's OAuth-authorised AI assistant to call
-  // submit_archive on /api/mcp. The session id is just an identifier;
-  // OAuth (added via the assistant's connector UI as a one-time setup)
-  // is the actual auth. We never expose a bearer token in this modal.
+  // Handoff session state (server-driven)
   const [handoffSessionId, setHandoffSessionId] = useState<string | null>(null);
-  const [handoffStatus, setHandoffStatus] = useState<'pending' | 'submitted' | 'expired' | 'cancelled'>('pending');
-  const [handoffPromptCopied, setHandoffPromptCopied] = useState(false);
-  // Progress within the pending lifecycle, surfaced as a 5-stage
-  // progress bar so the user can see what their assistant is doing.
-  const [handoffProgressStage, setHandoffProgressStage] = useState<HandoffStage>('created');
-  const [handoffProgressMessage, setHandoffProgressMessage] = useState<string>('Session created. Waiting for your assistant to connect…');
+  const [handoffStatus, setHandoffStatus] = useState<'pending' | 'submitted' | 'expired' | 'cancelled' | 'failed'>('pending');
+  const [handoffStage, setHandoffStage] = useState<HandoffStage>('created');
+  const [handoffMessage, setHandoffMessage] = useState<string>('Session created. Starting browser…');
+  const [handoffFailureMessage, setHandoffFailureMessage] = useState<string | null>(null);
+  const [orchestratorConfigured, setOrchestratorConfigured] = useState<boolean | null>(null);
+  const [pendingPrompt, setPendingPrompt] = useState<PendingPrompt | null>(null);
 
-  // Manual / cowork fallback — user copy-pastes a prompt into their
-  // assistant and drops the result back here.
-  const [coworkVendorLabel, setCoworkVendorLabel] = useState('MyWorkPapers');
-  const [coworkFile, setCoworkFile] = useState<File | null>(null);
-  const [coworkPromptCopied, setCoworkPromptCopied] = useState(false);
-  const coworkPrompt = useMemo(() => buildCoworkPrompt({
-    vendorLabel: coworkVendorLabel || 'the cloud audit software',
-    clientName,
-    periodEnd,
-    auditTypeLabel,
-  }), [coworkVendorLabel, clientName, periodEnd, auditTypeLabel]);
+  // Load connectors when entering the cloud step
+  useEffect(() => {
+    if (sourceType !== 'cloud') return;
+    fetch('/api/cloud-audit-connectors')
+      .then(r => r.ok ? r.json() : { connectors: [] })
+      .then(j => setConnectors(j.connectors || []))
+      .catch(() => setConnectors([]));
+  }, [sourceType]);
 
-  function copyCoworkPrompt() {
-    if (typeof navigator !== 'undefined' && navigator.clipboard) {
-      navigator.clipboard.writeText(coworkPrompt).then(
-        () => { setCoworkPromptCopied(true); setTimeout(() => setCoworkPromptCopied(false), 2000); },
-        () => { /* clipboard may be unavailable in non-https; fallback is the visible textarea */ },
-      );
-    }
+  // Polling — drive the progress bar and pick up pending prompts
+  useEffect(() => {
+    if (step !== 'handoff' || !handoffSessionId) return;
+    if (handoffStatus !== 'pending') return;
+    let cancelled = false;
+    const url = `/api/engagements/${engagementId}/import-options/handoff/status?sessionId=${encodeURIComponent(handoffSessionId)}`;
+    const tick = async () => {
+      try {
+        const res = await fetch(url);
+        if (!res.ok) return;
+        const json = await res.json() as {
+          status: string;
+          extractionId?: string | null;
+          progressStage?: string;
+          progressMessage?: string | null;
+          failureMessage?: string | null;
+          pendingPrompt?: PendingPrompt | null;
+        };
+        if (cancelled) return;
+        if (json.progressStage) setHandoffStage(normaliseStage(json.progressStage));
+        if (json.progressMessage) setHandoffMessage(json.progressMessage);
+        setPendingPrompt(json.pendingPrompt || null);
+        if (json.failureMessage) setHandoffFailureMessage(json.failureMessage);
+        if (json.status === 'submitted' && json.extractionId) {
+          setHandoffStatus('submitted');
+          await fetch(`/api/engagements/${engagementId}/import-options/save`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              selections: Array.from(selected),
+              source: { type: 'cloud', vendorLabel: vendorLabelForHandoff() },
+              status: 'extracted',
+            }),
+          });
+          onComplete({
+            prompted: true,
+            selections: Array.from(selected),
+            source: { type: 'cloud', vendorLabel: vendorLabelForHandoff() },
+            status: 'extracted',
+            extractionId: json.extractionId,
+          }, { extractionId: json.extractionId });
+        } else if (json.status === 'expired' || json.status === 'cancelled' || json.status === 'failed') {
+          setHandoffStatus(json.status as 'expired' | 'cancelled' | 'failed');
+        }
+      } catch { /* keep polling */ }
+    };
+    const id = setInterval(tick, 1500);
+    void tick();
+    return () => { cancelled = true; clearInterval(id); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [step, handoffSessionId, handoffStatus, engagementId]);
+
+  function vendorLabelForHandoff(): string {
+    if (sourceType === 'cloud') return connectors.find(c => c.id === chosenConnectorId)?.label || 'Cloud Audit Software';
+    if (sourceType === 'cloud_other') return otherVendorName.trim() || 'Cloud Audit Software';
+    return 'Cloud Audit Software';
   }
 
-  // The short prompt we show under "Tell your assistant", used by the
-  // optional copy button. Generic — no tokens or URLs in it because OAuth
-  // does the auth and the assistant resolves the session itself via
-  // list_pending_sessions.
-  const handoffShortPrompt = `Run my pending Acumon import session for ${coworkVendorLabel || 'the cloud audit software'}.`;
-
-  function copyHandoffPrompt() {
-    if (typeof navigator !== 'undefined' && navigator.clipboard) {
-      navigator.clipboard.writeText(handoffShortPrompt).then(
-        () => { setHandoffPromptCopied(true); setTimeout(() => setHandoffPromptCopied(false), 2000); },
-        () => { /* ignore */ },
-      );
-    }
+  function toggle(key: ImportSelection) {
+    const next = new Set(selected);
+    if (next.has(key)) next.delete(key); else next.add(key);
+    setSelected(next);
   }
 
-  // Start a connected-mode handoff session.
-  //
-  // 1. POST /handoff/start to create a server-side pending session. The
-  //    response carries a short sessionId — NOT a bearer token. OAuth on
-  //    /api/mcp is what authenticates the assistant; the user does that
-  //    setup once via Settings → Connectors in their AI tool.
-  // 2. Show a "Session ready" view with one short copyable instruction
-  //    sentence and the live status (pending → submitted).
-  // 3. Polling on /handoff/status flips the modal into the Review screen
-  //    when the assistant calls submit_archive on /api/mcp.
-  async function startHandoffSession(vendorLabel: string) {
+  // ─── Step transitions ──────────────────────────────────────────────
+
+  async function saveSelectionsAndFinish(opts: { selections: ImportSelection[]; cancelled?: boolean }) {
     setStep('busy');
-    setBusyMessage('Creating import session...');
+    setBusyMessage(opts.cancelled ? 'Cancelling…' : 'Saving…');
+    try {
+      const res = await fetch(`/api/engagements/${engagementId}/import-options/save`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          selections: opts.selections,
+          status: opts.cancelled ? 'cancelled' : 'pending',
+        }),
+      });
+      if (!res.ok) {
+        const j = await res.json().catch(() => ({}));
+        throw new Error(j.error || `Save failed (${res.status})`);
+      }
+      const json = await res.json();
+      onComplete(json.importOptions as ImportOptionsState, {});
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Save failed');
+      setStep('select');
+    }
+  }
+
+  async function handleProceedFromSelect() {
+    setError(null);
+    const sel = Array.from(selected);
+    if (!sel.includes('import_data')) {
+      await saveSelectionsAndFinish({ selections: sel });
+      return;
+    }
+    setStep('expand');
+  }
+
+  async function handleUploadProceed() {
+    if (!uploadFile) { setError('Please choose a file'); return; }
+    setStep('busy');
+    setBusyMessage('Uploading prior audit file…');
+    setError(null);
+    try {
+      const file = await expandZipFile(uploadFile) || uploadFile;
+      const formData = new FormData();
+      formData.append('file', file);
+      formData.append('originalName', uploadFile.name);
+      formData.append('selections', JSON.stringify(Array.from(selected)));
+      const res = await fetch(`/api/engagements/${engagementId}/import-options/upload`, {
+        method: 'POST', body: formData,
+      });
+      if (!res.ok) {
+        const j = await res.json().catch(() => ({}));
+        throw new Error(j.error || `Upload failed (${res.status})`);
+      }
+      const json = await res.json();
+      onComplete(json.importOptions as ImportOptionsState, { extractionId: json.extractionId });
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Upload failed');
+      setStep('upload');
+    }
+  }
+
+  async function startHandoff(vendorLabel: string) {
+    setStep('busy');
+    setBusyMessage('Connecting to vendor…');
     setError(null);
     try {
       const res = await fetch(`/api/engagements/${engagementId}/import-options/handoff/start`, {
@@ -162,267 +273,37 @@ export function ImportOptionsModal({ engagementId, clientName, periodEnd, auditT
       });
       if (!res.ok) {
         const j = await res.json().catch(() => ({}));
-        throw new Error(j.error || `Failed to start session (${res.status})`);
+        throw new Error(j.error || `Failed to start (${res.status})`);
       }
-      const json = await res.json() as { sessionId: string; mcpEndpoint: string; expiresAt: string };
+      const json = await res.json() as { sessionId: string; orchestratorConfigured: boolean };
       setHandoffSessionId(json.sessionId);
       setHandoffStatus('pending');
-      setHandoffProgressStage('created');
-      setHandoffProgressMessage('Session created. Waiting for your assistant to connect…');
-      setCoworkVendorLabel(vendorLabel);
+      setHandoffStage('created');
+      setHandoffMessage('Session created. Starting browser…');
+      setHandoffFailureMessage(null);
+      setOrchestratorConfigured(json.orchestratorConfigured);
       setStep('handoff');
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to start session');
+      setError(err instanceof Error ? err.message : 'Failed to connect');
       setStep('expand');
     }
   }
 
-  // Poll the handoff status while we're waiting for the assistant to
-  // call submit_archive on the MCP endpoint. Stops on submitted /
-  // expired / cancelled.
-  useEffect(() => {
-    if (step !== 'handoff' || !handoffSessionId || handoffStatus !== 'pending') return;
-    const url = `/api/engagements/${engagementId}/import-options/handoff/status?sessionId=${encodeURIComponent(handoffSessionId)}`;
-    let cancelled = false;
-    const tick = async () => {
-      try {
-        const res = await fetch(url);
-        if (!res.ok) return;
-        const json = await res.json() as {
-          status: string;
-          extractionId?: string | null;
-          progressStage?: HandoffStage;
-          progressMessage?: string | null;
-        };
-        if (cancelled) return;
-        if (json.progressStage) setHandoffProgressStage(json.progressStage);
-        if (json.progressMessage) setHandoffProgressMessage(json.progressMessage);
-        if (json.status === 'submitted' && json.extractionId) {
-          setHandoffStatus('submitted');
-          await fetch(`/api/engagements/${engagementId}/import-options/save`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              selections: Array.from(selected),
-              source: { type: 'cloud', vendorLabel: coworkVendorLabel },
-              status: 'extracted',
-            }),
-          });
-          onComplete({
-            prompted: true,
-            selections: Array.from(selected),
-            source: { type: 'cloud', vendorLabel: coworkVendorLabel },
-            status: 'extracted',
-            extractionId: json.extractionId,
-          }, { extractionId: json.extractionId });
-        } else if (json.status === 'expired' || json.status === 'cancelled') {
-          setHandoffStatus(json.status as 'expired' | 'cancelled');
-        }
-      } catch {
-        /* keep polling on transient errors */
-      }
-    };
-    const id = setInterval(tick, 2500);
-    void tick();
-    return () => { cancelled = true; clearInterval(id); };
-  }, [step, handoffSessionId, handoffStatus, engagementId, selected, coworkVendorLabel, onComplete]);
-
   async function cancelHandoff() {
     if (!handoffSessionId) return;
     try {
-      await fetch(`/api/engagements/${engagementId}/import-options/handoff/status?sessionId=${encodeURIComponent(handoffSessionId)}`, {
-        method: 'DELETE',
-      });
+      await fetch(`/api/engagements/${engagementId}/import-options/handoff/status?sessionId=${encodeURIComponent(handoffSessionId)}`, { method: 'DELETE' });
     } catch { /* ignore */ }
     setHandoffStatus('cancelled');
     setStep('expand');
   }
 
-  useEffect(() => {
-    if (step !== 'expand') return;
-    if (sourceType !== 'cloud' && sourceType !== 'cloud_other') return;
-    setConnectorsLoading(true);
-    fetch('/api/cloud-audit-connectors')
-      .then(r => r.ok ? r.json() : { connectors: [] })
-      .then(j => setConnectors(j.connectors || []))
-      .catch(() => setConnectors([]))
-      .finally(() => setConnectorsLoading(false));
-  }, [step, sourceType]);
-
-  function toggle(key: ImportSelection) {
-    const next = new Set(selected);
-    if (next.has(key)) next.delete(key); else next.add(key);
-    setSelected(next);
-  }
-
-  async function handleProceed() {
-    setError(null);
-    const sel = Array.from(selected);
-    // If no "import_data" selected, just save selections and finish.
-    if (!sel.includes('import_data')) {
-      await saveAndFinish({ selections: sel });
-      return;
-    }
-    // Otherwise expand — ask user for the source.
-    setStep('expand');
-  }
-
-  async function handleCancel() {
-    await saveAndFinish({ selections: [], cancelled: true });
+  function handleClose() {
+    void saveSelectionsAndFinish({ selections: [], cancelled: true });
     onClose?.();
   }
 
-  async function saveAndFinish(args: { selections: ImportSelection[]; source?: ImportOptionsState['source']; cancelled?: boolean }) {
-    setStep('busy');
-    setBusyMessage(args.cancelled ? 'Cancelling...' : 'Saving selections...');
-    try {
-      const res = await fetch(`/api/engagements/${engagementId}/import-options/save`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          selections: args.selections,
-          source: args.source,
-          status: args.cancelled ? 'cancelled' : 'pending',
-        }),
-      });
-      if (!res.ok) {
-        const j = await res.json().catch(() => ({}));
-        throw new Error(j.error || `Save failed (${res.status})`);
-      }
-      const json = await res.json();
-      onComplete(json.importOptions as ImportOptionsState, { extractionId: json.extractionId });
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to save selections');
-      setStep('select');
-    }
-  }
-
-  async function handleUploadProceed() {
-    if (!uploadFile) { setError('Please choose a file'); return; }
-    setStep('busy');
-    setBusyMessage('Uploading prior audit file...');
-    setError(null);
-    try {
-      const file = await expandZipFile(uploadFile) || uploadFile;
-      const formData = new FormData();
-      formData.append('file', file);
-      formData.append('originalName', uploadFile.name);
-      formData.append('selections', JSON.stringify(Array.from(selected)));
-
-      const res = await fetch(`/api/engagements/${engagementId}/import-options/upload`, {
-        method: 'POST', body: formData,
-      });
-      if (!res.ok) {
-        const j = await res.json().catch(() => ({}));
-        throw new Error(j.error || `Upload failed (${res.status})`);
-      }
-      const json = await res.json();
-      onComplete(json.importOptions as ImportOptionsState, { extractionId: json.extractionId });
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Upload failed');
-      setStep('expand');
-    }
-  }
-
-  // Claude Cowork: file the user drags back in after Claude downloads it
-  // gets uploaded to the same endpoint as the regular Upload path, but with
-  // sourceType=claude_cowork and the vendor label so the audit-trail history
-  // records what produced the file.
-  async function handleCoworkUploadProceed() {
-    if (!coworkFile) { setError('Drop the file Claude downloaded'); return; }
-    setStep('busy');
-    setBusyMessage('Uploading file from Claude Cowork...');
-    setError(null);
-    try {
-      const file = await expandZipFile(coworkFile) || coworkFile;
-      const formData = new FormData();
-      formData.append('file', file);
-      formData.append('originalName', coworkFile.name);
-      formData.append('selections', JSON.stringify(Array.from(selected)));
-      formData.append('sourceType', 'claude_cowork');
-      formData.append('vendorLabel', coworkVendorLabel);
-
-      const res = await fetch(`/api/engagements/${engagementId}/import-options/upload`, {
-        method: 'POST', body: formData,
-      });
-      if (!res.ok) {
-        const j = await res.json().catch(() => ({}));
-        throw new Error(j.error || `Upload failed (${res.status})`);
-      }
-      const json = await res.json();
-      onComplete(json.importOptions as ImportOptionsState, { extractionId: json.extractionId });
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Upload failed');
-      setStep('cowork');
-    }
-  }
-
-  async function handleCloudFetchProceed() {
-    if (!chosenConnectorId) { setError('Pick a connector'); return; }
-    setStep('busy');
-    setBusyMessage('Connecting to cloud audit software...');
-    setError(null);
-    try {
-      const res = await fetch(`/api/engagements/${engagementId}/import-options/cloud-fetch`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          connectorId: chosenConnectorId,
-          credentials: {
-            token: credToken || undefined,
-            username: credUsername || undefined,
-            password: credPassword || undefined,
-            clientId: credClientId || undefined,
-            clientSecret: credClientSecret || undefined,
-          },
-          selections: Array.from(selected),
-        }),
-      });
-      if (!res.ok) {
-        const j = await res.json().catch(() => ({}));
-        throw new Error(j.error || `Cloud fetch failed (${res.status})`);
-      }
-      const json = await res.json();
-      onComplete(json.importOptions as ImportOptionsState, { extractionId: json.extractionId });
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Cloud fetch failed');
-      setStep('connect_credentials');
-    }
-  }
-
-  async function handleRegisterNewConnector() {
-    if (!newConnLabel.trim() || !newConnConfig.baseUrl.trim()) {
-      setError('Label and Base URL are required');
-      return;
-    }
-    setStep('busy');
-    setBusyMessage('Registering connector...');
-    setError(null);
-    try {
-      const res = await fetch('/api/cloud-audit-connectors', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ label: newConnLabel.trim(), config: newConnConfig }),
-      });
-      if (!res.ok) {
-        const j = await res.json().catch(() => ({}));
-        throw new Error(j.error || `Register failed (${res.status})`);
-      }
-      const json = await res.json();
-      const updated: CloudConnectorRecord[] = await fetch('/api/cloud-audit-connectors')
-        .then(r => r.ok ? r.json() : { connectors: [] })
-        .then(j => j.connectors || []);
-      setConnectors(updated);
-      setChosenConnectorId(json.connector?.id || '');
-      setSourceType('cloud');
-      setStep('connect_credentials');
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Register failed');
-      setStep('register_connector');
-    }
-  }
-
-  // ── Render ─────────────────────────────────────────────────────────
+  // ─── Render ────────────────────────────────────────────────────────
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
@@ -432,579 +313,114 @@ export function ImportOptionsModal({ engagementId, clientName, periodEnd, auditT
             <h2 className="text-lg font-semibold text-slate-800">Start New Audit — Import Options</h2>
             <p className="text-xs text-slate-500 mt-0.5">{clientName}</p>
           </div>
-          <button onClick={handleCancel} className="text-slate-400 hover:text-slate-600 text-xl leading-none">×</button>
+          <button onClick={handleClose} className="text-slate-400 hover:text-slate-600 text-xl leading-none">×</button>
         </div>
 
         <div className="flex-1 overflow-y-auto px-6 py-5">
-          {error && (
-            <div className="mb-4 px-3 py-2 bg-red-50 border border-red-200 rounded text-xs text-red-700">{error}</div>
-          )}
+          {error && <div className="mb-4 px-3 py-2 bg-red-50 border border-red-200 rounded text-xs text-red-700">{error}</div>}
 
           {step === 'select' && (
-            <>
-              <p className="text-sm text-slate-700 mb-3">Please select any import options:</p>
-              <div className="space-y-2 mb-6">
-                {CHECKBOX_OPTIONS.map(opt => (
-                  <label key={opt.key} className="flex items-center gap-3 px-3 py-2 border border-slate-200 rounded-lg hover:bg-slate-50 cursor-pointer">
-                    <input
-                      type="checkbox"
-                      checked={selected.has(opt.key)}
-                      onChange={() => toggle(opt.key)}
-                      className="w-4 h-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500"
-                    />
-                    <span className="text-sm text-slate-700">{opt.label}</span>
-                  </label>
-                ))}
-              </div>
-              <p className="text-[11px] text-slate-400 italic">
-                Cancelling skips all imports — you can populate the engagement manually.
-              </p>
-            </>
+            <SelectStep selected={selected} onToggle={toggle} />
           )}
 
           {step === 'expand' && (
-            <>
-              <p className="text-sm text-slate-700 mb-3">Where is the source audit file?</p>
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-5">
-                <button
-                  onClick={() => setSourceType('upload')}
-                  className={`text-left p-3 border-2 rounded-lg ${sourceType === 'upload' ? 'border-blue-500 bg-blue-50' : 'border-slate-200 hover:border-slate-300'}`}
-                >
-                  <div className="text-sm font-semibold text-slate-800">📤 Upload</div>
-                  <p className="text-xs text-slate-500 mt-1">Browse for a local file (zip or PDF).</p>
-                </button>
-                <button
-                  onClick={() => setSourceType('cloud')}
-                  className={`text-left p-3 border-2 rounded-lg ${sourceType === 'cloud' ? 'border-blue-500 bg-blue-50' : 'border-slate-200 hover:border-slate-300'}`}
-                >
-                  <div className="text-sm font-semibold text-slate-800">☁ Connect to Cloud Audit Software</div>
-                  <p className="text-xs text-slate-500 mt-1">Fetch from MyWorkPapers or another configured vendor.</p>
-                </button>
-                <button
-                  onClick={() => setSourceType('cloud_other')}
-                  className={`text-left p-3 border-2 rounded-lg ${sourceType === 'cloud_other' ? 'border-blue-500 bg-blue-50' : 'border-slate-200 hover:border-slate-300'}`}
-                >
-                  <div className="text-sm font-semibold text-slate-800">＋ Other Cloud Audit Software</div>
-                  <p className="text-xs text-slate-500 mt-1">Use any other vendor — type its name and we&apos;ll guide you through the rest.</p>
-                </button>
-              </div>
-
-              {sourceType === 'upload' && (
-                <div className="border border-slate-200 rounded-lg p-4 bg-slate-50">
-                  <label className="block text-xs font-medium text-slate-600 mb-2">Audit file (.zip or .pdf)</label>
-                  <input
-                    type="file"
-                    accept=".zip,.pdf"
-                    onChange={e => setUploadFile(e.target.files?.[0] || null)}
-                    className="block text-sm"
-                  />
-                  {uploadFile && (
-                    <p className="text-[11px] text-slate-500 mt-2">
-                      Selected: <span className="font-medium">{uploadFile.name}</span> ({(uploadFile.size / 1024).toFixed(0)} KB)
-                    </p>
-                  )}
-                </div>
-              )}
-
-              {sourceType === 'cloud' && (
-                <div className="border border-slate-200 rounded-lg p-4 bg-slate-50">
-                  <label className="block text-xs font-medium text-slate-600 mb-1">Cloud Audit Software</label>
-                  {connectorsLoading ? (
-                    <p className="text-xs text-slate-400">Loading...</p>
-                  ) : (
-                    <select
-                      value={chosenConnectorId}
-                      onChange={e => setChosenConnectorId(e.target.value)}
-                      className="w-full border border-slate-200 rounded px-3 py-1.5 text-sm bg-white focus:outline-none focus:ring-1 focus:ring-blue-400"
-                    >
-                      <option value="">— Select vendor —</option>
-                      {connectors.map(c => (
-                        <option key={c.id} value={c.id}>{c.label}</option>
-                      ))}
-                    </select>
-                  )}
-                </div>
-              )}
-
-              {sourceType === 'cloud_other' && (
-                <div className="border border-slate-200 rounded-lg p-4 bg-slate-50">
-                  <label className="block text-xs font-medium text-slate-600 mb-1">Vendor name</label>
-                  <input
-                    type="text"
-                    value={coworkVendorLabel}
-                    onChange={e => setCoworkVendorLabel(e.target.value)}
-                    placeholder="e.g. CaseWare Cloud, Inflo, AuditBoard"
-                    className="w-full border border-slate-200 rounded px-3 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-blue-400"
-                  />
-                  <p className="text-[10px] text-slate-400 italic mt-1">
-                    Type the vendor&apos;s name — we&apos;ll guide your AI assistant through the rest.
-                  </p>
-                </div>
-              )}
-            </>
+            <ExpandStep
+              sourceType={sourceType}
+              setSourceType={setSourceType}
+              connectors={connectors}
+              chosenConnectorId={chosenConnectorId}
+              setChosenConnectorId={setChosenConnectorId}
+              otherVendorName={otherVendorName}
+              setOtherVendorName={setOtherVendorName}
+            />
           )}
 
-          {step === 'register_connector' && (
-            <>
-              <p className="text-sm text-slate-700 mb-3">
-                Register a new Cloud Audit Software connector. The connection recipe is stored
-                firm-wide; user credentials are entered separately each time and never saved.
-              </p>
-              <div className="space-y-3">
-                <div>
-                  <label className="block text-xs font-medium text-slate-600 mb-1">Vendor Label</label>
-                  <input
-                    type="text"
-                    value={newConnLabel}
-                    onChange={e => setNewConnLabel(e.target.value)}
-                    placeholder="e.g. CaseWare Cloud"
-                    className="w-full border border-slate-200 rounded px-3 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-blue-400"
-                  />
-                </div>
-                <div>
-                  <label className="block text-xs font-medium text-slate-600 mb-1">API Base URL</label>
-                  <input
-                    type="url"
-                    value={newConnConfig.baseUrl}
-                    onChange={e => setNewConnConfig({ ...newConnConfig, baseUrl: e.target.value })}
-                    placeholder="https://api.vendor.com/v1"
-                    className="w-full border border-slate-200 rounded px-3 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-blue-400"
-                  />
-                </div>
-                <div>
-                  <label className="block text-xs font-medium text-slate-600 mb-1">Auth Scheme</label>
-                  <select
-                    value={newConnConfig.authScheme}
-                    onChange={e => setNewConnConfig({ ...newConnConfig, authScheme: e.target.value as CloudConnectorConfig['authScheme'] })}
-                    className="w-full border border-slate-200 rounded px-3 py-1.5 text-sm bg-white focus:outline-none focus:ring-1 focus:ring-blue-400"
-                  >
-                    <option value="bearer">Bearer token</option>
-                    <option value="api_key">API key (custom header)</option>
-                    <option value="basic">Basic auth (user / password)</option>
-                    <option value="oauth2_client_credentials">OAuth2 client credentials</option>
-                  </select>
-                </div>
-                {newConnConfig.authScheme === 'api_key' && (
-                  <div>
-                    <label className="block text-xs font-medium text-slate-600 mb-1">API Key Header Name</label>
-                    <input
-                      type="text"
-                      value={newConnConfig.authConfig?.headerName || ''}
-                      onChange={e => setNewConnConfig({ ...newConnConfig, authConfig: { ...(newConnConfig.authConfig || {}), headerName: e.target.value } })}
-                      placeholder="X-API-Key"
-                      className="w-full border border-slate-200 rounded px-3 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-blue-400"
-                    />
-                  </div>
-                )}
-                {newConnConfig.authScheme === 'oauth2_client_credentials' && (
-                  <div className="space-y-2">
-                    <div>
-                      <label className="block text-xs font-medium text-slate-600 mb-1">OAuth2 Token URL</label>
-                      <input
-                        type="url"
-                        value={newConnConfig.authConfig?.oauth2?.tokenUrl || ''}
-                        onChange={e => setNewConnConfig({
-                          ...newConnConfig,
-                          authConfig: {
-                            ...(newConnConfig.authConfig || {}),
-                            oauth2: { ...(newConnConfig.authConfig?.oauth2 || { tokenUrl: '' }), tokenUrl: e.target.value },
-                          },
-                        })}
-                        placeholder="https://api.vendor.com/oauth/token"
-                        className="w-full border border-slate-200 rounded px-3 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-blue-400"
-                      />
-                    </div>
-                    <div>
-                      <label className="block text-xs font-medium text-slate-600 mb-1">OAuth2 Scope (optional)</label>
-                      <input
-                        type="text"
-                        value={newConnConfig.authConfig?.oauth2?.scope || ''}
-                        onChange={e => setNewConnConfig({
-                          ...newConnConfig,
-                          authConfig: {
-                            ...(newConnConfig.authConfig || {}),
-                            oauth2: { ...(newConnConfig.authConfig?.oauth2 || { tokenUrl: '' }), scope: e.target.value },
-                          },
-                        })}
-                        placeholder="audit.read"
-                        className="w-full border border-slate-200 rounded px-3 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-blue-400"
-                      />
-                    </div>
-                  </div>
-                )}
-                <details className="border border-slate-200 rounded p-3 bg-slate-50">
-                  <summary className="text-xs font-medium text-slate-600 cursor-pointer">Endpoint paths</summary>
-                  <p className="text-[11px] text-slate-500 mt-2 mb-3">
-                    Provide vendor-specific paths. Use <code>{'{clientName}'}</code> / <code>{'{periodEnd}'}</code> as substitutions.
-                    Either Download Archive (preferred — returns the audit file) or Fetch Engagement (returns JSON we parse with AI).
-                  </p>
-                  {(['fetchEngagement', 'downloadArchive'] as const).map(key => (
-                    <div key={key} className="grid grid-cols-[110px_70px_1fr] gap-2 items-center mb-2">
-                      <span className="text-[11px] text-slate-600">{key}</span>
-                      <select
-                        value={newConnConfig.endpoints[key]?.method || 'GET'}
-                        onChange={e => setNewConnConfig({
-                          ...newConnConfig,
-                          endpoints: {
-                            ...newConnConfig.endpoints,
-                            [key]: { ...(newConnConfig.endpoints[key] || { method: 'GET', path: '' }), method: e.target.value as 'GET' | 'POST' },
-                          },
-                        })}
-                        className="border border-slate-200 rounded px-2 py-1 text-xs bg-white"
-                      >
-                        <option value="GET">GET</option>
-                        <option value="POST">POST</option>
-                      </select>
-                      <input
-                        type="text"
-                        value={newConnConfig.endpoints[key]?.path || ''}
-                        onChange={e => setNewConnConfig({
-                          ...newConnConfig,
-                          endpoints: {
-                            ...newConnConfig.endpoints,
-                            [key]: { ...(newConnConfig.endpoints[key] || { method: 'GET', path: '' }), path: e.target.value },
-                          },
-                        })}
-                        placeholder={key === 'downloadArchive' ? '/clients/{clientName}/audits/{periodEnd}/archive.zip' : '/clients/{clientName}/audits/{periodEnd}'}
-                        className="border border-slate-200 rounded px-2 py-1 text-xs"
-                      />
-                    </div>
-                  ))}
-                </details>
-                <p className="text-[11px] text-amber-700 bg-amber-50 border border-amber-200 rounded px-3 py-2">
-                  We do not invent vendor APIs. The values you enter here come from the vendor&apos;s own
-                  API documentation; if any are wrong the connector will return a clear error and store nothing.
-                </p>
-              </div>
-            </>
-          )}
-
-          {step === 'handoff' && handoffSessionId && (() => {
-            const currentIdx = stageIndex(handoffProgressStage);
-            const percent = Math.round((currentIdx / (HANDOFF_STAGES.length - 1)) * 100);
-            const inProgress = handoffStatus === 'pending' && handoffProgressStage !== 'submitted';
-            return (
-              <div className="py-2">
-                <p className="text-sm text-slate-800 font-medium text-center mb-1">
-                  {handoffProgressStage === 'submitted' ? 'Import complete' : 'Importing prior audit file'}
-                </p>
-                <p className="text-xs text-slate-500 text-center mb-5">
-                  {handoffProgressMessage}
-                </p>
-
-                {/* Progress bar */}
-                <div className="relative mb-2">
-                  <div className="h-1.5 bg-slate-200 rounded-full overflow-hidden">
-                    <div
-                      className={`h-full transition-all duration-500 ${handoffProgressStage === 'submitted' ? 'bg-emerald-500' : 'bg-blue-500'}`}
-                      style={{ width: `${percent}%` }}
-                    />
-                  </div>
-                </div>
-
-                {/* Step list */}
-                <ol className="grid grid-cols-6 gap-1 mb-5">
-                  {HANDOFF_STAGES.map((s, i) => {
-                    const done = i < currentIdx || handoffProgressStage === 'submitted';
-                    const active = i === currentIdx && handoffProgressStage !== 'submitted';
-                    return (
-                      <li key={s.key} className="flex flex-col items-center text-center gap-1">
-                        <span
-                          className={`flex items-center justify-center w-5 h-5 rounded-full text-[10px] font-medium ${
-                            done ? 'bg-emerald-500 text-white'
-                            : active ? 'bg-blue-500 text-white'
-                            : 'bg-slate-200 text-slate-400'
-                          }`}
-                        >
-                          {done ? '✓' : active ? (
-                            <span className="inline-block w-2 h-2 rounded-full bg-white animate-pulse" />
-                          ) : i + 1}
-                        </span>
-                        <span className={`text-[9px] leading-tight ${active ? 'text-blue-700 font-medium' : done ? 'text-slate-700' : 'text-slate-400'}`}>
-                          {s.label}
-                        </span>
-                      </li>
-                    );
-                  })}
-                </ol>
-
-                {inProgress && (
-                  <div className="flex items-center justify-center gap-2 text-[11px] text-slate-500 mb-4">
-                    <span className="inline-block w-3 h-3 border-2 border-blue-500 border-t-transparent rounded-full animate-spin" />
-                    <span>Polling… this updates every 2.5 s while your assistant works</span>
-                  </div>
-                )}
-
-                {handoffProgressStage === 'created' && (
-                  <div className="flex justify-center mb-4">
-                    <div className="inline-flex items-center gap-2 bg-slate-100 border border-slate-200 rounded px-3 py-2">
-                      <span className="text-[11px] text-slate-600 italic">&ldquo;{handoffShortPrompt}&rdquo;</span>
-                      <button
-                        onClick={copyHandoffPrompt}
-                        className="text-[10px] px-2 py-0.5 bg-slate-200 text-slate-700 rounded hover:bg-slate-300"
-                        title="Copy"
-                      >
-                        {handoffPromptCopied ? '✓' : '📋'}
-                      </button>
-                    </div>
-                  </div>
-                )}
-
-                {handoffStatus === 'expired' && (
-                  <p className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded p-2 mb-3 text-center">
-                    Session expired (30-minute window). Cancel and start a new one, or switch to manual mode.
-                  </p>
-                )}
-                {handoffStatus === 'cancelled' && (
-                  <p className="text-xs text-slate-500 italic mb-3 text-center">Session cancelled.</p>
-                )}
-
-                <div className="flex flex-col gap-1 items-center text-[11px] text-slate-500">
-                  <button
-                    type="button"
-                    onClick={() => { setCoworkVendorLabel(coworkVendorLabel || 'MyWorkPapers'); setStep('cowork'); }}
-                    className="text-slate-500 hover:underline"
-                  >
-                    Switch to manual mode (copy prompt + drag file back)
-                  </button>
-                  <a
-                    href="/methodology-admin/cloud-audit-connectors/mcp-setup"
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="text-slate-500 hover:underline"
-                  >
-                    First time? Connect your AI assistant to Acumon ↗
-                  </a>
-                </div>
-              </div>
-            );
-          })()}
-
-          {step === 'cowork' && (
-            <>
-              <p className="text-sm text-slate-700 mb-3">
-                Your AI browser assistant will drive <em>your</em> {coworkVendorLabel || 'cloud audit software'} tab —
-                your credentials never leave your machine and acumon never connects to the vendor directly.
-              </p>
-
-              <ol className="text-xs text-slate-600 space-y-1 list-decimal list-inside mb-4">
-                <li>Open {coworkVendorLabel || 'the cloud audit software'} in a new tab and log in (with MFA if you use it).</li>
-                <li>Open your AI browser assistant and paste the prompt below.</li>
-                <li>The assistant will navigate the tab, find the prior period, and download the audit archive to your Downloads folder.</li>
-                <li>Drop the downloaded file here — acumon will extract proposals and you&apos;ll review them on the next screen.</li>
-              </ol>
-
-              <div className="space-y-3 mb-4">
-                <div>
-                  <label className="block text-xs font-medium text-slate-600 mb-1">Vendor</label>
-                  <input
-                    type="text"
-                    value={coworkVendorLabel}
-                    onChange={e => setCoworkVendorLabel(e.target.value)}
-                    placeholder="e.g. MyWorkPapers, CaseWare Cloud"
-                    className="w-full border border-slate-200 rounded px-3 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-purple-400"
-                  />
-                  <p className="text-[10px] text-slate-400 italic mt-1">Used in the prompt below — change this if you&apos;re using a different vendor.</p>
-                </div>
-
-                <div>
-                  <div className="flex items-center justify-between mb-1">
-                    <label className="block text-xs font-medium text-slate-600">Prompt for your assistant</label>
-                    <button
-                      onClick={copyCoworkPrompt}
-                      className="text-[11px] px-2 py-0.5 bg-purple-600 text-white rounded hover:bg-purple-700 font-medium"
-                    >
-                      {coworkPromptCopied ? '✓ Copied' : '📋 Copy'}
-                    </button>
-                  </div>
-                  <textarea
-                    value={coworkPrompt}
-                    readOnly
-                    rows={8}
-                    className="w-full border border-purple-200 rounded px-3 py-2 text-[11px] font-mono bg-purple-50/30 focus:outline-none focus:ring-1 focus:ring-purple-400"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-xs font-medium text-slate-600 mb-1">File the assistant downloaded (.zip or .pdf)</label>
-                  <input
-                    type="file"
-                    accept=".zip,.pdf"
-                    onChange={e => setCoworkFile(e.target.files?.[0] || null)}
-                    className="block text-sm"
-                  />
-                  {coworkFile && (
-                    <p className="text-[11px] text-slate-500 mt-2">
-                      Selected: <span className="font-medium">{coworkFile.name}</span> ({(coworkFile.size / 1024).toFixed(0)} KB)
-                    </p>
-                  )}
-                </div>
-              </div>
-
-              <div className="border border-amber-200 bg-amber-50 rounded p-3 text-[11px] text-amber-800">
-                <strong>Reminder:</strong> The prompt explicitly tells the assistant not to enter passwords, MFA codes, or
-                click destructive buttons. Read what it&apos;s about to do before approving its actions —
-                anything other than read-only navigation + the download click is suspicious.
-              </div>
-            </>
-          )}
-
-          {step === 'connect_credentials' && (
-            <>
-              <p className="text-sm text-slate-700 mb-3">Enter your credentials for this connection. Credentials are sent only for this fetch and are not stored.</p>
-              {(() => {
-                const conn = connectors.find(c => c.id === chosenConnectorId);
-                const scheme = conn?.config.authScheme || 'bearer';
-                if (scheme === 'bearer' || scheme === 'api_key') {
-                  return (
-                    <div>
-                      <label className="block text-xs font-medium text-slate-600 mb-1">{scheme === 'bearer' ? 'Bearer token' : 'API key'}</label>
-                      <input type="password" value={credToken} onChange={e => setCredToken(e.target.value)} className="w-full border border-slate-200 rounded px-3 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-blue-400" />
-                    </div>
-                  );
-                }
-                if (scheme === 'basic') {
-                  return (
-                    <div className="space-y-3">
-                      <div>
-                        <label className="block text-xs font-medium text-slate-600 mb-1">Username</label>
-                        <input type="text" value={credUsername} onChange={e => setCredUsername(e.target.value)} className="w-full border border-slate-200 rounded px-3 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-blue-400" />
-                      </div>
-                      <div>
-                        <label className="block text-xs font-medium text-slate-600 mb-1">Password</label>
-                        <input type="password" value={credPassword} onChange={e => setCredPassword(e.target.value)} className="w-full border border-slate-200 rounded px-3 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-blue-400" />
-                      </div>
-                    </div>
-                  );
-                }
-                if (scheme === 'oauth2_client_credentials') {
-                  return (
-                    <div className="space-y-3">
-                      <div>
-                        <label className="block text-xs font-medium text-slate-600 mb-1">Client ID</label>
-                        <input type="text" value={credClientId} onChange={e => setCredClientId(e.target.value)} className="w-full border border-slate-200 rounded px-3 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-blue-400" />
-                      </div>
-                      <div>
-                        <label className="block text-xs font-medium text-slate-600 mb-1">Client Secret</label>
-                        <input type="password" value={credClientSecret} onChange={e => setCredClientSecret(e.target.value)} className="w-full border border-slate-200 rounded px-3 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-blue-400" />
-                      </div>
-                    </div>
-                  );
-                }
-                return null;
-              })()}
-            </>
+          {step === 'upload' && (
+            <UploadStep uploadFile={uploadFile} setUploadFile={setUploadFile} />
           )}
 
           {step === 'busy' && (
-            <div className="py-8 text-center">
-              <div className="inline-block w-6 h-6 border-2 border-blue-500 border-t-transparent rounded-full animate-spin mb-3"></div>
-              <p className="text-sm text-slate-600">{busyMessage}</p>
-            </div>
+            <BusyView message={busyMessage} />
+          )}
+
+          {step === 'handoff' && handoffSessionId && (
+            <HandoffStep
+              vendor={vendorLabelForHandoff()}
+              status={handoffStatus}
+              stage={handoffStage}
+              message={handoffMessage}
+              failureMessage={handoffFailureMessage}
+              pendingPrompt={pendingPrompt}
+              orchestratorConfigured={orchestratorConfigured}
+              periodEnd={periodEnd}
+              auditTypeLabel={auditTypeLabel}
+              onAnswerPrompt={async (promptId, answer) => {
+                await fetch(`/api/engagements/${engagementId}/import-options/handoff/answer`, {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({ sessionId: handoffSessionId, promptId, answer }),
+                });
+                setPendingPrompt(null);
+              }}
+            />
           )}
         </div>
 
         <div className="px-6 py-4 border-t border-slate-200 bg-slate-50 flex items-center justify-between gap-3">
           {step === 'select' && (
             <>
-              <button onClick={handleCancel} className="text-sm px-4 py-2 text-slate-600 hover:text-slate-800">Cancel</button>
+              <button onClick={handleClose} className="text-sm px-4 py-2 text-slate-600 hover:text-slate-800">Cancel</button>
               <button
-                onClick={handleProceed}
+                onClick={handleProceedFromSelect}
                 className="text-sm px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 font-medium"
-              >
-                Proceed
-              </button>
+              >Proceed</button>
             </>
           )}
           {step === 'expand' && (
             <>
               <button onClick={() => setStep('select')} className="text-sm px-4 py-2 text-slate-600 hover:text-slate-800">← Back</button>
               <div className="flex gap-2">
-                <button onClick={handleCancel} className="text-sm px-4 py-2 text-slate-600 hover:text-slate-800">Cancel</button>
+                <button onClick={handleClose} className="text-sm px-4 py-2 text-slate-600 hover:text-slate-800">Cancel</button>
                 {sourceType === 'upload' && (
-                  <button
-                    disabled={!uploadFile}
-                    onClick={handleUploadProceed}
-                    className="text-sm px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:opacity-50 font-medium"
-                  >
-                    Upload &amp; Continue
-                  </button>
+                  <button onClick={() => setStep('upload')} className="text-sm px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 font-medium">Continue</button>
                 )}
                 {sourceType === 'cloud' && (
                   <button
                     disabled={!chosenConnectorId}
                     onClick={() => {
                       const conn = connectors.find(c => c.id === chosenConnectorId);
-                      // If the connector has a fully-configured API recipe, use
-                      // the API path (existing flow). Otherwise start a connected
-                      // session against Acumon's MCP server — the user's AI
-                      // assistant drives the vendor's site for them.
-                      if (conn && conn.config.baseUrl) {
-                        setStep('connect_credentials');
-                      } else if (conn) {
-                        void startHandoffSession(conn.label);
-                      }
+                      if (conn) void startHandoff(conn.label);
                     }}
                     className="text-sm px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:opacity-50 font-medium"
-                  >
-                    Continue
-                  </button>
+                  >Continue</button>
                 )}
                 {sourceType === 'cloud_other' && (
                   <button
-                    disabled={!coworkVendorLabel.trim()}
-                    onClick={() => void startHandoffSession(coworkVendorLabel.trim())}
+                    disabled={!otherVendorName.trim()}
+                    onClick={() => void startHandoff(otherVendorName.trim())}
                     className="text-sm px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:opacity-50 font-medium"
-                  >
-                    Continue
-                  </button>
+                  >Continue</button>
                 )}
               </div>
             </>
           )}
-          {step === 'register_connector' && (
+          {step === 'upload' && (
             <>
               <button onClick={() => setStep('expand')} className="text-sm px-4 py-2 text-slate-600 hover:text-slate-800">← Back</button>
-              <button
-                onClick={handleRegisterNewConnector}
-                disabled={!newConnLabel.trim() || !newConnConfig.baseUrl.trim()}
-                className="text-sm px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:opacity-50 font-medium"
-              >
-                Register &amp; Continue
-              </button>
+              <div className="flex gap-2">
+                <button onClick={handleClose} className="text-sm px-4 py-2 text-slate-600 hover:text-slate-800">Cancel</button>
+                <button
+                  disabled={!uploadFile}
+                  onClick={handleUploadProceed}
+                  className="text-sm px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:opacity-50 font-medium"
+                >Upload &amp; Continue</button>
+              </div>
             </>
           )}
           {step === 'handoff' && (
             <>
               <button onClick={cancelHandoff} className="text-sm px-4 py-2 text-slate-600 hover:text-slate-800">← Cancel session</button>
-              <button onClick={handleCancel} className="text-sm px-4 py-2 text-slate-600 hover:text-slate-800">Skip import</button>
-            </>
-          )}
-          {step === 'cowork' && (
-            <>
-              <button onClick={() => setStep('expand')} className="text-sm px-4 py-2 text-slate-600 hover:text-slate-800">← Back</button>
-              <div className="flex gap-2">
-                <button onClick={handleCancel} className="text-sm px-4 py-2 text-slate-600 hover:text-slate-800">Cancel</button>
-                <button
-                  disabled={!coworkFile}
-                  onClick={handleCoworkUploadProceed}
-                  className="text-sm px-4 py-2 bg-purple-600 text-white rounded-md hover:bg-purple-700 disabled:opacity-50 font-medium"
-                >
-                  Upload &amp; Continue
-                </button>
-              </div>
-            </>
-          )}
-
-          {step === 'connect_credentials' && (
-            <>
-              <button onClick={() => setStep('expand')} className="text-sm px-4 py-2 text-slate-600 hover:text-slate-800">← Back</button>
-              <button
-                onClick={handleCloudFetchProceed}
-                className="text-sm px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 font-medium"
-              >
-                Connect &amp; Continue
-              </button>
+              <button onClick={handleClose} className="text-sm px-4 py-2 text-slate-600 hover:text-slate-800">Skip import</button>
             </>
           )}
         </div>
@@ -1013,7 +429,325 @@ export function ImportOptionsModal({ engagementId, clientName, periodEnd, auditT
   );
 }
 
-// Helper for callers to short-circuit MyWorkPapers' empty config
-export function isMyWorkpapersStub(config: CloudConnectorConfig): boolean {
-  return JSON.stringify(config) === JSON.stringify(emptyMyWorkpapersConfig());
+// ─── Sub-views ───────────────────────────────────────────────────────
+
+function SelectStep({ selected, onToggle }: { selected: Set<ImportSelection>; onToggle: (key: ImportSelection) => void }) {
+  return (
+    <>
+      <p className="text-sm text-slate-700 mb-3">Please select any import options:</p>
+      <div className="space-y-2 mb-6">
+        {CHECKBOX_OPTIONS.map(opt => (
+          <label key={opt.key} className="flex items-center gap-3 px-3 py-2 border border-slate-200 rounded-lg hover:bg-slate-50 cursor-pointer">
+            <input
+              type="checkbox"
+              checked={selected.has(opt.key)}
+              onChange={() => onToggle(opt.key)}
+              className="w-4 h-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500"
+            />
+            <span className="text-sm text-slate-700">{opt.label}</span>
+          </label>
+        ))}
+      </div>
+      <p className="text-[11px] text-slate-400 italic">
+        Cancelling skips all imports — you can populate the engagement manually.
+      </p>
+    </>
+  );
+}
+
+function ExpandStep({
+  sourceType, setSourceType, connectors, chosenConnectorId, setChosenConnectorId, otherVendorName, setOtherVendorName,
+}: {
+  sourceType: ImportSourceType | null;
+  setSourceType: (t: ImportSourceType) => void;
+  connectors: CloudConnectorRecord[];
+  chosenConnectorId: string;
+  setChosenConnectorId: (s: string) => void;
+  otherVendorName: string;
+  setOtherVendorName: (s: string) => void;
+}) {
+  return (
+    <>
+      <p className="text-sm text-slate-700 mb-3">Where is the source audit file?</p>
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-5">
+        <button
+          onClick={() => setSourceType('upload')}
+          className={`text-left p-3 border-2 rounded-lg ${sourceType === 'upload' ? 'border-blue-500 bg-blue-50' : 'border-slate-200 hover:border-slate-300'}`}
+        >
+          <div className="text-sm font-semibold text-slate-800">📤 Upload</div>
+          <p className="text-xs text-slate-500 mt-1">Browse for a local file (zip or PDF).</p>
+        </button>
+        <button
+          onClick={() => setSourceType('cloud')}
+          className={`text-left p-3 border-2 rounded-lg ${sourceType === 'cloud' ? 'border-blue-500 bg-blue-50' : 'border-slate-200 hover:border-slate-300'}`}
+        >
+          <div className="text-sm font-semibold text-slate-800">☁ Connect to Cloud Audit Software</div>
+          <p className="text-xs text-slate-500 mt-1">Acumon logs in for you and downloads the prior file.</p>
+        </button>
+        <button
+          onClick={() => setSourceType('cloud_other')}
+          className={`text-left p-3 border-2 rounded-lg ${sourceType === 'cloud_other' ? 'border-blue-500 bg-blue-50' : 'border-slate-200 hover:border-slate-300'}`}
+        >
+          <div className="text-sm font-semibold text-slate-800">＋ Other Cloud Audit Software</div>
+          <p className="text-xs text-slate-500 mt-1">Type any vendor — Acumon will figure it out.</p>
+        </button>
+      </div>
+
+      {sourceType === 'cloud' && (
+        <div className="border border-slate-200 rounded-lg p-4 bg-slate-50">
+          <label className="block text-xs font-medium text-slate-600 mb-1">Cloud Audit Software</label>
+          <select
+            value={chosenConnectorId}
+            onChange={e => setChosenConnectorId(e.target.value)}
+            className="w-full border border-slate-200 rounded px-3 py-1.5 text-sm bg-white focus:outline-none focus:ring-1 focus:ring-blue-400"
+          >
+            <option value="">— Select vendor —</option>
+            {connectors.map(c => <option key={c.id} value={c.id}>{c.label}</option>)}
+          </select>
+        </div>
+      )}
+
+      {sourceType === 'cloud_other' && (
+        <div className="border border-slate-200 rounded-lg p-4 bg-slate-50">
+          <label className="block text-xs font-medium text-slate-600 mb-1">Vendor name</label>
+          <input
+            type="text"
+            value={otherVendorName}
+            onChange={e => setOtherVendorName(e.target.value)}
+            placeholder="e.g. CaseWare Cloud, Inflo, AuditBoard"
+            className="w-full border border-slate-200 rounded px-3 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-blue-400"
+          />
+        </div>
+      )}
+    </>
+  );
+}
+
+function UploadStep({ uploadFile, setUploadFile }: { uploadFile: File | null; setUploadFile: (f: File | null) => void }) {
+  return (
+    <div className="border border-slate-200 rounded-lg p-4 bg-slate-50">
+      <label className="block text-xs font-medium text-slate-600 mb-2">Audit file (.zip or .pdf)</label>
+      <input
+        type="file"
+        accept=".zip,.pdf"
+        onChange={e => setUploadFile(e.target.files?.[0] || null)}
+        className="block text-sm"
+      />
+      {uploadFile && (
+        <p className="text-[11px] text-slate-500 mt-2">
+          Selected: <span className="font-medium">{uploadFile.name}</span> ({(uploadFile.size / 1024).toFixed(0)} KB)
+        </p>
+      )}
+    </div>
+  );
+}
+
+function BusyView({ message }: { message: string }) {
+  return (
+    <div className="py-8 text-center">
+      <div className="inline-block w-6 h-6 border-2 border-blue-500 border-t-transparent rounded-full animate-spin mb-3" />
+      <p className="text-sm text-slate-600">{message}</p>
+    </div>
+  );
+}
+
+function HandoffStep({
+  vendor, status, stage, message, failureMessage, pendingPrompt,
+  orchestratorConfigured, periodEnd, auditTypeLabel, onAnswerPrompt,
+}: {
+  vendor: string;
+  status: 'pending' | 'submitted' | 'expired' | 'cancelled' | 'failed';
+  stage: HandoffStage;
+  message: string;
+  failureMessage: string | null;
+  pendingPrompt: PendingPrompt | null;
+  orchestratorConfigured: boolean | null;
+  periodEnd?: string;
+  auditTypeLabel?: string;
+  onAnswerPrompt: (promptId: string, answer: unknown) => void | Promise<void>;
+}) {
+  const idx = stageIndex(stage);
+  const percent = Math.round((idx / (HANDOFF_STAGES.length - 1)) * 100);
+  return (
+    <div className="py-2">
+      <p className="text-sm text-slate-800 font-medium text-center mb-1">
+        {status === 'submitted' ? 'Import complete' : `Importing from ${vendor}`}
+      </p>
+      <p className="text-xs text-slate-500 text-center mb-5">{message}</p>
+
+      <div className="h-1.5 bg-slate-200 rounded-full overflow-hidden mb-2">
+        <div
+          className={`h-full transition-all duration-500 ${stage === 'submitted' ? 'bg-emerald-500' : 'bg-blue-500'}`}
+          style={{ width: `${percent}%` }}
+        />
+      </div>
+      <ol className="grid grid-cols-7 gap-1 mb-5">
+        {HANDOFF_STAGES.map((s, i) => {
+          const done = i < idx || stage === 'submitted';
+          const active = i === idx && stage !== 'submitted';
+          return (
+            <li key={s.key} className="flex flex-col items-center text-center gap-1">
+              <span className={`flex items-center justify-center w-5 h-5 rounded-full text-[10px] font-medium ${done ? 'bg-emerald-500 text-white' : active ? 'bg-blue-500 text-white' : 'bg-slate-200 text-slate-400'}`}>
+                {done ? '✓' : active ? <span className="inline-block w-2 h-2 rounded-full bg-white animate-pulse" /> : i + 1}
+              </span>
+              <span className={`text-[9px] leading-tight ${active ? 'text-blue-700 font-medium' : done ? 'text-slate-700' : 'text-slate-400'}`}>{s.label}</span>
+            </li>
+          );
+        })}
+      </ol>
+
+      {pendingPrompt && status === 'pending' && (
+        <PromptForm prompt={pendingPrompt} onAnswer={onAnswerPrompt} />
+      )}
+
+      {status === 'failed' && (
+        <div className="text-xs text-red-700 bg-red-50 border border-red-200 rounded p-3">
+          <p className="font-medium mb-1">Import failed</p>
+          <p>{failureMessage || 'The orchestrator reported an unrecoverable error.'}</p>
+        </div>
+      )}
+      {status === 'expired' && (
+        <p className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded p-2 text-center">
+          Session expired (30-minute window). Cancel and start again.
+        </p>
+      )}
+      {status === 'cancelled' && (
+        <p className="text-xs text-slate-500 italic text-center">Session cancelled.</p>
+      )}
+
+      {orchestratorConfigured === false && status === 'pending' && stage === 'created' && (
+        <div className="text-[11px] text-amber-700 bg-amber-50 border border-amber-200 rounded p-2 mt-3">
+          The Acumon orchestrator service is not configured for this environment yet — your firm admin needs to deploy it.
+          Until then please use Upload mode (←&nbsp;Cancel session and pick Upload).
+        </div>
+      )}
+
+      {periodEnd || auditTypeLabel ? (
+        <p className="text-[10px] text-slate-400 text-center mt-4">
+          {auditTypeLabel}{auditTypeLabel && periodEnd ? ' · ' : ''}{periodEnd ? `period ending ${periodEnd}` : ''}
+        </p>
+      ) : null}
+    </div>
+  );
+}
+
+function PromptForm({ prompt, onAnswer }: { prompt: PendingPrompt; onAnswer: (id: string, answer: unknown) => void | Promise<void> }) {
+  const [busy, setBusy] = useState(false);
+  const [textValue, setTextValue] = useState('');
+  const [credentialValues, setCredentialValues] = useState<Record<string, string>>({});
+  const [selectValue, setSelectValue] = useState('');
+
+  const fields = useMemo(() => prompt.options?.fields || [], [prompt.options]);
+  const options = useMemo(() => prompt.options?.options || [], [prompt.options]);
+
+  async function submit(answer: unknown) {
+    setBusy(true);
+    try { await onAnswer(prompt.id, answer); }
+    finally {
+      setBusy(false);
+      setTextValue('');
+      setCredentialValues({});
+      setSelectValue('');
+    }
+  }
+
+  return (
+    <div className="border-2 border-blue-300 bg-blue-50/40 rounded-lg p-4 mb-3">
+      <p className="text-sm font-medium text-slate-800 mb-3">{prompt.message}</p>
+
+      {prompt.type === 'credentials' && (
+        <div className="space-y-2">
+          {fields.map(f => (
+            <div key={f.name}>
+              <label className="block text-[11px] font-medium text-slate-600 mb-1">{f.label}</label>
+              <input
+                type={f.secret ? 'password' : 'text'}
+                value={credentialValues[f.name] || ''}
+                onChange={e => setCredentialValues({ ...credentialValues, [f.name]: e.target.value })}
+                autoComplete={f.secret ? 'current-password' : 'username'}
+                className="w-full border border-slate-200 rounded px-3 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-blue-400"
+              />
+            </div>
+          ))}
+          <div className="flex justify-end pt-1">
+            <button
+              disabled={busy || fields.some(f => !credentialValues[f.name])}
+              onClick={() => void submit(credentialValues)}
+              className="text-sm px-4 py-1.5 bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:opacity-50 font-medium"
+            >Send</button>
+          </div>
+          <p className="text-[10px] text-slate-500 italic">
+            Streamed to the live browser session only — never stored on Acumon.
+          </p>
+        </div>
+      )}
+
+      {prompt.type === 'mfa' && (
+        <div className="space-y-2">
+          <input
+            type="text"
+            inputMode="numeric"
+            autoComplete="one-time-code"
+            value={textValue}
+            onChange={e => setTextValue(e.target.value)}
+            placeholder="6-digit code"
+            className="w-full border border-slate-200 rounded px-3 py-1.5 text-sm font-mono focus:outline-none focus:ring-1 focus:ring-blue-400"
+          />
+          <div className="flex justify-end">
+            <button
+              disabled={busy || !textValue.trim()}
+              onClick={() => void submit({ code: textValue.trim() })}
+              className="text-sm px-4 py-1.5 bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:opacity-50 font-medium"
+            >Send</button>
+          </div>
+        </div>
+      )}
+
+      {prompt.type === 'confirm' && (
+        <div className="flex justify-end gap-2">
+          <button disabled={busy} onClick={() => void submit({ confirmed: false })} className="text-sm px-3 py-1.5 text-slate-600 hover:text-slate-800">No</button>
+          <button disabled={busy} onClick={() => void submit({ confirmed: true })} className="text-sm px-3 py-1.5 bg-blue-600 text-white rounded-md hover:bg-blue-700 font-medium">Yes</button>
+        </div>
+      )}
+
+      {prompt.type === 'select' && (
+        <div className="space-y-2">
+          <select
+            value={selectValue}
+            onChange={e => setSelectValue(e.target.value)}
+            className="w-full border border-slate-200 rounded px-3 py-1.5 text-sm bg-white focus:outline-none focus:ring-1 focus:ring-blue-400"
+          >
+            <option value="">— Choose —</option>
+            {options.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+          </select>
+          <div className="flex justify-end">
+            <button
+              disabled={busy || !selectValue}
+              onClick={() => void submit({ value: selectValue })}
+              className="text-sm px-4 py-1.5 bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:opacity-50 font-medium"
+            >Send</button>
+          </div>
+        </div>
+      )}
+
+      {prompt.type === 'text' && (
+        <div className="space-y-2">
+          <input
+            type="text"
+            value={textValue}
+            onChange={e => setTextValue(e.target.value)}
+            placeholder={prompt.options?.placeholder}
+            className="w-full border border-slate-200 rounded px-3 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-blue-400"
+          />
+          <div className="flex justify-end">
+            <button
+              disabled={busy || !textValue.trim()}
+              onClick={() => void submit({ text: textValue.trim() })}
+              className="text-sm px-4 py-1.5 bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:opacity-50 font-medium"
+            >Send</button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
 }
