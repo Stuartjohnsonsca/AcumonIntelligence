@@ -77,12 +77,31 @@ export function MeetingsPanel({ engagementId, meetingType: filterType, defaultMe
   const saveTimer = useRef<NodeJS.Timeout | null>(null);
 
   // Create form state
+  const [createMode, setCreateMode] = useState<'notes' | 'record' | 'teams'>('notes');
   const [newTitle, setNewTitle] = useState('');
   const [newDate, setNewDate] = useState(new Date().toISOString().slice(0, 10));
   const [newType, setNewType] = useState<string>(defaultMeetingType || 'other');
   const [newAttendees, setNewAttendees] = useState('');
   const [newTranscript, setNewTranscript] = useState('');
   const [creating, setCreating] = useState(false);
+
+  // Record-and-transcribe state — uses the browser's MediaRecorder to
+  // capture audio, posts the blob to /api/transcribe (Whisper) on stop,
+  // and drops the returned text into newTranscript so the existing
+  // 'create' POST handles persistence.
+  const [recording, setRecording] = useState(false);
+  const [transcribing, setTranscribing] = useState(false);
+  const [recordSeconds, setRecordSeconds] = useState(0);
+  const [recordError, setRecordError] = useState<string | null>(null);
+  const recorderRef = useRef<MediaRecorder | null>(null);
+  const recordedChunksRef = useRef<Blob[]>([]);
+  const recordTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  // Teams-meeting state — only populated when createMode === 'teams'.
+  // The API needs a startDateTime (date + time combined) and a duration.
+  const [newStartTime, setNewStartTime] = useState('09:00');
+  const [newDurationMin, setNewDurationMin] = useState(60);
+  const [creatingTeams, setCreatingTeams] = useState(false);
 
   const loadMeetings = useCallback(async () => {
     try {
@@ -115,11 +134,137 @@ export function MeetingsPanel({ engagementId, meetingType: filterType, defaultMe
     const attendees = newAttendees.split(',').map(s => s.trim()).filter(Boolean).map(name => ({ name, role: '' }));
     const res = await postAction({ action: 'create', title: newTitle.trim(), meetingDate: newDate, meetingType: defaultMeetingType || newType, attendees, transcriptRaw: newTranscript || null });
     if (res.ok) {
-      setNewTitle(''); setNewTranscript(''); setNewAttendees(''); setShowCreate(false);
+      resetCreateForm();
       await loadMeetings();
     }
     setCreating(false);
   }
+
+  function resetCreateForm() {
+    setNewTitle('');
+    setNewTranscript('');
+    setNewAttendees('');
+    setRecordSeconds(0);
+    setRecordError(null);
+    setShowCreate(false);
+    setCreateMode('notes');
+  }
+
+  // ── Record & transcribe ────────────────────────────────────────────
+  // MediaRecorder on a webm/opus stream is the broadest cross-browser
+  // option that Whisper accepts. We don't pin a mimeType: the browser
+  // picks something sensible, and /api/transcribe forwards the blob
+  // verbatim to Together AI which sniffs the container itself.
+
+  async function startRecording() {
+    setRecordError(null);
+    if (typeof navigator === 'undefined' || !navigator.mediaDevices?.getUserMedia) {
+      setRecordError('Audio recording not supported in this browser');
+      return;
+    }
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const recorder = new MediaRecorder(stream);
+      recordedChunksRef.current = [];
+      recorder.ondataavailable = (e) => { if (e.data && e.data.size > 0) recordedChunksRef.current.push(e.data); };
+      recorder.onstop = () => {
+        // Always release the mic, regardless of upload outcome.
+        stream.getTracks().forEach(t => t.stop());
+      };
+      recorder.start();
+      recorderRef.current = recorder;
+      setRecording(true);
+      setRecordSeconds(0);
+      recordTimerRef.current = setInterval(() => setRecordSeconds(s => s + 1), 1000);
+    } catch (err: any) {
+      setRecordError(err?.message || 'Microphone permission denied');
+    }
+  }
+
+  async function stopRecordingAndTranscribe() {
+    const recorder = recorderRef.current;
+    if (!recorder) return;
+    if (recordTimerRef.current) { clearInterval(recordTimerRef.current); recordTimerRef.current = null; }
+    setRecording(false);
+
+    // Wait for the final dataavailable then upload the blob.
+    const chunks: Blob[] = await new Promise((resolve) => {
+      const onDataAvailable = (e: BlobEvent) => {
+        if (e.data && e.data.size > 0) recordedChunksRef.current.push(e.data);
+      };
+      recorder.addEventListener('dataavailable', onDataAvailable, { once: true });
+      recorder.addEventListener('stop', () => resolve(recordedChunksRef.current.slice()), { once: true });
+      recorder.stop();
+    });
+
+    if (chunks.length === 0) {
+      setRecordError('No audio captured');
+      return;
+    }
+    const blob = new Blob(chunks, { type: chunks[0].type || 'audio/webm' });
+    const ext = (blob.type.split('/')[1] || 'webm').split(';')[0];
+    setTranscribing(true);
+    setRecordError(null);
+    try {
+      const fd = new FormData();
+      fd.append('file', blob, `meeting.${ext}`);
+      const res = await fetch('/api/transcribe', { method: 'POST', body: fd });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data?.error || `Transcription failed (${res.status})`);
+      }
+      const data = await res.json();
+      const text: string = data?.text || '';
+      // Append to whatever the user has already typed so a re-record
+      // doesn't trash their existing notes.
+      setNewTranscript(prev => prev ? `${prev}\n\n${text}`.trim() : text);
+    } catch (err: any) {
+      setRecordError(err?.message || 'Transcription failed');
+    } finally {
+      setTranscribing(false);
+      recorderRef.current = null;
+      recordedChunksRef.current = [];
+    }
+  }
+
+  async function handleCreateTeams() {
+    if (!newTitle.trim()) return;
+    if (!newDate || !newStartTime) { setRecordError('Date and start time are required'); return; }
+    // Combine local date + time into an ISO timestamp. The browser uses
+    // the user's timezone; the server stores the ISO string verbatim.
+    const startISO = new Date(`${newDate}T${newStartTime}:00`).toISOString();
+    setCreatingTeams(true);
+    setRecordError(null);
+    try {
+      const res = await postAction({
+        action: 'create_teams',
+        subject: newTitle.trim(),
+        startDateTime: startISO,
+        durationMinutes: Number(newDurationMin) || 60,
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        setRecordError(data?.error || `Failed to create Teams meeting (${res.status})`);
+        return;
+      }
+      resetCreateForm();
+      await loadMeetings();
+    } catch (err: any) {
+      setRecordError(err?.message || 'Failed to create Teams meeting');
+    } finally {
+      setCreatingTeams(false);
+    }
+  }
+
+  // Cleanup any in-flight recording when the form closes / unmounts.
+  useEffect(() => {
+    return () => {
+      if (recordTimerRef.current) clearInterval(recordTimerRef.current);
+      if (recorderRef.current && recorderRef.current.state !== 'inactive') {
+        try { recorderRef.current.stop(); } catch { /* ignore */ }
+      }
+    };
+  }, []);
 
   async function handleGenerateMinutes(meetingId: string) {
     setGenerating(true);
@@ -226,6 +371,41 @@ export function MeetingsPanel({ engagementId, meetingType: filterType, defaultMe
       {/* Create form */}
       {showCreate && (
         <div className="mb-4 border border-blue-200 rounded-lg p-3 bg-blue-50/30">
+          {/* Mode picker — three input paths share the same downstream
+              record (auditMeeting). 'notes' POSTs action:'create' with
+              transcriptRaw built from the user's typed text; 'record'
+              fills transcriptRaw via Whisper after MediaRecorder stop;
+              'teams' POSTs action:'create_teams' which calls Microsoft
+              Graph to schedule an online meeting. */}
+          <div className="flex items-center gap-1 bg-white rounded border border-slate-200 p-0.5 mb-3 w-fit">
+            {([
+              { key: 'notes', label: 'Notes only' },
+              { key: 'record', label: 'Record & transcribe' },
+              { key: 'teams', label: 'Schedule Teams meeting', enabled: teamsEnabled },
+            ] as const).map(mode => {
+              const disabled = mode.key === 'teams' && !teamsEnabled;
+              return (
+                <button
+                  key={mode.key}
+                  type="button"
+                  onClick={() => !disabled && setCreateMode(mode.key)}
+                  disabled={disabled}
+                  title={disabled ? 'Teams integration not configured for this firm' : undefined}
+                  className={`text-[10px] px-3 py-1 rounded transition-colors ${
+                    createMode === mode.key
+                      ? 'bg-blue-600 text-white'
+                      : disabled
+                        ? 'text-slate-300 cursor-not-allowed'
+                        : 'text-slate-600 hover:bg-slate-100'
+                  }`}
+                >
+                  {mode.label}
+                </button>
+              );
+            })}
+          </div>
+
+          {/* Common fields — title, date, (type), attendees */}
           <div className="grid grid-cols-4 gap-3 mb-2">
             <div className="col-span-2">
               <label className="block text-[10px] text-slate-500 mb-0.5">Title *</label>
@@ -235,7 +415,7 @@ export function MeetingsPanel({ engagementId, meetingType: filterType, defaultMe
               <label className="block text-[10px] text-slate-500 mb-0.5">Date</label>
               <input type="date" value={newDate} onChange={e => setNewDate(e.target.value)} className="w-full text-xs border border-slate-200 rounded px-2 py-1.5" />
             </div>
-            {!defaultMeetingType && (
+            {createMode !== 'teams' && !defaultMeetingType && (
               <div>
                 <label className="block text-[10px] text-slate-500 mb-0.5">Type</label>
                 <select value={newType} onChange={e => setNewType(e.target.value)} className="w-full text-xs border border-slate-200 rounded px-2 py-1.5">
@@ -243,20 +423,109 @@ export function MeetingsPanel({ engagementId, meetingType: filterType, defaultMe
                 </select>
               </div>
             )}
+            {createMode === 'teams' && (
+              <>
+                <div>
+                  <label className="block text-[10px] text-slate-500 mb-0.5">Start time</label>
+                  <input type="time" value={newStartTime} onChange={e => setNewStartTime(e.target.value)} className="w-full text-xs border border-slate-200 rounded px-2 py-1.5" />
+                </div>
+              </>
+            )}
           </div>
-          <div className="mb-2">
-            <label className="block text-[10px] text-slate-500 mb-0.5">Attendees (comma-separated)</label>
-            <input value={newAttendees} onChange={e => setNewAttendees(e.target.value)} className="w-full text-xs border border-slate-200 rounded px-2 py-1.5" placeholder="e.g. John Smith, Jane Doe" />
-          </div>
-          <div className="mb-2">
-            <label className="block text-[10px] text-slate-500 mb-0.5">Transcript / Notes (paste here or leave blank)</label>
-            <textarea value={newTranscript} onChange={e => setNewTranscript(e.target.value)} rows={4} className="w-full text-xs border border-slate-200 rounded px-2 py-1.5 resize-y" placeholder="Paste meeting transcript or type notes..." />
-          </div>
+
+          {createMode !== 'teams' && (
+            <div className="mb-2">
+              <label className="block text-[10px] text-slate-500 mb-0.5">Attendees (comma-separated)</label>
+              <input value={newAttendees} onChange={e => setNewAttendees(e.target.value)} className="w-full text-xs border border-slate-200 rounded px-2 py-1.5" placeholder="e.g. John Smith, Jane Doe" />
+            </div>
+          )}
+
+          {createMode === 'teams' && (
+            <div className="grid grid-cols-4 gap-3 mb-2">
+              <div>
+                <label className="block text-[10px] text-slate-500 mb-0.5">Duration (minutes)</label>
+                <input
+                  type="number"
+                  min={5}
+                  max={480}
+                  step={5}
+                  value={newDurationMin}
+                  onChange={e => setNewDurationMin(Number(e.target.value) || 60)}
+                  className="w-full text-xs border border-slate-200 rounded px-2 py-1.5"
+                />
+              </div>
+              <div className="col-span-3 text-[10px] text-slate-500 self-end pb-1">
+                Creates an online Teams meeting via your Microsoft account. The join link is saved with the meeting record; the transcript can be imported back later via &quot;Import from Teams&quot;.
+              </div>
+            </div>
+          )}
+
+          {createMode === 'record' && (
+            <div className="mb-2 p-3 bg-white border border-slate-200 rounded">
+              <div className="flex items-center gap-3">
+                {!recording ? (
+                  <button
+                    type="button"
+                    onClick={startRecording}
+                    disabled={transcribing}
+                    className="text-[10px] px-3 py-1.5 bg-rose-600 text-white rounded hover:bg-rose-700 disabled:opacity-50"
+                  >
+                    {transcribing ? 'Transcribing…' : '● Start recording'}
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={stopRecordingAndTranscribe}
+                    className="text-[10px] px-3 py-1.5 bg-slate-700 text-white rounded hover:bg-slate-800"
+                  >
+                    ■ Stop &amp; transcribe
+                  </button>
+                )}
+                {recording && (
+                  <span className="text-[11px] text-rose-600 font-mono">
+                    REC {Math.floor(recordSeconds / 60).toString().padStart(2, '0')}:{(recordSeconds % 60).toString().padStart(2, '0')}
+                  </span>
+                )}
+                {transcribing && <span className="text-[11px] text-slate-500 italic">Sending audio to Whisper…</span>}
+              </div>
+              <p className="text-[10px] text-slate-500 mt-1.5">
+                Audio is captured in your browser and sent to the transcription service only. Stop the recording to add the transcript below; you can also paste or type into the box.
+              </p>
+            </div>
+          )}
+
+          {createMode !== 'teams' && (
+            <div className="mb-2">
+              <label className="block text-[10px] text-slate-500 mb-0.5">
+                {createMode === 'record' ? 'Transcript (auto-filled after Stop; editable)' : 'Transcript / Notes (paste here or leave blank)'}
+              </label>
+              <textarea value={newTranscript} onChange={e => setNewTranscript(e.target.value)} rows={4} className="w-full text-xs border border-slate-200 rounded px-2 py-1.5 resize-y" placeholder="Paste meeting transcript or type notes..." />
+            </div>
+          )}
+
+          {recordError && (
+            <p className="text-[10px] text-red-600 mb-2">{recordError}</p>
+          )}
+
           <div className="flex gap-2">
-            <button onClick={handleCreate} disabled={!newTitle.trim() || creating} className="text-[10px] px-3 py-1.5 bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50">
-              {creating ? 'Creating...' : 'Create Meeting'}
-            </button>
-            <button onClick={() => setShowCreate(false)} className="text-[10px] px-3 py-1.5 bg-slate-100 text-slate-600 rounded">Cancel</button>
+            {createMode === 'teams' ? (
+              <button
+                onClick={handleCreateTeams}
+                disabled={!newTitle.trim() || creatingTeams || !teamsEnabled}
+                className="text-[10px] px-3 py-1.5 bg-violet-600 text-white rounded hover:bg-violet-700 disabled:opacity-50"
+              >
+                {creatingTeams ? 'Creating Teams meeting…' : 'Create Teams meeting'}
+              </button>
+            ) : (
+              <button
+                onClick={handleCreate}
+                disabled={!newTitle.trim() || creating || recording || transcribing}
+                className="text-[10px] px-3 py-1.5 bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50"
+              >
+                {creating ? 'Creating...' : 'Create Meeting'}
+              </button>
+            )}
+            <button onClick={resetCreateForm} className="text-[10px] px-3 py-1.5 bg-slate-100 text-slate-600 rounded">Cancel</button>
           </div>
         </div>
       )}
