@@ -18,6 +18,7 @@
 // hand off to the Review pop-up.
 
 import { useEffect, useMemo, useState } from 'react';
+import { Eye, EyeOff } from 'lucide-react';
 import { expandZipFile } from '@/lib/client-unzip';
 import type {
   ImportOptionsState,
@@ -683,15 +684,19 @@ function PromptForm({ prompt, onAnswer }: { prompt: PendingPrompt; onAnswer: (id
                     value={credentialValues[f.name] || ''}
                     onChange={e => setCredentialValues({ ...credentialValues, [f.name]: e.target.value })}
                     autoComplete={f.secret ? 'current-password' : 'username'}
-                    className={`w-full border border-slate-200 rounded px-3 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-blue-400 ${f.secret ? 'pr-16' : ''}`}
+                    className={`w-full border border-slate-200 rounded px-3 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-blue-400 ${f.secret ? 'pr-9' : ''}`}
                   />
                   {f.secret && (
                     <button
                       type="button"
                       tabIndex={-1}
+                      aria-label={revealed ? 'Hide password' : 'Show password'}
+                      title={revealed ? 'Hide password' : 'Show password'}
                       onClick={() => setRevealedSecrets(s => ({ ...s, [f.name]: !s[f.name] }))}
-                      className="absolute inset-y-0 right-0 px-2 text-[11px] text-slate-500 hover:text-slate-700"
-                    >{revealed ? 'Hide' : 'Show'}</button>
+                      className="absolute inset-y-0 right-0 flex items-center px-2 text-slate-400 hover:text-slate-700"
+                    >
+                      {revealed ? <EyeOff size={16} /> : <Eye size={16} />}
+                    </button>
                   )}
                 </div>
               </div>
