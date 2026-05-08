@@ -3,6 +3,7 @@ import { auth } from '@/lib/auth';
 import { prisma } from '@/lib/db';
 import { buildTemplateContext } from '@/lib/template-context';
 import { askInterrogateBot, type InterrogateMessage } from '@/lib/interrogate-bot';
+import { uniqueSourcePaths, uniqueDocumentRefs } from '@/lib/interrogate-citations';
 
 /**
  * POST /api/engagements/:engagementId/interrogate
@@ -13,7 +14,13 @@ import { askInterrogateBot, type InterrogateMessage } from '@/lib/interrogate-bo
  * caller isn't already entitled to see — but we still require firm
  * membership as a defence-in-depth gate.
  *
+ * Every successful Q&A is persisted as an InterrogateInteraction row
+ * so the modal can offer thumbs-up/down + correction (Phase 1) and
+ * future questions can be answered with retrieved high-rated similar
+ * prior interactions (Phase 2).
+ *
  * Body: { question: string, history?: Array<{ role, content }> }
+ * Response: { answer, model, usage, interactionId, sources, documentReferences }
  */
 export async function POST(req: NextRequest, ctx: { params: Promise<{ engagementId: string }> }) {
   const session = await auth();
@@ -51,14 +58,46 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ engagement
     return NextResponse.json({ error: `Failed to load engagement context: ${err?.message || 'unknown'}` }, { status: 500 });
   }
 
+  let result;
   try {
-    const result = await askInterrogateBot(templateContext, question, history);
-    return NextResponse.json({
-      answer: result.answer,
-      model: result.model,
-      usage: result.usage,
-    });
+    result = await askInterrogateBot(templateContext, question, history);
   } catch (err: any) {
     return NextResponse.json({ error: `InterrogateBot failed: ${err?.message || 'unknown'}` }, { status: 500 });
   }
+
+  // Persist the interaction. Failures here are non-fatal — the user
+  // still gets their answer; only the learning signal is lost.
+  let interactionId: string | null = null;
+  const sources = uniqueSourcePaths(result.answer);
+  const documentReferences = uniqueDocumentRefs(result.answer);
+  try {
+    const created = await prisma.interrogateInteraction.create({
+      data: {
+        firmId: engagement.firmId,
+        engagementId,
+        userId: session.user.id,
+        userName: session.user.name || session.user.email || null,
+        question,
+        answer: result.answer,
+        sources: sources as object,
+        documentReferences: documentReferences as object,
+        aiModel: result.model,
+        promptTokens: result.usage?.promptTokens,
+        completionTokens: result.usage?.completionTokens,
+      },
+      select: { id: true },
+    });
+    interactionId = created.id;
+  } catch (err) {
+    console.warn('[interrogate] failed to log interaction:', err instanceof Error ? err.message : err);
+  }
+
+  return NextResponse.json({
+    answer: result.answer,
+    model: result.model,
+    usage: result.usage,
+    interactionId,
+    sources,
+    documentReferences,
+  });
 }

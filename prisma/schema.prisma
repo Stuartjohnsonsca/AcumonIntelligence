@@ -2070,6 +2070,7 @@ model AuditEngagement {
   taxOnProfits          AuditTaxOnProfits?
   importProposals       ImportExtractionProposal[]
   importHandoffSessions ImportHandoffSession[]
+  interrogateInteractions InterrogateInteraction[]
 
   @@unique([clientId, periodId, auditType])
   @@index([firmId])
@@ -2184,6 +2185,82 @@ model ImportHandoffSession {
   @@index([status])
   @@index([pendingPromptType])
   @@map("import_handoff_sessions")
+}
+
+/// One captured InterrogateBot exchange — question, answer, the
+/// reviewer's thumbs rating, and an optional correction. Persisted so
+/// (a) auditors can audit the audit-trail of what the bot was asked
+/// and what it said, and (b) future questions can be answered better
+/// by retrieving similar high-rated prior interactions and injecting
+/// them as few-shot examples (Phase 2 of the InterrogateBot work).
+///
+/// Phase 3 adds a `documentReferences` array (JSON) for the
+/// document-RAG flow — when the bot pulls from an uploaded document
+/// chunk it captures the AuditDocument.id so the modal can render a
+/// preview link.
+model InterrogateInteraction {
+  id                  String   @id @default(uuid())
+  firmId              String   @map("firm_id")
+  engagementId        String   @map("engagement_id")
+  userId              String   @map("user_id")
+  userName            String?  @map("user_name")
+  question            String   @db.Text
+  answer              String   @db.Text
+  /// Array of JSON paths the bot cited (e.g. ["materiality.overall", "auditPlan.significantRisks"])
+  /// Extracted from the answer body via the citation parser.
+  sources             Json     @default("[]")
+  /// Array of AuditDocument.id values the bot pulled chunks from
+  /// (Phase 3). Surfaced in the UI as preview links.
+  documentReferences  Json     @default("[]") @map("document_references")
+  /// 'up' | 'down' | null. null means not rated yet.
+  rating              String?
+  /// Free-text reviewer correction — what the answer SHOULD have been.
+  correction          String?  @db.Text
+  ratingAt            DateTime? @map("rating_at")
+  ratedById           String?  @map("rated_by_id")
+  /// Embedding of the question — populated by Phase 2 only. JSON array
+  /// of floats (typically 768 or 1024 dims depending on model).
+  /// Stored as Json rather than Float[] so we can swap embedding
+  /// dimensions without a migration.
+  questionEmbedding   Json?    @map("question_embedding")
+  embeddingModel      String?  @map("embedding_model")
+  aiModel             String?  @map("ai_model")
+  promptTokens        Int?     @map("prompt_tokens")
+  completionTokens    Int?     @map("completion_tokens")
+  createdAt           DateTime @default(now()) @map("created_at")
+
+  engagement AuditEngagement @relation(fields: [engagementId], references: [id], onDelete: Cascade)
+
+  @@index([firmId])
+  @@index([engagementId])
+  @@index([rating])
+  @@index([userId])
+  @@map("interrogate_interactions")
+}
+
+/// Phase 3: AuditDocument content chunked and embedded for retrieval-
+/// augmented generation by InterrogateBot. Built incrementally as
+/// documents are uploaded — the worker reads the blob, extracts text,
+/// splits into ~512-token chunks with overlap, embeds each chunk, and
+/// writes one row per chunk here. Deletion cascades from AuditDocument
+/// so re-uploaded docs don't leave stale chunks.
+model DocumentChunk {
+  id          String   @id @default(uuid())
+  documentId  String   @map("document_id")
+  chunkIndex  Int      @map("chunk_index")
+  content     String   @db.Text
+  /// JSON array of floats. Same shape as InterrogateInteraction.questionEmbedding.
+  embedding   Json
+  embeddingModel String @map("embedding_model")
+  /// Optional metadata — page number for PDFs, etc.
+  metadata    Json?
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  document AuditDocument @relation(fields: [documentId], references: [id], onDelete: Cascade)
+
+  @@unique([documentId, chunkIndex])
+  @@index([documentId])
+  @@map("document_chunks")
 }
 
 /// Per-(firm, vendor, clientReference) navigation recipe accumulated
@@ -2671,6 +2748,7 @@ model AuditDocument {
   engagement  AuditEngagement @relation(fields: [engagementId], references: [id], onDelete: Cascade)
   requestedBy User?           @relation("DocumentRequester", fields: [requestedById], references: [id])
   uploadedBy  User?           @relation("DocumentUploader", fields: [uploadedById], references: [id])
+  chunks      DocumentChunk[]
 
   @@index([engagementId])
   @@map("audit_documents")
