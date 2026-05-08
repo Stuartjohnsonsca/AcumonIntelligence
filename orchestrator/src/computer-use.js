@@ -340,7 +340,14 @@ export async function runComputerUseLoop({ page, sessionId, systemPrompt, initia
     // the operator running `az containerapp logs show`) and to the
     // modal's progress message (so the user sees a live activity feed).
     if (toolUses.length > 0) {
-      const summary = toolUses.map(describeToolUse).join('; ');
+      // Strip the protocol+host so the path stays short in the modal.
+      // Falls back to '?' for about:blank (pre-navigation) or closed pages.
+      let pagePath = '?';
+      try {
+        const u = turnPage?.url() || '';
+        if (u && u !== 'about:blank') pagePath = new URL(u).pathname || '/';
+      } catch { /* leave as ? */ }
+      const summary = `${toolUses.map(describeToolUse).join('; ')} — on ${pagePath}`;
       console.log(`[session ${sessionId}] iter ${iter + 1}: ${summary}`);
       // Heuristic stage advancement based on the tool calls Claude is
       // making — once we've seen MFA the user is mid-login; once we
@@ -389,7 +396,7 @@ export async function runComputerUseLoop({ page, sessionId, systemPrompt, initia
             });
           }
         } else if (tu.name === 'submit_done') {
-          await onComplete(tu.input);
+          await onComplete(tu.input, messages);
           return;
         } else if (tu.name === 'fail') {
           await onFail(tu.input.reason || 'Failed (no reason given)');
@@ -410,4 +417,90 @@ export async function runComputerUseLoop({ page, sessionId, systemPrompt, initia
     messages.push({ role: 'user', content: toolResults });
   }
   throw new Error(`Hit max iterations (${MAX_ITERATIONS}) without completion`);
+}
+
+// ─── Recipe summarisation ────────────────────────────────────────────
+// After a successful submit_done, ask Claude to distil what worked into
+// a structured JSON recipe. Subsequent runs for the same vendor get the
+// recipe injected into the system prompt — Claude follows the saved
+// path step-by-step and only falls back to discovery if a step doesn't
+// match the live page. This is the difference between "AI feature" and
+// "fast deterministic-feeling tool" once a vendor has been done once.
+//
+// We strip images from the conversation before sending — the action
+// names + tool inputs are what matter, screenshots aren't needed for
+// summarisation and would balloon the request.
+export async function summariseRecipe({ messages, vendorLabel, finalUrl }) {
+  const compactMessages = stripImagesFromMessages(messages);
+  const summarisationPrompt = [
+    `You just successfully drove a headless browser through ${vendorLabel} to download a prior-period audit archive.`,
+    'Distil what worked into a structured JSON recipe so a future run for a different client at the same vendor can follow the same path.',
+    '',
+    'Output ONLY valid JSON, no prose, in this shape:',
+    '{',
+    '  "loginUrl": "https://...",',
+    '  "loginSteps": [',
+    '    { "summary": "Click email field", "action": "click", "approxCoords": [x, y], "selectorHint": "<input type=email> at top of login form" },',
+    '    { "summary": "Type email from ask_user", "action": "type_field", "field": "email" },',
+    '    ...',
+    '  ],',
+    '  "mfaTriggerStep": { "summary": "Click Send Code button", "approxCoords": [x, y] } | null,',
+    '  "navigationSteps": [',
+    '    { "summary": "Click Clients in top nav", "action": "click", "approxCoords": [x, y], "selectorHint": "..." },',
+    '    { "summary": "Search for client name in list", "action": "type_search", "selectorHint": "search box" },',
+    '    ...',
+    '  ],',
+    '  "downloadSteps": [',
+    '    { "summary": "Click the most recent CLOSED period", "action": "click", "approxCoords": [x, y] },',
+    '    { "summary": "Click Download Archive button", "action": "click", "approxCoords": [x, y] }',
+    '  ],',
+    '  "notes": "any quirks worth knowing about this vendor"',
+    '}',
+    '',
+    'Rules:',
+    '- selectorHint should describe the element\'s visible label/text/role, NOT raw CSS — the next run\'s page may have different DOM but the same labels.',
+    '- approxCoords are a fallback; selectorHint is preferred.',
+    '- Skip per-client steps that change (which specific client to search for, which specific period). Only record vendor-level navigation patterns.',
+    `- Final URL the run ended on: ${finalUrl || '(unknown)'}.`,
+  ].join('\n');
+
+  const response = await anthropic.messages.create({
+    model: MODEL,
+    max_tokens: 2048,
+    system: summarisationPrompt,
+    messages: [
+      ...compactMessages,
+      { role: 'user', content: 'Output the recipe JSON now.' },
+    ],
+  });
+  // Extract the first text block; trim any code fences Claude might add.
+  const text = (response.content || []).filter(b => b.type === 'text').map(b => b.text).join('\n').trim();
+  const stripped = text.replace(/^```(?:json)?\s*/i, '').replace(/\s*```\s*$/, '');
+  try {
+    return JSON.parse(stripped);
+  } catch {
+    // Fall back to a minimal recipe so the run still records SOMETHING
+    // useful. Future runs can compare-and-merge.
+    return { loginUrl: finalUrl || null, raw: stripped.slice(0, 4000) };
+  }
+}
+
+function stripImagesFromMessages(messages) {
+  return messages.map(msg => {
+    if (!Array.isArray(msg.content)) return msg;
+    return {
+      ...msg,
+      content: msg.content.map(block => {
+        if (block.type === 'tool_result' && Array.isArray(block.content)) {
+          return {
+            ...block,
+            content: block.content.map(c =>
+              c?.type === 'image' ? { type: 'text', text: '[screenshot]' } : c,
+            ),
+          };
+        }
+        return block;
+      }),
+    };
+  });
 }

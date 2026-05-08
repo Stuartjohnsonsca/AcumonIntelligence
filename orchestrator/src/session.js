@@ -5,13 +5,14 @@ import { readFile, mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { chromium } from 'playwright';
-import { runComputerUseLoop } from './computer-use.js';
+import { runComputerUseLoop, summariseRecipe } from './computer-use.js';
 import { reportProgress, reportFailure, fetchRecipe, saveRecipe, submitArchive } from './acumon.js';
 
 const VIEWPORT = { width: 1280, height: 800 };
 
 function buildSystemPrompt({ vendorLabel, clientName, recipe }) {
   const knownUrl = recipe?.data?.loginUrl || recipe?.data?.finalUrl;
+  const isStructuredV2 = recipe?.data?.version === 2 && Array.isArray(recipe?.data?.loginSteps);
   return [
     `You are operating a headless Chromium to import a prior-period audit file from ${vendorLabel} on behalf of an auditor.`,
     `Client: ${clientName || 'TBD — confirm with the operator'}.`,
@@ -43,9 +44,24 @@ function buildSystemPrompt({ vendorLabel, clientName, recipe }) {
     '',
     'SPEED: Each screenshot adds ~10 s of API latency. Take a screenshot only when you genuinely need to inspect the page (after a navigation, after a click that changes state, before deciding which element to interact with). Do NOT screenshot between consecutive keystrokes or after every micro-action — group actions, then verify.',
     '',
-    recipe
-      ? `Saved recipe for this client (verify before relying on selectors): ${JSON.stringify(recipe.data).slice(0, 1500)}`
-      : 'No saved recipe for this client yet.',
+    isStructuredV2
+      ? [
+          '════════════════════════════════════════════════════════════════',
+          'PROVEN RECIPE for this vendor — a previous successful run recorded',
+          'the path that worked. Follow it step-by-step. The selectorHints',
+          'describe the visible label/role/text of the element, not raw CSS;',
+          'find a matching element on the live page. approxCoords are a',
+          'fallback if the label has changed. If a step genuinely doesn\'t',
+          'match what you see, fall back to discovery (screenshot + reason)',
+          'and call ask_user if you are stuck for more than 2 turns.',
+          '',
+          `Recipe (vendor=${vendorLabel}, used ${recipe.successCount || 1}× successfully):`,
+          JSON.stringify(recipe.data, null, 2).slice(0, 3000),
+          '════════════════════════════════════════════════════════════════',
+        ].join('\n')
+      : recipe
+        ? `Saved recipe (legacy v1, only partial info): ${JSON.stringify(recipe.data).slice(0, 800)}`
+        : 'No saved recipe for this vendor yet — this run will record the steps that work for future runs.',
   ].join('\n');
 }
 
@@ -107,9 +123,16 @@ export async function runSession({ sessionId, vendorLabel, clientName, auditType
     // or ask the user for the vendor login URL via the ask_user tool.
     await page.goto('about:blank', { waitUntil: 'domcontentloaded' }).catch(() => {});
 
-    const recipe = await fetchRecipe(sessionId, clientName || 'unknown').catch(() => null);
+    // Recipes are stored per-vendor (not per-client) so the first
+    // successful import for ANY client unlocks fast paths for all
+    // subsequent clients of the same vendor. The recipe summariser is
+    // instructed to skip per-client info; the search-for-this-client
+    // step is provided fresh on each run via the initial user message.
+    const RECIPE_KEY_FOR_VENDOR = '__vendor__';
+    const recipe = await fetchRecipe(sessionId, RECIPE_KEY_FOR_VENDOR).catch(() => null);
 
     let donePayload = null;
+    let doneMessages = null;  // captured for post-success recipe summarisation
     let failed = false;
     const targetBits = [
       `Vendor: ${vendorLabel}`,
@@ -122,7 +145,7 @@ export async function runSession({ sessionId, vendorLabel, clientName, auditType
       sessionId,
       systemPrompt: buildSystemPrompt({ vendorLabel, clientName, recipe }),
       initialUserMessage: `Begin. ${targetBits}.`,
-      onComplete: async (input) => { donePayload = input; },
+      onComplete: async (input, messages) => { donePayload = input; doneMessages = messages; },
       onFail: async (reason) => { failed = true; await reportFailure(sessionId, reason); },
     });
 
@@ -150,19 +173,28 @@ export async function runSession({ sessionId, vendorLabel, clientName, auditType
 
     await submitArchive(sessionId, { fileBuffer: buffer, fileName, mimeType });
 
-    // Persist a recipe for future runs of this client. We don't have a
-    // structured recipe yet — first version is just the URL we ended on,
-    // a screenshot-derived hint, and the path we took. Subsequent
-    // refinement is future work.
+    // Persist a structured recipe for future runs. We ask Claude to
+    // distil the message history into a JSON recipe describing the path
+    // (login URL, login form steps, MFA trigger, navigation pattern,
+    // download buttons). The next run for the same vendor gets this
+    // injected into its system prompt so it can follow the proven path.
     try {
       const finalUrl = page.url();
-      await saveRecipe(sessionId, clientName || 'unknown', {
-        version: 1,
+      console.log(`[session ${sessionId}] summarising recipe for vendor=${vendorLabel}…`);
+      const recipeData = await summariseRecipe({
+        messages: doneMessages || [],
+        vendorLabel,
+        finalUrl,
+      });
+      await saveRecipe(sessionId, RECIPE_KEY_FOR_VENDOR, {
+        version: 2,
         finalUrl,
         observedAt: new Date().toISOString(),
+        ...recipeData,
       });
+      console.log(`[session ${sessionId}] recipe saved (${Object.keys(recipeData).length} top-level keys)`);
     } catch (err) {
-      console.warn('[session] saveRecipe failed:', err.message);
+      console.warn(`[session ${sessionId}] recipe summarisation failed:`, err.message);
     }
   } catch (err) {
     console.error('[session] error:', err);
