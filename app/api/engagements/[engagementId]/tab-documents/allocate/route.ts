@@ -6,9 +6,14 @@ import { prisma } from '@/lib/db';
  * POST /api/engagements/:id/tab-documents/allocate
  *
  * Allocate an existing AuditDocument (already in the engagement's
- * Documents tab) to a specific engagement tab. The allocation is
- * persisted on AuditDocument.utilisedTab so it survives reload and
- * also shows on the Documents tab as the document's "used in" location.
+ * Documents tab) to a specific engagement tab. The allocation lands
+ * in AuditDocumentTabAllocation (composite-key upsert — idempotent),
+ * AND the legacy `utilisedTab` field is updated to this tab so older
+ * code paths that still read the single-tab field show the most
+ * recently allocated tab.
+ *
+ * Existing allocations on OTHER tabs are NOT cleared — a single
+ * document can sit on multiple tabs simultaneously.
  *
  * Body: { documentId, tab }
  */
@@ -42,14 +47,24 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ engagement
     return NextResponse.json({ error: 'Document not found' }, { status: 404 });
   }
 
-  await prisma.auditDocument.update({
-    where: { id: documentId },
-    data: {
-      utilisedTab: tab,
-      utilisedOn: existing.utilisedTab ? undefined : new Date(),
-      utilisedByName: existing.utilisedTab ? undefined : (session.user.name || session.user.email || null),
-    },
-  });
+  // Upsert the allocation row (idempotent — same doc/tab pair is fine
+  // to call repeatedly), and update the legacy single-tab field for
+  // back-compat readers.
+  await prisma.$transaction([
+    prisma.auditDocumentTabAllocation.upsert({
+      where: { documentId_tab: { documentId, tab } },
+      create: { documentId, tab, allocatedById: session.user.id },
+      update: {},
+    }),
+    prisma.auditDocument.update({
+      where: { id: documentId },
+      data: {
+        utilisedTab: tab,
+        utilisedOn: existing.utilisedTab ? undefined : new Date(),
+        utilisedByName: existing.utilisedTab ? undefined : (session.user.name || session.user.email || null),
+      },
+    }),
+  ]);
 
   return NextResponse.json({ ok: true });
 }

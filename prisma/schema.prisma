@@ -164,6 +164,7 @@ model User {
   intelligenceReviews       ClientIntelligenceReview[]
   auditDocumentsRequested   AuditDocument[]            @relation("DocumentRequester")
   auditDocumentsUploaded    AuditDocument[]            @relation("DocumentUploader")
+  documentAllocations       AuditDocumentTabAllocation[] @relation("DocumentAllocator")
   methodologyConfigsCreated MethodologyConfig[]
   firmEthicsPartnerOf       Firm[]                     @relation("FirmEthicsPartner")
   journalRiskRuns           JournalRiskRun[]           @relation("JournalRiskRunBy")
@@ -2753,13 +2754,38 @@ model AuditDocument {
   documentType    String?   @map("document_type") // e.g. Bank Statement, Confirmation, Invoice
   createdAt       DateTime  @default(now()) @map("created_at")
 
-  engagement  AuditEngagement @relation(fields: [engagementId], references: [id], onDelete: Cascade)
-  requestedBy User?           @relation("DocumentRequester", fields: [requestedById], references: [id])
-  uploadedBy  User?           @relation("DocumentUploader", fields: [uploadedById], references: [id])
-  chunks      DocumentChunk[]
+  engagement      AuditEngagement              @relation(fields: [engagementId], references: [id], onDelete: Cascade)
+  requestedBy     User?                        @relation("DocumentRequester", fields: [requestedById], references: [id])
+  uploadedBy      User?                        @relation("DocumentUploader", fields: [uploadedById], references: [id])
+  chunks          DocumentChunk[]
+  tabAllocations  AuditDocumentTabAllocation[]
 
   @@index([engagementId])
   @@map("audit_documents")
+}
+
+/// Multi-tab allocation for AuditDocument. The legacy `utilisedTab`
+/// column stays populated for back-compat (and represents the document's
+/// "primary" tab — wherever it was first uploaded or last allocated to)
+/// but the canonical answer to "which engagement tabs reference this
+/// document?" is the union of utilisedTab + every row in this table.
+///
+/// Composite primary key on (documentId, tab) makes "allocate" idempotent
+/// — the same document can sit on the same tab only once. Cascade on
+/// document delete cleans up dangling rows.
+model AuditDocumentTabAllocation {
+  documentId    String   @map("document_id")
+  tab           String
+  allocatedAt   DateTime @default(now()) @map("allocated_at")
+  allocatedById String?  @map("allocated_by_id")
+
+  document    AuditDocument @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  allocatedBy User?         @relation("DocumentAllocator", fields: [allocatedById], references: [id])
+
+  @@id([documentId, tab])
+  @@index([tab])
+  @@index([allocatedById])
+  @@map("audit_document_tab_allocations")
 }
 
 model AuditTBRow {

@@ -20,11 +20,25 @@ export async function GET(req: Request, { params }: { params: Promise<{ engageme
     include: {
       requestedBy: { select: { id: true, name: true } },
       uploadedBy: { select: { id: true, name: true } },
+      tabAllocations: { select: { tab: true } },
     },
     orderBy: { createdAt: 'desc' },
   });
 
-  return NextResponse.json({ documents });
+  // Surface multi-tab allocations as a flat string[] so the UI
+  // doesn't have to know about the join table. Union with the
+  // legacy single-tab field so older docs still have at least one
+  // entry; deduplicate so multi-write paths don't double-count.
+  const enriched = documents.map(d => {
+    const fromAllocations = d.tabAllocations.map(a => a.tab);
+    const utilisedTabs = Array.from(
+      new Set(d.utilisedTab ? [...fromAllocations, d.utilisedTab] : fromAllocations),
+    );
+    const { tabAllocations: _strip, ...rest } = d;
+    return { ...rest, utilisedTabs };
+  });
+
+  return NextResponse.json({ documents: enriched });
 }
 
 export async function POST(req: Request, { params }: { params: Promise<{ engagementId: string }> }) {

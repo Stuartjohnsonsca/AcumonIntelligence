@@ -278,11 +278,13 @@ export function TabDocumentsFooter({ engagementId, tab, tabLabel, clientName, pe
   }
 
   async function deleteDoc(d: TabDocument) {
-    if (!confirm(`Delete "${d.documentName}" from this tab? This removes the attachment record; the underlying file is retained.`)) return;
+    if (!confirm(`Remove "${d.documentName}" from the ${niceLabel} tab? The document remains on the engagement-wide Documents tab — use that to delete it entirely.`)) return;
     setBusy(true);
     setError(null);
     try {
-      const res = await fetch(`/api/engagements/${engagementId}/tab-documents/${d.id}`, { method: 'DELETE' });
+      // Pass the tab key so the API removes only THIS tab's allocation
+      // rather than purging the document row everywhere.
+      const res = await fetch(`/api/engagements/${engagementId}/tab-documents/${d.id}?tab=${encodeURIComponent(tab)}`, { method: 'DELETE' });
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
         setError(data?.error || `Delete failed (${res.status})`);
@@ -573,7 +575,7 @@ export function TabDocumentsFooter({ engagementId, tab, tabLabel, clientName, pe
                         type="button"
                         onClick={() => deleteDoc(d)}
                         disabled={busy}
-                        title="Delete"
+                        title="Remove from this tab"
                         className="p-1 text-slate-500 hover:text-red-600 hover:bg-red-50 rounded disabled:opacity-50"
                       >
                         <Trash2 className="h-3.5 w-3.5" />

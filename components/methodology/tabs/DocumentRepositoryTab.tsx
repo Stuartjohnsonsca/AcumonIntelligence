@@ -38,6 +38,9 @@ interface AuditDocument {
   utilisedOn: string | null;
   utilisedByName: string | null;
   utilisedTab: string | null;
+  /** Multi-tab allocation list — union of utilisedTab + the join
+   *  table — surfaced flat by the API. */
+  utilisedTabs?: string[];
   mappedItems: string[] | null;
   source: string | null;
   usageLocation: string | null;
@@ -228,13 +231,18 @@ export function DocumentRepositoryTab({ engagementId }: Props) {
     setAddingCustomType(false);
   }
 
-  // Apply filters. Location matches against utilisedTab (the live
-  // engagement-tab key) rather than the free-text usageLocation field
-  // — that's what the user actually asks "where is this document
-  // referenced from?" with.
+  // Apply filters. Location matches against ANY of the document's
+  // tab allocations (utilisedTabs is the union of the legacy
+  // utilisedTab + the join table). That's what the user actually
+  // asks "where is this document referenced from?" with.
   const filtered = documents.filter(doc => {
     if (filterSource && doc.source !== filterSource) return false;
-    if (filterLocation && doc.utilisedTab !== filterLocation) return false;
+    if (filterLocation) {
+      const allocations = doc.utilisedTabs && doc.utilisedTabs.length > 0
+        ? doc.utilisedTabs
+        : (doc.utilisedTab ? [doc.utilisedTab] : []);
+      if (!allocations.includes(filterLocation)) return false;
+    }
     if (filterDocType && doc.documentType !== filterDocType) return false;
     return true;
   });
@@ -510,17 +518,24 @@ export function DocumentRepositoryTab({ engagementId }: Props) {
                         {doc.source}
                       </span>
                     )}
-                    {/* Allocation — which engagement tab references this
-                        document. utilisedTab is the legacy single-tab
-                        field; Phase B will add a multi-tab variant. */}
-                    {doc.utilisedTab && (
-                      <span
-                        className="text-[8px] bg-emerald-100 text-emerald-700 px-1.5 py-0.5 rounded font-medium"
-                        title={`Allocated to: ${tabLabelForKey(doc.utilisedTab)}`}
-                      >
-                        {tabLabelForKey(doc.utilisedTab)}
-                      </span>
-                    )}
+                    {/* Allocation — every engagement tab this document
+                        is referenced from. The API surfaces utilisedTabs
+                        as a flat union of utilisedTab + the join table;
+                        we render one badge per tab. */}
+                    {(() => {
+                      const allocations = doc.utilisedTabs && doc.utilisedTabs.length > 0
+                        ? doc.utilisedTabs
+                        : (doc.utilisedTab ? [doc.utilisedTab] : []);
+                      return allocations.map(t => (
+                        <span
+                          key={`alloc-${t}`}
+                          className="text-[8px] bg-emerald-100 text-emerald-700 px-1.5 py-0.5 rounded font-medium"
+                          title={`Allocated to: ${tabLabelForKey(t)}`}
+                        >
+                          {tabLabelForKey(t)}
+                        </span>
+                      ));
+                    })()}
                     {doc.usageLocation && <span className="text-[8px] bg-teal-100 text-teal-600 px-1.5 py-0.5 rounded font-medium">{doc.usageLocation}</span>}
                     {doc.documentType && <span className="text-[8px] bg-amber-100 text-amber-600 px-1.5 py-0.5 rounded font-medium">{doc.documentType}</span>}
                     {mappedItems.length > 0 && mappedItems.map((item, i) => (

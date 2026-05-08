@@ -41,8 +41,17 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ engagementI
   const tab = (searchParams.get('tab') || '').trim();
   if (!tab) return NextResponse.json({ error: 'tab is required' }, { status: 400 });
 
+  // Match either the legacy single-tab `utilisedTab` field OR a row
+  // in the new join table — keeps existing data visible while new
+  // multi-tab allocations work.
   const docs = await prisma.auditDocument.findMany({
-    where: { engagementId, utilisedTab: tab },
+    where: {
+      engagementId,
+      OR: [
+        { utilisedTab: tab },
+        { tabAllocations: { some: { tab } } },
+      ],
+    },
     include: {
       uploadedBy: { select: { id: true, name: true } },
     },
@@ -121,6 +130,9 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ engagement
       utilisedByName: session.user.name || session.user.email || null,
       receivedByName: session.user.name || session.user.email || null,
       receivedAt: new Date(),
+      tabAllocations: {
+        create: { tab, allocatedById: session.user.id },
+      },
     },
   });
 
