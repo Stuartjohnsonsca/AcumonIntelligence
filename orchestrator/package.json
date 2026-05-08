@@ -1,0 +1,21 @@
+{
+  "name": "acumon-orchestrator",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Acumon import orchestrator — drives a headless Chrome via the Anthropic Computer Use API to import prior-period audit files from cloud audit-software vendors on the user's behalf.",
+  "type": "module",
+  "main": "src/server.js",
+  "scripts": {
+    "start": "node src/server.js",
+    "install-browser": "playwright install --with-deps chromium"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.89.0",
+    "express": "^4.21.0",
+    "playwright": "^1.48.0",
+    "form-data": "^4.0.0"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
