@@ -1360,6 +1360,10 @@ export function EngagementTabs({ engagement, auditType, clientName, periodEndDat
                 appear in both views as a fallback. */}
             {visibleTabs
               .filter(tab => {
+                // Opening is the engagement entry point — always show it
+                // on the Planning sidebar regardless of whether the admin
+                // has wired it into the per-firm schedule mapping.
+                if (tab.key === 'opening') return completionSidebarStage === 'planning';
                 const sk = TAB_TO_SCHEDULE[tab.key];
                 if (!sk) return true;
                 const planningKeys = stageKeyedMapping?.planning || [];
