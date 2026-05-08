@@ -96,6 +96,13 @@ export function ClientPortalTab({ engagementId, clientName }: Props) {
   const [data, setData] = useState<PreviewData | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  // Which portal user the auditor is impersonating in the replica.
+  // 'all' is the unscoped view (default) — shows the Principal's full
+  // experience plus Manage Staff. Selecting an individual user filters
+  // the available sub-views to what THAT user actually sees in the
+  // real portal: Principals get all three; regular staff see only the
+  // Home tiles + their service area.
+  const [viewingAs, setViewingAs] = useState<string>('all');
 
   useEffect(() => {
     setLoading(true); setError(null);
@@ -149,37 +156,99 @@ export function ClientPortalTab({ engagementId, clientName }: Props) {
       {/* Simulated browser chrome — establishes clearly that what's
           below is a REPLICA, not the audit tool. */}
       <div className="rounded-lg border border-slate-300 overflow-hidden bg-white shadow-sm">
-        <div className="bg-slate-100 border-b border-slate-200 px-3 py-2 flex items-center gap-2">
-          <div className="flex items-center gap-1">
-            <span className="w-2.5 h-2.5 rounded-full bg-red-400" />
-            <span className="w-2.5 h-2.5 rounded-full bg-amber-400" />
-            <span className="w-2.5 h-2.5 rounded-full bg-emerald-400" />
-          </div>
-          <div className="flex-1 bg-white border border-slate-300 rounded px-2 py-0.5 text-[11px] text-slate-500 font-mono truncate">
-            acumon-website.vercel.app
-            {view === 'home'      && '/portal/dashboard'}
-            {view === 'dashboard' && `/portal/principal/${engagementId}`}
-            {view === 'manage'    && `/portal/setup/${engagementId}`}
-          </div>
-          <span className="text-[10px] uppercase tracking-wide px-2 py-0.5 rounded-full bg-amber-50 border border-amber-200 text-amber-700 font-medium">Preview — read only</span>
-        </div>
+        {/* Viewing-as picker — drops down the client's portal users
+            so the auditor can replicate exactly what one specific
+            person sees. Selecting a regular staff member hides the
+            Principal-only sub-views (Manage Staff, Principal
+            Dashboard) and snaps the active view to Home. */}
+        {(() => {
+          // Build the pickable list. Includes the Principal (always)
+          // and any staff member who has a real portal account
+          // (portalUserId set — staff invited but not signed up yet
+          // can't be impersonated because they have no portal data).
+          const pickableStaff = data.staff.filter(s => !!s.portalUserId);
+          const principalId = data.principal?.id || null;
+          const isPrincipalSelected = viewingAs === 'all' || viewingAs === principalId;
+          // Snap an invalid view back to Home when the selected user
+          // can't see it. Regular staff don't get Manage / Dashboard.
+          if (!isPrincipalSelected && view !== 'home') {
+            // Use a microtask to avoid setState-during-render warning.
+            queueMicrotask(() => setView('home'));
+          }
+          return (
+            <div className="bg-slate-100 border-b border-slate-200 px-3 py-2 flex items-center gap-2">
+              <div className="flex items-center gap-1">
+                <span className="w-2.5 h-2.5 rounded-full bg-red-400" />
+                <span className="w-2.5 h-2.5 rounded-full bg-amber-400" />
+                <span className="w-2.5 h-2.5 rounded-full bg-emerald-400" />
+              </div>
+              <div className="flex-1 bg-white border border-slate-300 rounded px-2 py-0.5 text-[11px] text-slate-500 font-mono truncate">
+                acumon-website.vercel.app
+                {view === 'home'      && '/portal/dashboard'}
+                {view === 'dashboard' && `/portal/principal/${engagementId}`}
+                {view === 'manage'    && `/portal/setup/${engagementId}`}
+              </div>
+              <span className="text-[10px] uppercase tracking-wide px-2 py-0.5 rounded-full bg-amber-50 border border-amber-200 text-amber-700 font-medium">Preview — read only</span>
+            </div>
+          );
+        })()}
 
-        {/* View switcher — mimics nothing in the real portal, it's just
-             a convenience for the auditor walking through each screen. */}
-        <div className="px-3 py-2 border-b border-slate-200 bg-slate-50 flex gap-1 text-xs">
-          <button
-            onClick={() => setView('home')}
-            className={`px-2.5 py-1 rounded ${view === 'home' ? 'bg-white border border-slate-300 text-slate-800 font-medium' : 'text-slate-600 hover:bg-white'}`}
-          >Home</button>
-          <button
-            onClick={() => setView('dashboard')}
-            className={`px-2.5 py-1 rounded ${view === 'dashboard' ? 'bg-white border border-slate-300 text-slate-800 font-medium' : 'text-slate-600 hover:bg-white'}`}
-          >Principal Dashboard</button>
-          <button
-            onClick={() => setView('manage')}
-            className={`px-2.5 py-1 rounded ${view === 'manage' ? 'bg-white border border-slate-300 text-slate-800 font-medium' : 'text-slate-600 hover:bg-white'}`}
-          >Manage Staff</button>
-        </div>
+        {/* Viewing-as + sub-view switcher row. Auditor picks which
+            client-portal user to impersonate, and which page in that
+            user's experience to show. */}
+        {(() => {
+          const pickableStaff = data.staff.filter(s => !!s.portalUserId);
+          const principalId = data.principal?.id || null;
+          const isPrincipalSelected = viewingAs === 'all' || viewingAs === principalId;
+          const showPrincipalViews = isPrincipalSelected;
+          return (
+            <div className="px-3 py-2 border-b border-slate-200 bg-slate-50 flex flex-wrap gap-2 text-xs items-center">
+              <label className="text-[10px] uppercase tracking-wide text-slate-500 font-semibold">Viewing as</label>
+              <select
+                value={viewingAs}
+                onChange={e => setViewingAs(e.target.value)}
+                className="text-xs border border-slate-300 rounded px-2 py-1 bg-white"
+                title="Pick which client-portal user's experience to replicate"
+              >
+                <option value="all">— Whole portal (auditor view) —</option>
+                {data.principal && (
+                  <option value={data.principal.id}>{data.principal.name} (Portal Principal)</option>
+                )}
+                {pickableStaff.length > 0 && (
+                  <optgroup label="Staff">
+                    {pickableStaff.map(s => (
+                      <option key={s.id} value={s.portalUserId || s.id}>
+                        {s.name}{s.role ? ` — ${s.role}` : ''}
+                      </option>
+                    ))}
+                  </optgroup>
+                )}
+              </select>
+              <span className="mx-1 h-4 w-px bg-slate-300" />
+              <button
+                onClick={() => setView('home')}
+                className={`px-2.5 py-1 rounded ${view === 'home' ? 'bg-white border border-slate-300 text-slate-800 font-medium' : 'text-slate-600 hover:bg-white'}`}
+              >Home</button>
+              {showPrincipalViews && (
+                <>
+                  <button
+                    onClick={() => setView('dashboard')}
+                    className={`px-2.5 py-1 rounded ${view === 'dashboard' ? 'bg-white border border-slate-300 text-slate-800 font-medium' : 'text-slate-600 hover:bg-white'}`}
+                  >Principal Dashboard</button>
+                  <button
+                    onClick={() => setView('manage')}
+                    className={`px-2.5 py-1 rounded ${view === 'manage' ? 'bg-white border border-slate-300 text-slate-800 font-medium' : 'text-slate-600 hover:bg-white'}`}
+                  >Manage Staff</button>
+                </>
+              )}
+              {!showPrincipalViews && (
+                <span className="text-[10px] text-slate-500 italic ml-1">
+                  Regular staff only see Home + their service area — Principal Dashboard and Manage Staff are hidden.
+                </span>
+              )}
+            </div>
+          );
+        })()}
 
         {/* The replica itself. pointer-events-none on the outer frame
              makes every visible control inert; visible styles kept
