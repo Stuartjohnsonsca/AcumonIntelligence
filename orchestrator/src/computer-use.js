@@ -237,6 +237,44 @@ function describeToolUse(tu) {
 // ─── Main loop ───────────────────────────────────────────────────────
 
 export async function runComputerUseLoop({ page, sessionId, systemPrompt, initialUserMessage, onComplete, onFail }) {
+  // ─── Multi-page tracking ────────────────────────────────────────────
+  // Many vendor sites pop a new tab/window during login or download
+  // flows (OAuth redirects, "Open in new tab" download links, MFA
+  // confirmation pages, etc.). Without tracking these, Claude's tool
+  // calls keep hitting the original page even after the user-visible
+  // action moved to the new one — and if the original page closes, the
+  // whole session dies with a TargetClosedError.
+  //
+  // Strategy: keep an `activePage` reference that always points at the
+  // most recently activated tab. context.on('page') fires on every new
+  // page; we promote each to active on creation and again when it
+  // emits domcontentloaded (so transient about:blank popups don't win).
+  // If the active page closes, fall back to the most recent surviving
+  // page in the context.
+  let activePage = page;
+  const ctx = page.context();
+  ctx.on('page', (newPage) => {
+    console.log(`[session ${sessionId}] new page opened: ${newPage.url() || 'about:blank'}`);
+    activePage = newPage;
+    newPage.once('domcontentloaded', () => {
+      console.log(`[session ${sessionId}] new page loaded: ${newPage.url()}`);
+      activePage = newPage;
+    });
+    newPage.once('close', () => {
+      console.log(`[session ${sessionId}] page closed: ${newPage.url()}`);
+      // Fall back to the most recently opened surviving page.
+      const survivors = ctx.pages().filter(p => !p.isClosed());
+      if (survivors.length > 0) activePage = survivors[survivors.length - 1];
+    });
+  });
+  const getActivePage = () => {
+    if (!activePage || activePage.isClosed()) {
+      const survivors = ctx.pages().filter(p => !p.isClosed());
+      if (survivors.length > 0) activePage = survivors[survivors.length - 1];
+    }
+    return activePage;
+  };
+
   const viewport = page.viewportSize() || { width: 1280, height: 800 };
   // Tag the LAST tool with cache_control:ephemeral so Anthropic caches
   // the entire tools block. The system prompt and tools don't change
@@ -294,6 +332,9 @@ export async function runComputerUseLoop({ page, sessionId, systemPrompt, initia
       throw new Error(`Unexpected stop_reason: ${response.stop_reason}`);
     }
 
+    // Resolve the page we'll act against THIS turn. May have changed
+    // between iterations if a popup opened or the tab closed.
+    const turnPage = getActivePage();
     const toolUses = response.content.filter(b => b.type === 'tool_use');
     // Surface what Claude is about to do — both to container logs (for
     // the operator running `az containerapp logs show`) and to the
@@ -321,7 +362,7 @@ export async function runComputerUseLoop({ page, sessionId, systemPrompt, initia
     for (const tu of toolUses) {
       try {
         if (tu.name === 'computer') {
-          const result = await executeComputerAction(page, tu.input);
+          const result = await executeComputerAction(turnPage, tu.input);
           toolResults.push({ type: 'tool_result', tool_use_id: tu.id, content: [result] });
         } else if (tu.name === 'ask_user') {
           const answer = await askUser(sessionId, tu.input);
@@ -336,10 +377,10 @@ export async function runComputerUseLoop({ page, sessionId, systemPrompt, initia
             if (!/^https?:\/\//i.test(url)) {
               throw new Error('navigate requires absolute http(s) URL');
             }
-            await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 30000 });
+            await turnPage.goto(url, { waitUntil: 'domcontentloaded', timeout: 30000 });
             toolResults.push({
               type: 'tool_result', tool_use_id: tu.id,
-              content: [{ type: 'text', text: `navigated to ${page.url()}` }],
+              content: [{ type: 'text', text: `navigated to ${turnPage.url()}` }],
             });
           } catch (err) {
             toolResults.push({
