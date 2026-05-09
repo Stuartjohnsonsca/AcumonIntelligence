@@ -393,6 +393,19 @@ export function AuditEngagementPage({ auditType }: Props) {
                         </option>
                       ))}
                     </select>
+                    {/* Add new period from the header — drops the engagement
+                        back to the chooser card with the add-period form
+                        already expanded so the user doesn't need to hunt
+                        for it. */}
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (engagement) handleBackToSetup();
+                        setShowAddPeriod(true);
+                      }}
+                      title="Add a new period for this client"
+                      className="text-xs px-2 py-1.5 bg-slate-100 text-slate-600 rounded-md hover:bg-slate-200 font-medium"
+                    >+ Add</button>
                   </div>
                 )}
               </>

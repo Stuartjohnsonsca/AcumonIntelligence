@@ -146,13 +146,15 @@ export function ImportOptionsModal({ engagementId, clientName, periodEnd, auditT
   const [orchestratorConfigured, setOrchestratorConfigured] = useState<boolean | null>(null);
   const [pendingPrompt, setPendingPrompt] = useState<PendingPrompt | null>(null);
 
-  // Auto-advance past 'select' when the upstream setup card already
-  // captured the user's tile choices. Empty array is a legitimate
-  // signal ("user reviewed and picked nothing") and just commits the
-  // empty selections + closes; non-empty either commits-and-closes or
-  // jumps to 'expand' depending on whether 'import_data' is included.
+  // Auto-advance past 'select' only when the upstream setup card
+  // ticked at least one tile. An EMPTY array means the user clicked
+  // "Open Audit File" without picking anything — previously we'd
+  // silently flip to 'busy' and hit the save endpoint, which left
+  // them stuck on a spinner with no escape if the call was slow.
+  // We now keep the modal on the 'select' step in that case so they
+  // can explicitly hit "Skip imports" or pick something.
   useEffect(() => {
-    if (initialSelections === undefined) return;
+    if (!initialSelections || initialSelections.length === 0) return;
     void handleProceedFromSelect();
     // Run exactly once on mount with whatever the prop carried.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -364,8 +366,25 @@ export function ImportOptionsModal({ engagementId, clientName, periodEnd, auditT
   }
 
   function handleClose() {
-    void saveSelectionsAndFinish({ selections: [], cancelled: true });
+    // Optimistically dismiss — synthesise the 'cancelled' state and
+    // hand it to onComplete *immediately* so the parent unmounts the
+    // modal even if the persistence call below is slow or fails.
+    // Previously handleClose awaited the save, which meant a slow
+    // endpoint left the user staring at a busy spinner with no escape.
+    const optimistic: ImportOptionsState = {
+      prompted: true,
+      selections: [],
+      status: 'cancelled',
+      at: new Date().toISOString(),
+      history: [],
+    };
+    onComplete(optimistic, {});
     onClose?.();
+    void fetch(`/api/engagements/${engagementId}/import-options/save`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ selections: [], status: 'cancelled' }),
+    }).catch(err => console.warn('[ImportOptions] background cancel save failed:', err));
   }
 
   // ─── Render ────────────────────────────────────────────────────────
@@ -450,7 +469,11 @@ export function ImportOptionsModal({ engagementId, clientName, periodEnd, auditT
         <div className="px-6 py-4 border-t border-slate-200 bg-slate-50 flex items-center justify-between gap-3">
           {step === 'select' && (
             <>
-              <button onClick={handleClose} className="text-sm px-4 py-2 text-slate-600 hover:text-slate-800">Cancel</button>
+              <button
+                onClick={handleClose}
+                className="text-sm px-4 py-2 text-slate-600 hover:text-slate-800"
+                title="Open the engagement without importing anything — you can populate it manually."
+              >Skip imports</button>
               <button
                 onClick={handleProceedFromSelect}
                 className="text-sm px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 font-medium"
@@ -524,6 +547,12 @@ export function ImportOptionsModal({ engagementId, clientName, periodEnd, auditT
               <button onClick={handleClose} className="text-sm px-4 py-2 text-slate-600 hover:text-slate-800">Skip import</button>
             </>
           )}
+          {step === 'busy' && (
+            <button
+              onClick={handleClose}
+              className="text-sm px-4 py-2 text-slate-600 hover:text-slate-800 ml-auto"
+            >Skip imports</button>
+          )}
         </div>
       </div>
     </div>
@@ -549,8 +578,8 @@ function SelectStep({ selected, onToggle }: { selected: Set<ImportSelection>; on
           </label>
         ))}
       </div>
-      <p className="text-[11px] text-slate-400 italic">
-        Cancelling skips all imports — you can populate the engagement manually.
+      <p className="text-[11px] text-slate-500">
+        Don&rsquo;t want any of these? Click <span className="font-medium">Skip imports</span> below to open the engagement without any source data — you can always populate it manually.
       </p>
     </>
   );
