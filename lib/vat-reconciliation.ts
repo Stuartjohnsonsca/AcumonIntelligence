@@ -24,6 +24,14 @@
  * just edit the constant keys below if naming has shifted.
  */
 
+import { parseRemaps, resolveRemap, flatKey, type ToolSlugRemap } from './tool-slug-remap';
+
+/** Tool-name string the VAT Reconciliation registers itself under in
+ *  the per-firm slug-remap registry. Stable identifier — don't rename
+ *  without migrating any saved remap entries. */
+export const VAT_RECONCILIATION_TOOL_NAME = 'VAT Reconciliation';
+export const PERMANENT_FILE_TEMPLATE_TYPE = 'permanent_file_questions';
+
 // ── Permanent-file question keys ─────────────────────────────────────
 //
 // These are the keys this panel reads from the engagement's permanent
@@ -294,9 +302,24 @@ export type VatRegistration = {
  */
 export async function readVatRegistration(engagementId: string): Promise<VatRegistration> {
   try {
-    const res = await fetch(`/api/engagements/${engagementId}/permanent-file`);
-    if (!res.ok) return { status: 'unanswered' };
-    const json = await res.json();
+    // Load the firm's tool slug remaps in parallel with the permanent
+    // file. The remap lets a Methodology Admin redirect the canonical
+    // VAT-registered slug to a different question they've created in
+    // its place — surfaces here so the registration check honours that
+    // override before falling back to the canonical / tolerant scan.
+    const [pfRes, remapsRes] = await Promise.all([
+      fetch(`/api/engagements/${engagementId}/permanent-file`),
+      fetch('/api/methodology-admin/tool-slug-remaps').catch(() => null),
+    ]);
+    if (!pfRes.ok) return { status: 'unanswered' };
+    const json = await pfRes.json();
+    let remaps: ToolSlugRemap[] = [];
+    if (remapsRes && remapsRes.ok) {
+      try {
+        const r = await remapsRes.json();
+        remaps = parseRemaps(r?.remaps);
+      } catch { /* tolerant */ }
+    }
     // The permanent-file GET returns { data: { [sectionKey]: { ...fields } } }.
     // We don't know which section the methodology admin will land the
     // question in, so flatten and look up by key — same pattern
@@ -305,6 +328,19 @@ export async function readVatRegistration(engagementId: string): Promise<VatRegi
     for (const [, sectionData] of Object.entries(json.data || {})) {
       if (typeof sectionData === 'object' && sectionData) Object.assign(flat, sectionData);
     }
+    // Apply remap (if any) before the canonical / tolerant lookups.
+    const registeredKey = (() => {
+      const r = resolveRemap(remaps, VAT_RECONCILIATION_TOOL_NAME, PERMANENT_FILE_TEMPLATE_TYPE, 'is_the_client_vat_registered', 1);
+      return flatKey(r.slug, r.column);
+    })();
+    const periodicityKeyResolved = (() => {
+      const r = resolveRemap(remaps, VAT_RECONCILIATION_TOOL_NAME, PERMANENT_FILE_TEMPLATE_TYPE, VAT_PERIODICITY_KEY);
+      return flatKey(r.slug, r.column);
+    })();
+    const shouldKeyResolved = (() => {
+      const r = resolveRemap(remaps, VAT_RECONCILIATION_TOOL_NAME, PERMANENT_FILE_TEMPLATE_TYPE, SHOULD_BE_VAT_REGISTERED_KEY);
+      return flatKey(r.slug, r.column);
+    })();
     // Lookup is tolerant of question-text variation. The canonical
     // slug is `is_the_client_vat_registered_col1` (from "Is the client
     // VAT registered?"), but firms phrase the question slightly
@@ -315,6 +351,9 @@ export async function readVatRegistration(engagementId: string): Promise<VatRegi
     // 'vat' and 'regist' (excluding the companion 'should_…' question)
     // and carries a usable Y/N answer.
     function findVatRegisteredAnswer(): unknown {
+      // 1. Honour the firm's remap target if set.
+      if (registeredKey in flat) return flat[registeredKey];
+      // 2. Canonical slug from the shipped tool wiring.
       if (VAT_REGISTERED_KEY in flat) return flat[VAT_REGISTERED_KEY];
       for (const [k, v] of Object.entries(flat)) {
         const kl = k.toLowerCase();
@@ -335,8 +374,8 @@ export async function readVatRegistration(engagementId: string): Promise<VatRegi
       return undefined;
     }
     const raw = findVatRegisteredAnswer();
-    const periodicityRaw = flat[VAT_PERIODICITY_KEY];
-    const shouldRaw = flat[SHOULD_BE_VAT_REGISTERED_KEY];
+    const periodicityRaw = flat[periodicityKeyResolved] ?? flat[VAT_PERIODICITY_KEY];
+    const shouldRaw = flat[shouldKeyResolved] ?? flat[SHOULD_BE_VAT_REGISTERED_KEY];
     const periodicity: VatPeriodicity | undefined =
       periodicityRaw === 'Monthly' || periodicityRaw === 'Quarterly' || periodicityRaw === 'Annual'
         ? periodicityRaw

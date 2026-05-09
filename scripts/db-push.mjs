@@ -114,6 +114,14 @@ async function applySchemaSafetyNet() {
         ADD COLUMN IF NOT EXISTS document_type_ai_suggested boolean NOT NULL DEFAULT false
     `);
 
+    // 3. Firm.methodologyToolSlugRemaps — per-firm tool slug overrides
+    //    surfaced after a Methodology Admin deletes / renames a
+    //    tool-wired question. Empty array is a sensible default.
+    await prisma.$executeRawUnsafe(`
+      ALTER TABLE firms
+        ADD COLUMN IF NOT EXISTS methodology_tool_slug_remaps jsonb NOT NULL DEFAULT '[]'::jsonb
+    `);
+
     console.error('[db-push] safety-net SQL applied.');
   } finally {
     await prisma.$disconnect();

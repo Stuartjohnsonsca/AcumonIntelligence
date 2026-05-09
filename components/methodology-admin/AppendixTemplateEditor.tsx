@@ -1695,10 +1695,16 @@ export function AppendixTemplateEditor({ firmId, templateType, auditType, initia
       {/* Tool-wired protection warning modal — shared across all
           delete / rename / response-type-change paths above. The body
           and entry list are tailored per call site; the chrome stays
-          consistent so admins recognise it. */}
+          consistent so admins recognise it. The modal also offers a
+          'remap to another question' path that saves a per-firm slug
+          override before continuing — so a deleted question's wiring
+          can be redirected to a replacement on the same schedule
+          without breaking the affected calculator. */}
       {warning && (
         <ProtectionWarningModal
           payload={warning}
+          questions={questions}
+          templateType={templateType}
           onClose={() => setWarning(null)}
         />
       )}
@@ -1708,9 +1714,21 @@ export function AppendixTemplateEditor({ firmId, templateType, auditType, initia
 
 /** Modal shown before any delete / rename / response-type change that
  *  would break a wired calculator. Lists the affected tool entries
- *  with their description so the admin can make an informed call. */
+ *  with their description so the admin can make an informed call.
+ *
+ *  Three exit paths:
+ *    Cancel          — abandon the destructive change
+ *    Continue anyway — proceed (existing behaviour) — wiring breaks
+ *    Remap & continue — admin picks a replacement question for each
+ *      affected entry; remap entries are saved server-side, then the
+ *      original change proceeds. The tool reads the replacement on
+ *      the next load. Saved per firm under
+ *      Firm.methodologyToolSlugRemaps via /api/methodology-admin/tool-slug-remaps.
+ */
 function ProtectionWarningModal({
   payload,
+  questions,
+  templateType,
   onClose,
 }: {
   payload: {
@@ -1720,8 +1738,75 @@ function ProtectionWarningModal({
     onConfirm: () => void;
     onCancel?: () => void;
   };
+  questions: TemplateQuestion[];
+  templateType: string;
   onClose: () => void;
 }) {
+  // Pick state — one replacement (questionId + optional column) per
+  // protected entry. Index aligned with payload.entries. Empty
+  // questionId means "not picked yet"; the Remap button stays disabled
+  // until every entry that would be saved has a replacement.
+  const [picks, setPicks] = useState<Array<{ questionId: string; column?: number }>>(
+    () => payload.entries.map(e => ({ questionId: '', column: e.column }))
+  );
+  const [showRemap, setShowRemap] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  // Eligible replacement candidates — every other question on the
+  // template with a non-empty slug. Subheaders / blank questions don't
+  // produce useful slugs, so we exclude them. The slug is derived
+  // here so the saved remap targets exactly what the live form will
+  // store its answer under.
+  const candidates = questions
+    .filter(q => q.inputType !== 'subheader')
+    .map(q => ({ id: q.id, text: q.questionText, slug: slugifyQuestionText(q.questionText || '') }))
+    .filter(q => q.slug.length > 0);
+
+  const allPicked = picks.every(p => p.questionId);
+
+  async function commitRemap() {
+    setSaving(true);
+    setError(null);
+    try {
+      // Save one POST per protected entry. The server upserts on the
+      // (toolName, templateType, originalSlug, originalColumn) key,
+      // so re-running the same flow is safe.
+      for (let i = 0; i < payload.entries.length; i++) {
+        const entry = payload.entries[i];
+        const pick = picks[i];
+        if (!pick.questionId) continue;
+        const cand = candidates.find(c => c.id === pick.questionId);
+        if (!cand) continue;
+        const body: Record<string, unknown> = {
+          toolName: entry.toolName,
+          templateType,
+          originalSlug: entry.slug,
+          replacementSlug: cand.slug,
+        };
+        if (typeof entry.column === 'number') body.originalColumn = entry.column;
+        if (typeof pick.column === 'number') body.replacementColumn = pick.column;
+        const res = await fetch('/api/methodology-admin/tool-slug-remaps', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body),
+        });
+        if (!res.ok) {
+          const data = await res.json().catch(() => ({}));
+          throw new Error(data?.error || `Remap save failed (${res.status})`);
+        }
+      }
+      // All remaps saved — now proceed with the original destructive
+      // action and dismiss the modal.
+      payload.onConfirm();
+      onClose();
+    } catch (err: any) {
+      setError(err?.message || 'Could not save remap');
+    } finally {
+      setSaving(false);
+    }
+  }
+
   return (
     <div className="fixed inset-0 z-[70] flex items-center justify-center bg-slate-900/50 p-4">
       <div className="bg-white rounded-lg shadow-xl border border-slate-200 w-full max-w-lg">
@@ -1753,20 +1838,95 @@ function ProtectionWarningModal({
               </div>
             ))}
           </div>
+
+          {/* Remap picker — hidden until the admin clicks "Remap to a
+              different question". One row per protected entry; the
+              admin picks the replacement question and (when relevant)
+              which column on that replacement to read. */}
+          {showRemap && (
+            <div className="border border-blue-200 rounded p-3 bg-blue-50/40 space-y-2">
+              <div className="text-[10px] uppercase tracking-wide text-blue-700 font-semibold">
+                Remap each tool to a replacement question
+              </div>
+              <p className="text-[11px] text-slate-600">
+                Pick the question that should now feed each calculator. The mapping is saved for the firm and
+                applied immediately. Changing the replacement question text later won&apos;t break the wiring —
+                its slug is recorded at the moment of save and re-resolved on every read.
+              </p>
+              {payload.entries.map((entry, idx) => {
+                const pick = picks[idx];
+                return (
+                  <div key={idx} className="bg-white border border-slate-200 rounded p-2 space-y-1.5">
+                    <div className="text-[11px] text-slate-700">
+                      <strong>{entry.toolName}</strong> — currently reads <code className="bg-slate-50 border border-slate-200 px-1 rounded">{entry.column ? `${entry.slug}_col${entry.column}` : entry.slug}</code>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <select
+                        value={pick.questionId}
+                        onChange={e => setPicks(prev => prev.map((p, i) => i === idx ? { ...p, questionId: e.target.value } : p))}
+                        className="flex-1 text-[11px] border border-slate-300 rounded px-2 py-1 bg-white"
+                      >
+                        <option value="">— Select replacement question —</option>
+                        {candidates.map(c => (
+                          <option key={c.id} value={c.id}>
+                            {c.text || '(untitled)'}
+                          </option>
+                        ))}
+                      </select>
+                      {typeof entry.column === 'number' && (
+                        <label className="flex items-center gap-1 text-[10px] text-slate-600">
+                          col
+                          <input
+                            type="number"
+                            min={1}
+                            value={pick.column ?? ''}
+                            onChange={e => setPicks(prev => prev.map((p, i) => i === idx ? { ...p, column: e.target.value ? Math.max(1, Number(e.target.value)) : undefined } : p))}
+                            className="w-12 text-[11px] border border-slate-300 rounded px-1 py-1 bg-white"
+                          />
+                        </label>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
+              {error && <div className="text-[11px] text-red-600">{error}</div>}
+            </div>
+          )}
         </div>
         <div className="flex justify-end gap-2 px-4 py-3 border-t border-slate-200 bg-slate-50">
           <button
             onClick={() => { payload.onCancel?.(); onClose(); }}
-            className="px-3 py-1.5 text-xs font-medium border border-slate-300 rounded hover:bg-slate-100"
+            disabled={saving}
+            className="px-3 py-1.5 text-xs font-medium border border-slate-300 rounded hover:bg-slate-100 disabled:opacity-50"
           >
             Cancel
           </button>
-          <button
-            onClick={() => { payload.onConfirm(); onClose(); }}
-            className="px-3 py-1.5 text-xs font-medium bg-red-600 text-white rounded hover:bg-red-700"
-          >
-            Continue anyway
-          </button>
+          {!showRemap ? (
+            <>
+              <button
+                onClick={() => setShowRemap(true)}
+                disabled={candidates.length === 0}
+                title={candidates.length === 0 ? 'Add another question to the template before remapping' : 'Pick replacement questions, then continue'}
+                className="px-3 py-1.5 text-xs font-medium bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50"
+              >
+                Remap to a different question
+              </button>
+              <button
+                onClick={() => { payload.onConfirm(); onClose(); }}
+                className="px-3 py-1.5 text-xs font-medium bg-red-600 text-white rounded hover:bg-red-700"
+              >
+                Continue anyway
+              </button>
+            </>
+          ) : (
+            <button
+              onClick={() => { void commitRemap(); }}
+              disabled={!allPicked || saving}
+              className="px-3 py-1.5 text-xs font-medium bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50"
+            >
+              {saving ? 'Saving…' : 'Remap & continue'}
+            </button>
+          )}
         </div>
       </div>
     </div>

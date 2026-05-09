@@ -41,6 +41,22 @@ model Firm {
   letterheadHeaderText    String? @map("letterhead_header_text") @db.Text
   letterheadFooterText    String? @map("letterhead_footer_text") @db.Text
 
+  /// Per-firm overrides for tool-wired schedule questions. Each entry
+  /// lets a Methodology Admin redirect a built-in tool (VAT
+  /// Reconciliation, Tax on Profits, etc.) to a replacement question
+  /// when the firm has renamed or deleted the canonical one. Shape:
+  ///   [{
+  ///     toolName: 'VAT Reconciliation',
+  ///     templateType: 'permanent_file_questions',
+  ///     originalSlug: 'is_the_client_vat_registered',
+  ///     originalColumn?: 1,
+  ///     replacementSlug: 'is_client_vat_registered',
+  ///     replacementColumn?: 1,
+  ///   }, ...]
+  /// Tool reads consult this via lib/tool-slug-remap.ts; absent or
+  /// malformed entries are ignored so a typo never bricks a tool.
+  methodologyToolSlugRemaps Json @default("[]") @map("methodology_tool_slug_remaps")
+
   // PowerApps / Dynamics 365 integration
   powerAppsClientId         String?   @map("power_apps_client_id")
   powerAppsClientSecret     String?   @map("power_apps_client_secret")
