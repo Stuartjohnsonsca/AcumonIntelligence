@@ -336,13 +336,21 @@ export default function PortalAuditPage() {
         const data = await res.json();
         const allReqs = data.requests || [];
 
-        // Map section to tab key
+        // Map section to tab key. Anything not listed here falls back
+        // to 'outstanding' so new request types automatically count
+        // towards the badge — but listed sections that belong on a
+        // dedicated tab (e.g. evidence, explanations) stay routed.
         const sectionToTab: Record<string, string> = {
           questions: 'outstanding',
           explanations: 'explanations',
           evidence: 'evidence',
           connections: 'outstanding',
           calculations: 'outstanding',
+          vat_returns: 'outstanding',
+          ri_matters: 'outstanding',
+          review_points: 'outstanding',
+          error_approvals: 'outstanding',
+          walkthroughs: 'outstanding',
         };
 
         const counts: Record<string, { outstanding: number; unaccepted: number; verified: number }> = {};

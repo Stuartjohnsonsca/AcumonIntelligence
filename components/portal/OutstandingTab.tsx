@@ -55,6 +55,11 @@ const SECTIONS = [
   { key: 'error_approvals', label: 'Audit Adjustments to Approve' },
   { key: 'walkthroughs', label: 'Walkthrough Documentation' },
   { key: 'calculations', label: 'Financial Calculations' },
+  // VAT returns the auditor has asked the client to upload from the
+  // VAT Reconciliation panel. Same Send + chat + attachment plumbing
+  // as the other sections; without this entry the request lands in
+  // the DB but the portal UI never renders it.
+  { key: 'vat_returns', label: 'VAT Returns' },
   { key: 'evidence', label: 'Evidence' },
   { key: 'connections', label: 'Connections' },
 ];
