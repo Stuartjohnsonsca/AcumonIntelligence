@@ -326,6 +326,105 @@ export async function getTrialBalanceReport(
   return result;
 }
 
+// ─── Profit & Loss Report ────────────────────────────────────────────────────
+
+export interface XeroPLLine {
+  accountId: string;
+  accountName: string;
+  amount: number;        // positive = income for income rows; positive = expense for expense rows
+  section: 'income' | 'costOfSales' | 'expenses' | 'other';
+}
+
+export interface XeroPLResult {
+  lines: XeroPLLine[];
+  totalIncome: number;
+  totalCostOfSales: number;
+  totalExpenses: number;
+}
+
+/**
+ * Fetch the Profit & Loss report for a date range. Used by the VAT
+ * Reconciliation auto-extract path to derive Net Revenue + Net
+ * Purchases per period without walking transactions one by one.
+ *
+ * Section classification is heuristic — we look at the section Title
+ * because Xero doesn't tag rows with a structured "section type"
+ * field. UK / ROI / AU orgs all use the same English labels here.
+ */
+export async function getProfitAndLossReport(
+  clientId: string,
+  fromDate: string,    // YYYY-MM-DD
+  toDate: string,      // YYYY-MM-DD
+  auth?: { accessToken: string; tenantId: string },
+): Promise<XeroPLResult> {
+  const empty: XeroPLResult = { lines: [], totalIncome: 0, totalCostOfSales: 0, totalExpenses: 0 };
+  const { accessToken, tenantId } = auth || await getValidAccessToken(clientId);
+
+  let res: Response;
+  try {
+    res = await xeroFetchWithRetry(
+      `${XERO_API_BASE}/Reports/ProfitAndLoss?fromDate=${fromDate}&toDate=${toDate}&standardLayout=true`,
+      {
+        Authorization: `Bearer ${accessToken}`,
+        'Xero-Tenant-Id': tenantId,
+        Accept: 'application/json',
+      },
+    );
+  } catch (err) {
+    console.warn(`[Xero] Reports/ProfitAndLoss error ${fromDate}..${toDate}:`, (err as Error).message);
+    return empty;
+  }
+
+  if (res.status === 403) {
+    console.warn('[Xero] 403 on Reports/ProfitAndLoss — accounting.reports.read scope missing. Reconnect to grant.');
+    return empty;
+  }
+  if (!res.ok) {
+    console.warn(`[Xero] Reports/ProfitAndLoss failed (${res.status}) for ${fromDate}..${toDate}`);
+    return empty;
+  }
+
+  const data = await res.json();
+  const report = data.Reports?.[0];
+  if (!report?.Rows) return empty;
+
+  const out: XeroPLResult = { lines: [], totalIncome: 0, totalCostOfSales: 0, totalExpenses: 0 };
+  for (const node of report.Rows) {
+    if (node.RowType !== 'Section') continue;
+    const title: string = (node.Title || '').toLowerCase();
+    let section: XeroPLLine['section'] = 'other';
+    if (/income|revenue|trading\s+income/.test(title)) section = 'income';
+    else if (/cost\s+of\s+sales|less\s+cost\s+of\s+sales|cost\s+of\s+goods/.test(title)) section = 'costOfSales';
+    else if (/operating\s+expenses|less\s+operating\s+expenses|expenses|overheads/.test(title)) section = 'expenses';
+
+    for (const row of (node.Rows ?? []) as any[]) {
+      if (row.RowType === 'SummaryRow') {
+        // Section totals — we use these so we don't have to also
+        // sum the line rows manually.
+        const totalCell = row.Cells?.[1];
+        const total = parseFloat(totalCell?.Value) || 0;
+        if (section === 'income') out.totalIncome += total;
+        else if (section === 'costOfSales') out.totalCostOfSales += total;
+        else if (section === 'expenses') out.totalExpenses += total;
+        continue;
+      }
+      if (row.RowType !== 'Row') continue;
+      if (section === 'other') continue;
+      const cells = row.Cells ?? [];
+      if (cells.length < 2) continue;
+      const accountCell = cells[0];
+      const accountId = accountCell?.Attributes?.find((a: any) => a.Id === 'account')?.Value
+        ?? accountCell?.Attributes?.[0]?.Value
+        ?? '';
+      const accountName = (accountCell?.Value ?? '').trim();
+      const amount = parseFloat(cells[1]?.Value) || 0;
+      out.lines.push({ accountId, accountName, amount, section });
+    }
+  }
+
+  return out;
+}
+
 // ─── Tax Rates ───────────────────────────────────────────────────────────────
 
 export interface XeroTaxRate {

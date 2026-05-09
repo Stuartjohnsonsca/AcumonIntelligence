@@ -22,14 +22,12 @@ import { prisma } from '@/lib/db';
  *      'Request VAT returns via portal' button, POSTing to
  *      /request-returns.
  *
- * Today only Xero is wired, and Xero's public Reports API does NOT
- * expose filed VAT returns under the scopes this app currently
- * holds (accounting.reports.trialbalance.read only). So when a
- * Xero connection exists but VAT returns aren't reachable, we
- * report `kind: 'portal'` with a `hint` so the UI can explain the
- * fallback. A future commit will widen the Xero scope set + wire
- * the VAT-return aggregation, at which point this endpoint flips
- * to `kind: 'accounting'` for those clients automatically.
+ * Xero is wired: the connection now holds `accounting.reports.read`
+ * (which surfaces P&L per-account-per-period — what the auto-extract
+ * path uses to derive Net Revenue + Net Purchases) plus
+ * `accounting.journals.read` for completeness. The /extract sibling
+ * fetches a P&L per period, sums income / cost-of-sales / expenses
+ * sections, and writes the results back into periodRows.
  */
 export async function GET(_req: NextRequest, { params }: { params: Promise<{ engagementId: string }> }) {
   const session = await auth();
@@ -61,15 +59,15 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ eng
   // extraction, flip its case to return kind:'accounting'.
   switch (conn.system) {
     case 'xero': {
-      // Today's Xero scope set (see SCOPES in lib/xero.ts) doesn't
-      // include reports.read — the public VAT report endpoint
-      // requires a wider scope and an HMRC MTD-enabled org. We hint
-      // the UI so it can show the fallback rationale next to the
-      // portal button instead of silently going to the client.
+      // Xero now holds accounting.reports.read, so the P&L report
+      // (used by /extract to derive Net Revenue + Net Purchases per
+      // period) is reachable. If the connection pre-dates the
+      // widened scope set the auditor will see a 403 surface from
+      // /extract; the panel handles that with a graceful fallback
+      // and a reconnect hint.
       return NextResponse.json({
-        kind: 'portal',
+        kind: 'accounting',
         connector: { system: conn.system, label: systemLabel, orgName: conn.orgName ?? null },
-        hint: `${systemLabel} is connected but VAT returns aren't yet reachable through our current ${systemLabel} scopes — falling back to portal request. We'll wire automatic extraction in a future update.`,
       });
     }
     default: {
