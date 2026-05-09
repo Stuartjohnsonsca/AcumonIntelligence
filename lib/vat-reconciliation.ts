@@ -367,7 +367,18 @@ export async function readVatRegistration(engagementId: string): Promise<VatRegi
     if (tplRes && tplRes.ok) {
       try {
         const t = await tplRes.json();
-        const items = Array.isArray(t?.template?.items) ? t.template.items : [];
+        // template.items can carry one of two shapes — either a flat
+        // TemplateQuestion[] array (older / simpler schedules) or an
+        // object `{ questions: [...], sectionMeta: {...} }` (schedules
+        // with table layout + column headers, which is exactly what
+        // the permanent-file Taxation section uses on most firms).
+        // Accept both so we don't silently end up with zero items.
+        const rawItems = t?.template?.items ?? t?.items;
+        let items: any[] = [];
+        if (Array.isArray(rawItems)) items = rawItems;
+        else if (rawItems && typeof rawItems === 'object' && Array.isArray((rawItems as any).questions)) {
+          items = (rawItems as any).questions;
+        }
         for (const item of items) {
           if (!item || typeof item !== 'object' || !item.id) continue;
           const text = typeof item.questionText === 'string' ? item.questionText : '';
