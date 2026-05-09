@@ -207,13 +207,11 @@ export function CommunicationTab({ engagementId, teamMembers, currentUserId }: P
           <div className="flex items-center justify-between mb-3">
             <h3 className="text-sm font-semibold text-slate-700">Client Meetings</h3>
             <SignOffDots
-              label="Client sign-off"
               signOffs={signOffBuckets['client'] || {}}
               teamMembers={teamMembers}
               currentUserId={currentUserId}
               onToggle={role => toggleSignOff('client', role)}
               size="sm"
-              hideRoleLabels
             />
           </div>
           <ClientMeetingsPanel engagementId={engagementId} />
@@ -224,13 +222,11 @@ export function CommunicationTab({ engagementId, teamMembers, currentUserId }: P
           <div className="flex items-center justify-between mb-3">
             <h3 className="text-sm font-semibold text-slate-700">Internal Team Meetings</h3>
             <SignOffDots
-              label="Internal sign-off"
               signOffs={signOffBuckets['internal'] || {}}
               teamMembers={teamMembers}
               currentUserId={currentUserId}
               onToggle={role => toggleSignOff('internal', role)}
               size="sm"
-              hideRoleLabels
             />
           </div>
           <InternalMeetingsPanel engagementId={engagementId} />
@@ -241,13 +237,11 @@ export function CommunicationTab({ engagementId, teamMembers, currentUserId }: P
           <div className="flex items-center justify-between mb-3">
             <h3 className="text-sm font-semibold text-slate-700">Expert Meetings</h3>
             <SignOffDots
-              label="Expert sign-off"
               signOffs={signOffBuckets['expert'] || {}}
               teamMembers={teamMembers}
               currentUserId={currentUserId}
               onToggle={role => toggleSignOff('expert', role)}
               size="sm"
-              hideRoleLabels
             />
           </div>
           <ExpertMeetingsPanel engagementId={engagementId} />

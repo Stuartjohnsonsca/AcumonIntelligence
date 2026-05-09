@@ -228,13 +228,11 @@ export function BoardMinutesPanel({ engagementId, teamMembers, currentUserId, su
           {/* Per-sub-tab overall sign-off dots (only rendered when wired from CommunicationTab) */}
           {subTabKey && onSubTabSignOff && (
             <SignOffDots
-              label="Board Minutes sign-off"
               signOffs={subTabSignOffs || {}}
               teamMembers={teamMembers}
               currentUserId={currentUserId}
               onToggle={onSubTabSignOff}
               size="sm"
-              hideRoleLabels
             />
           )}
           <div className="flex gap-2">

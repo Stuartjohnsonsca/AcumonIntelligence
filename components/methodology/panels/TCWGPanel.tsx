@@ -189,13 +189,11 @@ export function TCWGPanel({ engagementId, teamMembers, currentUserId, subTabKey,
         <div className="flex items-center gap-4">
           {subTabKey && onSubTabSignOff && (
             <SignOffDots
-              label="TCWG sign-off"
               signOffs={subTabSignOffs || {}}
               teamMembers={teamMembers}
               currentUserId={currentUserId}
               onToggle={onSubTabSignOff}
               size="sm"
-              hideRoleLabels
             />
           )}
           <div className="flex gap-2">
