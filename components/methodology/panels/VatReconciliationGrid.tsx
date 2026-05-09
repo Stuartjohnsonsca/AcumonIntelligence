@@ -418,22 +418,69 @@ export function VatReconciliationGrid({
           narrow-viewport fallback. */}
       <div className="border border-slate-200 rounded overflow-hidden overflow-x-auto">
         <table className="w-full text-[11px]">
+            {/* Hover-over titles spell each abbreviated header out
+                in full so the auditor can see what the column means
+                without us spending the horizontal space on long
+                labels. `cursor-help` is the visual cue that the
+                header is interactive. */}
             <thead className="bg-slate-50 border-b border-slate-200">
               <tr>
-                <th className="px-1 py-1 text-left font-semibold text-slate-600 whitespace-nowrap">Period ending</th>
-                <th className="px-1 py-1 text-left font-semibold text-slate-600">Juris.</th>
-                <th className="px-1 py-1 text-right font-semibold text-slate-600">Net Rev</th>
-                <th className="px-1 py-1 text-right font-semibold text-slate-600">Net Purch</th>
-                <th className="px-1 py-1 text-right font-semibold text-slate-600">Sales VAT</th>
-                <th className="px-1 py-1 text-right font-semibold text-slate-600">Purch VAT</th>
-                <th className="px-1 py-1 text-right font-semibold text-slate-600 bg-indigo-50/50">Adj Net Rev</th>
-                <th className="px-1 py-1 text-right font-semibold text-slate-600 bg-indigo-50/50">Adj Net Purch</th>
-                <th className="px-1 py-1 text-right font-semibold text-slate-600 bg-indigo-50/50">Adj Sales VAT</th>
-                <th className="px-1 py-1 text-right font-semibold text-slate-600 bg-indigo-50/50">Adj Purch VAT</th>
-                <th className="px-1 py-1 text-right font-semibold text-slate-600 bg-indigo-50/50">Adj Net VAT</th>
-                <th className="px-1 py-1 text-right font-semibold text-slate-600">HMRC</th>
-                <th className="px-1 py-1 text-left font-semibold text-slate-600 bg-emerald-50/50">Verified Date</th>
-                <th className="px-1 py-1 text-right font-semibold text-slate-600 bg-emerald-50/50">Verified Amount</th>
+                <th
+                  className="px-1 py-1 text-left font-semibold text-slate-600 whitespace-nowrap cursor-help"
+                  title="Period ending — the VAT-return period end date. Cut-off rows mark periods that straddle the engagement start or end."
+                >Period ending</th>
+                <th
+                  className="px-1 py-1 text-left font-semibold text-slate-600 cursor-help"
+                  title="Jurisdiction — the tax authority for this period (e.g. UK / HMRC). Editable when a client files in more than one country."
+                >Juris.</th>
+                <th
+                  className="px-1 py-1 text-right font-semibold text-slate-600 cursor-help"
+                  title="Net Revenue (per VAT return) — net-of-VAT revenue as filed for the WHOLE VAT period. The Adj column to the right pro-rates this to the engagement window."
+                >Net Rev</th>
+                <th
+                  className="px-1 py-1 text-right font-semibold text-slate-600 cursor-help"
+                  title="Net Purchases (per VAT return) — net-of-VAT purchases as filed for the WHOLE VAT period."
+                >Net Purch</th>
+                <th
+                  className="px-1 py-1 text-right font-semibold text-slate-600 cursor-help"
+                  title="Sales VAT (per VAT return) — output VAT collected on sales for the WHOLE period."
+                >Sales VAT</th>
+                <th
+                  className="px-1 py-1 text-right font-semibold text-slate-600 cursor-help"
+                  title="Purchase VAT (per VAT return) — input VAT recovered on purchases for the WHOLE period."
+                >Purch VAT</th>
+                <th
+                  className="px-1 py-1 text-right font-semibold text-slate-600 bg-indigo-50/50 cursor-help"
+                  title="Adjusted Net Revenue — Net Revenue × overlap days ÷ days in period. Each row contributes only the slice that falls inside the engagement window."
+                >Adj Net Rev</th>
+                <th
+                  className="px-1 py-1 text-right font-semibold text-slate-600 bg-indigo-50/50 cursor-help"
+                  title="Adjusted Net Purchases — Net Purchases pro-rated by overlap days ÷ days in period."
+                >Adj Net Purch</th>
+                <th
+                  className="px-1 py-1 text-right font-semibold text-slate-600 bg-indigo-50/50 cursor-help"
+                  title="Adjusted Sales VAT — Sales VAT pro-rated by overlap days ÷ days in period. Reconciled below against expected Sales VAT (per-rate revenue × applicable %)."
+                >Adj Sales VAT</th>
+                <th
+                  className="px-1 py-1 text-right font-semibold text-slate-600 bg-indigo-50/50 cursor-help"
+                  title="Adjusted Purchase VAT — Purchase VAT pro-rated by overlap days ÷ days in period."
+                >Adj Purch VAT</th>
+                <th
+                  className="px-1 py-1 text-right font-semibold text-slate-600 bg-indigo-50/50 cursor-help"
+                  title="Adjusted Net VAT — Adj Sales VAT minus Adj Purchase VAT. Drives the running HMRC liability column to the right."
+                >Adj Net VAT</th>
+                <th
+                  className="px-1 py-1 text-right font-semibold text-slate-600 cursor-help"
+                  title="HMRC — running gross VAT liability per workings. Opening row = prior-period HMRC balance brought forward (free-text, supports e.g. '£8,500 per HMRC portal'); subsequent rows accumulate Adj Net VAT. Payments are NOT subtracted here — the reconciliation block below does the netting."
+                >HMRC</th>
+                <th
+                  className="px-1 py-1 text-left font-semibold text-slate-600 bg-emerald-50/50 cursor-help"
+                  title="Verified Date — bank-statement date for a payment to HMRC (or refund received). Sits in the row of the period the payment relates to; multiple payments per period split into additional sub-rows."
+                >Verified Date</th>
+                <th
+                  className="px-1 py-1 text-right font-semibold text-slate-600 bg-emerald-50/50 cursor-help"
+                  title="Verified Amount — bank-statement amount for the matching payment. Positive = paid to HMRC, negative = refund received from HMRC. Subtracted (× -1) from the HMRC total in the reconciliation block to get expected closing VAT liability."
+                >Verified Amount</th>
               </tr>
             </thead>
           <tbody>
