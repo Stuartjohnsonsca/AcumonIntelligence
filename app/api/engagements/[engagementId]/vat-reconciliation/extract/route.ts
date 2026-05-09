@@ -11,11 +11,12 @@ import { prisma } from '@/lib/db';
  * doesn't have to go via the portal. The response shape mirrors the
  * grid's `periodRows` so the panel can splice it in via onPatch.
  *
- * Today this endpoint is a STUB: the public Xero scopes the app
- * currently holds (accounting.reports.trialbalance.read only) don't
- * expose filed VAT returns. A future commit will widen the Xero
- * scope set, add a Sage/QuickBooks branch, and replace the 501
- * response below with the real fetch + period-bucket aggregation.
+ * Today this endpoint is a STUB. The Xero connection now holds the
+ * widened scope set (accounting.reports.read + journals + budgets),
+ * so filed VAT returns are reachable in principle — but the per-system
+ * fetch + period-bucket aggregation hasn't been written yet, and the
+ * Sage/QuickBooks branches don't exist. A future commit will replace
+ * the 501 response below with the real implementation.
  *
  * The /source sibling endpoint already gates the UI so we should
  * never reach this path with a non-supportive connector — but the

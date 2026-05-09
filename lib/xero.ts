@@ -15,10 +15,12 @@ const SCOPES = [
   'accounting.payments.read',
   'accounting.banktransactions.read',
   'accounting.manualjournals.read',
+  'accounting.journals.read',
   'accounting.settings.read',
   'accounting.contacts.read',
   'accounting.attachments.read',
-  'accounting.reports.trialbalance.read',
+  'accounting.reports.read',
+  'accounting.budgets.read',
 ].join(' ');
 
 // ─── PKCE ────────────────────────────────────────────────────────────────────
@@ -278,7 +280,7 @@ export async function getTrialBalanceReport(
   }
 
   if (res.status === 403) {
-    console.warn('[Xero] 403 on Reports/TrialBalance — missing accounting.reports.read scope. Reconnect Xero to grant.');
+    console.warn('[Xero] 403 on Reports/TrialBalance — connection likely pre-dates the widened scope set. Reconnect Xero to refresh.');
     return result;
   }
   if (!res.ok) {
