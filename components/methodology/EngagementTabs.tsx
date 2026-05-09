@@ -1118,6 +1118,79 @@ export function EngagementTabs({ engagement, auditType, clientName, periodEndDat
   const signOffTitle = SIGNOFF_TABS[activeTab] || '';
   const signOffEndpoint = TAB_ENDPOINTS[activeTab] || '';
 
+  // Phase toggle — derived once and rendered into the left navigation
+  // of every phase. Always shows the OTHER two phases as quick-jump
+  // buttons; the current phase is implicit (it's whatever the user is
+  // looking at) so we hide its own button. Lives on the left so the
+  // user has a consistent place to pivot regardless of which view
+  // they're in.
+  const inFieldwork = showAuditPlan;
+  const inCompletion = showCompletion;
+  const inPlanning = !inFieldwork && !inCompletion;
+
+  function goPlanning() {
+    setShowAuditPlan(false);
+    setShowCompletion(false);
+  }
+  function goFieldwork() {
+    if (showAuditPlan) return;
+    setShowAuditPlan(true);
+    setShowCompletion(false);
+    if (!planCreated) {
+      setPlanCreated(true);
+      fetch(`/api/engagements/${engagement.id}`, {
+        method: 'PUT', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ planCreated: true }),
+      }).catch(() => {});
+    }
+  }
+  function goCompletion() {
+    if (!planCreated || showCompletion) return;
+    setShowCompletion(true);
+    setShowAuditPlan(false);
+  }
+
+  const phaseToggleEl = !isPreStart ? (
+    <div className="flex flex-col gap-1 px-1.5 py-2 border-b border-slate-200 bg-white sticky top-0 z-10">
+      <span className="text-[8px] font-bold uppercase tracking-wide text-slate-400 px-1">Go to</span>
+      {!inPlanning && (
+        <button
+          onClick={goPlanning}
+          className="text-left px-2 py-1 text-[10px] font-medium rounded transition-colors bg-slate-50 text-slate-700 border border-slate-200 hover:bg-slate-100"
+          title="Return to Planning"
+          data-howto-id="eng.nav.go-planning"
+        >
+          ← Planning
+        </button>
+      )}
+      {!inFieldwork && (
+        <button
+          onClick={goFieldwork}
+          className="text-left px-2 py-1 text-[10px] font-medium rounded transition-colors bg-blue-50 text-blue-700 border border-blue-200 hover:bg-blue-100"
+          title="Open Fieldwork (Audit Plan)"
+          data-howto-id="eng.nav.go-fieldwork"
+        >
+          Fieldwork →
+        </button>
+      )}
+      {!inCompletion && (
+        <button
+          onClick={goCompletion}
+          disabled={!planCreated}
+          className={`text-left px-2 py-1 text-[10px] font-medium rounded transition-colors ${
+            !planCreated
+              ? 'bg-slate-200 text-slate-400 cursor-default border border-slate-200'
+              : 'bg-green-50 text-green-700 border border-green-200 hover:bg-green-100'
+          }`}
+          title={!planCreated ? 'Open Fieldwork first' : 'Open Completion'}
+          data-howto-id="eng.nav.go-completion"
+        >
+          Completion →
+        </button>
+      )}
+    </div>
+  ) : null;
+
   return (
     <div>
       {/* Persistent action buttons */}
@@ -1185,93 +1258,27 @@ export function EngagementTabs({ engagement, auditType, clientName, periodEndDat
             without specialists keep the action bar clean. */}
         <SpecialistRequestsPanel engagementId={engagement.id} />
         <div className="flex-1" />
-        {/* Phase toggle — shows the OTHER two phases as quick-jump
-            buttons so the user can always pivot regardless of which
-            view they're currently in. The current phase is implicit
-            (it's whatever they're looking at), so we hide its button.
-            'Back to last Completion sub-tab' lives next to the toggle
-            when they last were on Completion but aren't now. */}
-        {!isPreStart && (() => {
-          const inFieldwork = showAuditPlan;
-          const inCompletion = showCompletion;
-          const inPlanning = !inFieldwork && !inCompletion;
-
-          function goPlanning() {
-            setShowAuditPlan(false);
-            setShowCompletion(false);
-          }
-          function goFieldwork() {
-            if (showAuditPlan) return;
-            setShowAuditPlan(true);
-            setShowCompletion(false);
-            if (!planCreated) {
-              setPlanCreated(true);
-              fetch(`/api/engagements/${engagement.id}`, {
-                method: 'PUT', headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ planCreated: true }),
-              }).catch(() => {});
-            }
-          }
-          function goCompletion() {
-            if (!planCreated || showCompletion) return;
-            setShowCompletion(true);
-            setShowAuditPlan(false);
-          }
-
-          return (
-            <>
-              {lastCompletionTab && !inCompletion && (
-                <button
-                  onClick={goCompletion}
-                  data-howto-id="eng.action.back-to-completion"
-                  disabled={!planCreated}
-                  className="inline-flex items-center gap-1.5 px-2.5 py-1 text-[10px] font-medium bg-emerald-50 text-emerald-700 border border-emerald-200 rounded hover:bg-emerald-100 transition-colors disabled:opacity-50"
-                  title={`Return to the Completion section you were on: ${lastCompletionTab.label}`}
-                >
-                  ← Completion: {lastCompletionTab.label}
-                </button>
-              )}
-              {/* Show whichever two phases the user ISN'T currently in. */}
-              {!inPlanning && (
-                <button
-                  onClick={goPlanning}
-                  data-howto-id="eng.action.open-planning"
-                  className="px-3 py-1 text-[10px] font-medium rounded transition-colors bg-slate-50 text-slate-700 border border-slate-200 hover:bg-slate-100"
-                  title="Return to the engagement tabs (Planning)"
-                >
-                  ← Planning
-                </button>
-              )}
-              {!inFieldwork && (
-                <button
-                  onClick={goFieldwork}
-                  data-howto-id="eng.action.open-audit-plan"
-                  className="px-3 py-1 text-[10px] font-medium rounded transition-colors bg-blue-50 text-blue-700 border border-blue-200 hover:bg-blue-100"
-                >
-                  <svg className="h-3 w-3 inline mr-1" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4" />
-                  </svg>
-                  Audit Plan
-                </button>
-              )}
-              {!inCompletion && (
-                <button
-                  onClick={goCompletion}
-                  disabled={!planCreated}
-                  data-howto-id="eng.action.open-completion"
-                  className={`px-3 py-1 text-[10px] font-medium rounded transition-colors ${
-                    !planCreated
-                      ? 'bg-slate-200 text-slate-400 cursor-default'
-                      : 'bg-green-50 text-green-700 border border-green-200 hover:bg-green-100'
-                  }`}
-                  title={!planCreated ? 'Open Audit Plan first' : ''}
-                >
-                  Completion
-                </button>
-              )}
-            </>
-          );
-        })()}
+        {/* Back-to-last-Completion shortcut. The full phase toggle
+            (Planning / Fieldwork / Completion) now lives in the left
+            navigation of every phase — see phaseToggleEl above. We
+            keep this single button in the action bar because it
+            carries label context the toggle can't (the specific
+            sub-tab the user was last on). */}
+        {!isPreStart && lastCompletionTab && !showCompletion && (
+          <button
+            onClick={() => {
+              if (!planCreated) return;
+              setShowCompletion(true);
+              setShowAuditPlan(false);
+            }}
+            data-howto-id="eng.action.back-to-completion"
+            disabled={!planCreated}
+            className="inline-flex items-center gap-1.5 px-2.5 py-1 text-[10px] font-medium bg-emerald-50 text-emerald-700 border border-emerald-200 rounded hover:bg-emerald-100 transition-colors disabled:opacity-50"
+            title={`Return to the Completion section you were on: ${lastCompletionTab.label}`}
+          >
+            ← Completion: {lastCompletionTab.label}
+          </button>
+        )}
       </div>
 
       {/* Panel modals */}
@@ -1356,8 +1363,15 @@ export function EngagementTabs({ engagement, auditType, clientName, periodEndDat
               the Balance Sheet section without going through the
               generic Audit Plan landing. */}
           <div className="w-32 flex-shrink-0 border-r border-slate-200 bg-slate-50 overflow-y-auto">
-            {/* Planning / Fieldwork segmented toggle */}
-            <div className="flex border-b border-slate-200 sticky top-0 bg-slate-50 z-10">
+            {/* Phase toggle — top of every left nav so the auditor can
+                always pivot to one of the OTHER two phases. */}
+            {phaseToggleEl}
+            {/* Planning / Fieldwork segmented toggle — filters the
+                completion sidebar's tab list to the relevant stage.
+                Distinct from the phase toggle above: this scopes the
+                tab list within Completion, the toggle navigates between
+                the three top-level phases. */}
+            <div className="flex border-b border-slate-200 bg-slate-50">
               {(['planning', 'fieldwork'] as const).map(stage => (
                 <button
                   key={stage}
@@ -1535,6 +1549,9 @@ export function EngagementTabs({ engagement, auditType, clientName, periodEndDat
         <div className="flex border border-t-0 border-slate-200 rounded-b-lg bg-white min-h-[500px] overflow-hidden">
           {/* Left sidebar: all tabs as vertical list — no tab highlighted while on Audit Plan */}
           <div className="w-28 flex-shrink-0 border-r border-slate-200 bg-slate-50 overflow-y-auto">
+            {/* Phase toggle — top of every left nav so the auditor can
+                always pivot to one of the OTHER two phases. */}
+            {phaseToggleEl}
             {visibleTabs.map(tab => {
               const label = tab.key === 'continuance' ? continuanceLabel : tab.label;
               const tso = tabSignOffs[tab.key];
@@ -1596,8 +1613,17 @@ export function EngagementTabs({ engagement, auditType, clientName, periodEndDat
             outstandingClientCount={outstandingClientCount}
           />
 
-          {/* Tab Content */}
-          <div data-howto-id="page.engagement.body" className="bg-white rounded-b-lg border border-t-0 border-slate-200 min-h-[500px]">
+          {/* Tab Content — wrapped in a flex layout so the slim left
+              sidebar (carrying the phase toggle) sits next to the
+              content. The horizontal TabStrip stays above for the
+              regular tab navigation; the sidebar exists purely so the
+              Planning view has the same always-visible Planning /
+              Fieldwork / Completion toggle as the other two phases. */}
+          <div className="flex bg-white rounded-b-lg border border-t-0 border-slate-200 min-h-[500px]">
+            <div className="w-28 flex-shrink-0 border-r border-slate-200 bg-slate-50 overflow-y-auto">
+              {phaseToggleEl}
+            </div>
+            <div data-howto-id="page.engagement.body" className="flex-1 min-w-0">
             <div className="p-4">
               {/* Pre-start Start-Audit banner — unmissable, sits above the
                   Opening tab content so the button doesn't get buried below
@@ -1736,6 +1762,7 @@ export function EngagementTabs({ engagement, auditType, clientName, periodEndDat
             );
           })()}
         </div>
+      </div>
       </div>
         </>
       )}
