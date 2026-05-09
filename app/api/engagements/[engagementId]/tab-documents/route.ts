@@ -44,38 +44,50 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ engagementI
 
   // Match either the legacy single-tab `utilisedTab` field OR a row
   // in the new join table — keeps existing data visible while new
-  // multi-tab allocations work.
-  const docs = await prisma.auditDocument.findMany({
-    where: {
-      engagementId,
-      OR: [
-        { utilisedTab: tab },
-        { tabAllocations: { some: { tab } } },
-      ],
-    },
-    include: {
-      uploadedBy: { select: { id: true, name: true } },
-    },
-    orderBy: { createdAt: 'desc' },
-  });
+  // multi-tab allocations work. Wrapped in try/catch so a Prisma
+  // exception (e.g. P2022 / "relation does not exist" when a schema
+  // migration didn't apply) surfaces the real message in the JSON
+  // body instead of a bare 500. The footer prints `error || status`
+  // so the toast becomes useful.
+  try {
+    const docs = await prisma.auditDocument.findMany({
+      where: {
+        engagementId,
+        OR: [
+          { utilisedTab: tab },
+          { tabAllocations: { some: { tab } } },
+        ],
+      },
+      include: {
+        uploadedBy: { select: { id: true, name: true } },
+      },
+      orderBy: { createdAt: 'desc' },
+    });
 
-  return NextResponse.json({
-    documents: docs.map(d => ({
-      id: d.id,
-      documentName: d.documentName,
-      fileSize: d.fileSize,
-      mimeType: d.mimeType,
-      uploadedAt: d.uploadedDate?.toISOString() || d.createdAt.toISOString(),
-      uploadedByName: d.uploadedBy?.name || null,
-      hasContent: Boolean(d.storagePath),
-      documentType: d.documentType,
-      documentTypeAiSuggested: d.documentTypeAiSuggested,
-      // Inline view URL — returns a SAS redirect to the blob.
-      viewUrl: d.storagePath
-        ? `/api/engagements/${engagementId}/tab-documents/${d.id}/view`
-        : null,
-    })),
-  });
+    return NextResponse.json({
+      documents: docs.map(d => ({
+        id: d.id,
+        documentName: d.documentName,
+        fileSize: d.fileSize,
+        mimeType: d.mimeType,
+        uploadedAt: d.uploadedDate?.toISOString() || d.createdAt.toISOString(),
+        uploadedByName: d.uploadedBy?.name || null,
+        hasContent: Boolean(d.storagePath),
+        documentType: d.documentType,
+        documentTypeAiSuggested: d.documentTypeAiSuggested,
+        // Inline view URL — returns a SAS redirect to the blob.
+        viewUrl: d.storagePath
+          ? `/api/engagements/${engagementId}/tab-documents/${d.id}/view`
+          : null,
+      })),
+    });
+  } catch (err: any) {
+    console.error('[tab-documents][GET]', err);
+    return NextResponse.json(
+      { error: err?.message || 'Failed to load tab documents' },
+      { status: 500 },
+    );
+  }
 }
 
 export async function POST(req: NextRequest, ctx: { params: Promise<{ engagementId: string }> }) {
@@ -135,40 +147,54 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ engagement
     }
   }
 
-  const doc = await prisma.auditDocument.create({
-    data: {
-      id: docId,
-      engagementId,
-      documentName: file.name,
-      storagePath: blobName,
-      containerName: CONTAINER_NAME,
-      fileSize: file.size,
-      mimeType: file.type || null,
-      uploadedDate: new Date(),
-      uploadedById: session.user.id,
-      source,
-      documentType,
-      documentTypeAiSuggested,
-      utilisedTab: tab,
-      utilisedOn: new Date(),
-      utilisedByName: session.user.name || session.user.email || null,
-      receivedByName: session.user.name || session.user.email || null,
-      receivedAt: new Date(),
-      tabAllocations: {
-        create: { tab, allocatedById: session.user.id },
+  // Wrap the row insert in try/catch so a Prisma exception — typically
+  // a missing column or missing join table when migrations haven't
+  // applied — surfaces the real message in the JSON body. The blob is
+  // already uploaded at this point; if the row insert fails the
+  // user can retry once the schema is fixed and the second attempt
+  // will succeed (the blob name embeds a fresh docId on each call).
+  try {
+    const doc = await prisma.auditDocument.create({
+      data: {
+        id: docId,
+        engagementId,
+        documentName: file.name,
+        storagePath: blobName,
+        containerName: CONTAINER_NAME,
+        fileSize: file.size,
+        mimeType: file.type || null,
+        uploadedDate: new Date(),
+        uploadedById: session.user.id,
+        source,
+        documentType,
+        documentTypeAiSuggested,
+        utilisedTab: tab,
+        utilisedOn: new Date(),
+        utilisedByName: session.user.name || session.user.email || null,
+        receivedByName: session.user.name || session.user.email || null,
+        receivedAt: new Date(),
+        tabAllocations: {
+          create: { tab, allocatedById: session.user.id },
+        },
       },
-    },
-  });
+    });
 
-  return NextResponse.json({
-    document: {
-      id: doc.id,
-      documentName: doc.documentName,
-      fileSize: doc.fileSize,
-      mimeType: doc.mimeType,
-      uploadedAt: doc.uploadedDate?.toISOString() || doc.createdAt.toISOString(),
-      hasContent: true,
-      viewUrl: `/api/engagements/${engagementId}/tab-documents/${doc.id}/view`,
-    },
-  });
+    return NextResponse.json({
+      document: {
+        id: doc.id,
+        documentName: doc.documentName,
+        fileSize: doc.fileSize,
+        mimeType: doc.mimeType,
+        uploadedAt: doc.uploadedDate?.toISOString() || doc.createdAt.toISOString(),
+        hasContent: true,
+        viewUrl: `/api/engagements/${engagementId}/tab-documents/${doc.id}/view`,
+      },
+    });
+  } catch (err: any) {
+    console.error('[tab-documents][POST]', err);
+    return NextResponse.json(
+      { error: err?.message || 'Failed to save document row' },
+      { status: 500 },
+    );
+  }
 }
