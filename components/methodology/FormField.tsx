@@ -4,6 +4,26 @@ import { useState } from 'react';
 import type { QuestionInputType } from '@/types/methodology';
 import { useFormulaTooltipsEnabled } from '@/lib/user-preferences';
 
+/** Defensive option-splitter — handles the legacy case where an admin
+ *  typed dropdown options separated with `;` instead of `,` and the
+ *  saved array is a single combined string like ['Jan;Feb;Mar']. We
+ *  re-expand that on render so the live form shows three options
+ *  instead of one giant combined entry. The Methodology admin's
+ *  editor accepts the same separators on save so newly-saved schedules
+ *  produce a clean array up front. */
+function expandOptions(opts: string[] | undefined | null): string[] {
+  if (!Array.isArray(opts)) return [];
+  const out: string[] = [];
+  for (const o of opts) {
+    const text = String(o ?? '');
+    for (const piece of text.split(/[,;\n]/)) {
+      const trimmed = piece.trim();
+      if (trimmed) out.push(trimmed);
+    }
+  }
+  return out;
+}
+
 interface Props {
   questionId: string;
   inputType: QuestionInputType;
@@ -181,7 +201,8 @@ export function FormField({
         </div>
       );
 
-    case 'dropdown':
+    case 'dropdown': {
+      const opts = expandOptions(dropdownOptions);
       return (
         <select
           id={questionId}
@@ -191,11 +212,12 @@ export function FormField({
           className={`${baseClass} ${className}`}
         >
           <option value="">Select...</option>
-          {(dropdownOptions || []).map(opt => (
+          {opts.map(opt => (
             <option key={opt} value={opt}>{opt}</option>
           ))}
         </select>
       );
+    }
 
     case 'multiselect': {
       // Value is a JSON-encoded array of strings. Empty / non-JSON
@@ -216,12 +238,13 @@ export function FormField({
           : [...selected, opt];
         onChange(next.length === 0 ? '' : JSON.stringify(next));
       };
+      const msOpts = expandOptions(dropdownOptions);
       return (
         <div id={questionId} className={`${baseClass} flex flex-wrap gap-x-3 gap-y-1 min-h-[36px] ${className}`}>
-          {(dropdownOptions || []).length === 0 ? (
+          {msOpts.length === 0 ? (
             <span className="text-slate-300 italic text-xs">No options configured</span>
           ) : (
-            (dropdownOptions || []).map(opt => (
+            msOpts.map(opt => (
               <label key={opt} className={`inline-flex items-center gap-1.5 cursor-pointer text-sm ${disabled ? 'opacity-60 cursor-not-allowed' : ''}`}>
                 <input
                   type="checkbox"
