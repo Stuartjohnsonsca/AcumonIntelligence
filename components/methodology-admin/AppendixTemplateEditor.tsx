@@ -94,17 +94,30 @@ function inputTypeBadge(inputType: string) {
   </span>;
 }
 
+/** Parse a free-text option list into an array, tolerating both
+ *  commas and semicolons as separators. Bespoke UK methodology
+ *  options frequently contain commas in their text ('Yes, with
+ *  conditions') so admins reach for semicolons; previously the
+ *  splitter only handled commas, so a semicolon-separated entry was
+ *  saved as a single combined option. */
+function splitOptions(text: string): string[] {
+  return text
+    .split(/[,;\n]/)
+    .map(s => s.trim())
+    .filter(Boolean);
+}
+
 // Isolated component for dropdown options — prevents parent re-renders from resetting input
 function DropdownOptionsEditor({ options, onChange }: { options: string[]; onChange: (opts: string[]) => void }) {
   const [text, setText] = useState(options.join(', '));
   return (
     <div className="col-span-2">
-      <label className="block text-xs text-slate-500 mb-1 font-medium">Dropdown Options (comma-separated)</label>
+      <label className="block text-xs text-slate-500 mb-1 font-medium">Dropdown Options (comma- or semicolon-separated)</label>
       <input
         type="text"
         value={text}
         onChange={e => setText(e.target.value)}
-        onBlur={() => onChange(text.split(',').map(s => s.trim()).filter(Boolean))}
+        onBlur={() => onChange(splitOptions(text))}
         className="w-full border border-slate-200 rounded px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400"
         placeholder="Option 1, Option 2, Option 3"
       />
@@ -1225,7 +1238,7 @@ export function AppendixTemplateEditor({ firmId, templateType, auditType, initia
                                                 <input
                                                   type="text"
                                                   value={(cfg?.dropdownOptions || []).join(', ')}
-                                                  onChange={e => updateRowCol(ci, { dropdownOptions: e.target.value.split(',').map(s => s.trim()).filter(Boolean) })}
+                                                  onChange={e => updateRowCol(ci, { dropdownOptions: splitOptions(e.target.value) })}
                                                   placeholder="Option 1, Option 2, Option 3"
                                                   className="text-[10px] border border-slate-200 rounded px-2 py-1 flex-1 min-w-[120px] focus:outline-none focus:border-blue-400"
                                                 />
@@ -1470,9 +1483,20 @@ export function AppendixTemplateEditor({ firmId, templateType, auditType, initia
                                   ? parent.columns?.[condColumnIndex - 1]
                                   : undefined;
                                 const effectiveParentInputType = parentColumnCfg?.inputType || parent?.inputType;
-                                const effectiveParentOptions = parentColumnCfg?.dropdownOptions && parentColumnCfg.dropdownOptions.length > 0
+                                const rawParentOptions = parentColumnCfg?.dropdownOptions && parentColumnCfg.dropdownOptions.length > 0
                                   ? parentColumnCfg.dropdownOptions
                                   : parent?.dropdownOptions;
+                                // Defensive split — legacy options that were
+                                // saved as a single string with embedded
+                                // semicolons (e.g. ['Quarterly;Monthly;Annual'])
+                                // get re-expanded here so the conditional value
+                                // picker renders one option per choice instead
+                                // of one giant combined entry. The splitter
+                                // mirrors splitOptions() above so newly-saved
+                                // entries already produce a clean array.
+                                const effectiveParentOptions = Array.isArray(rawParentOptions)
+                                  ? rawParentOptions.flatMap(o => splitOptions(String(o)))
+                                  : rawParentOptions;
 
                                 function patchCond(patch: Partial<NonNullable<typeof q.conditionalOn>>) {
                                   const base = q.conditionalOn || { questionId: '', value: '' };
