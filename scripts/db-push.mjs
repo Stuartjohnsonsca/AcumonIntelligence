@@ -122,6 +122,36 @@ async function applySchemaSafetyNet() {
         ADD COLUMN IF NOT EXISTS methodology_tool_slug_remaps jsonb NOT NULL DEFAULT '[]'::jsonb
     `);
 
+    // 4. AuditEngagement.methodologyIndustryId — added on commit
+    //    ab4865c (industry dropdown on the Opening tab). Without it,
+    //    EVERY Prisma findUnique on audit_engagements throws because
+    //    the implicit SELECT references methodology_industry_id;
+    //    surfaces as 500s on Independence submit, the engagement
+    //    loader, and anywhere the engagement is read with an include.
+    await prisma.$executeRawUnsafe(`
+      ALTER TABLE audit_engagements
+        ADD COLUMN IF NOT EXISTS methodology_industry_id text
+    `);
+    await prisma.$executeRawUnsafe(`
+      CREATE INDEX IF NOT EXISTS audit_engagements_methodology_industry_id_idx
+        ON audit_engagements(methodology_industry_id)
+    `);
+    await prisma.$executeRawUnsafe(`
+      DO $$
+      BEGIN
+        IF NOT EXISTS (
+          SELECT 1 FROM pg_constraint
+          WHERE conname = 'audit_engagements_methodology_industry_id_fkey'
+        ) THEN
+          ALTER TABLE audit_engagements
+            ADD CONSTRAINT audit_engagements_methodology_industry_id_fkey
+            FOREIGN KEY (methodology_industry_id)
+            REFERENCES methodology_industries(id)
+            ON DELETE SET NULL;
+        END IF;
+      END $$
+    `);
+
     console.error('[db-push] safety-net SQL applied.');
   } finally {
     await prisma.$disconnect();
