@@ -50,8 +50,30 @@ interface Props {
   children: React.ReactNode;
 }
 
+/**
+ * sessionStorage key for the "this user has confirmed independence on
+ * this engagement during this browser session" flag. Set after a
+ * successful GET that returns required=false; read on mount so we can
+ * skip the spinner+questions render that was briefly flashing on every
+ * refresh (the API takes ~80–200ms to return, and the gate previously
+ * rendered the questions form during that window in some browsers'
+ * back-forward cache snapshots).
+ */
+function passKey(engagementId: string): string {
+  return `acumon:independence:pass:${engagementId}`;
+}
+
 export function IndependenceGate({ engagementId, children }: Props) {
-  const [loading, setLoading] = useState(true);
+  // Optimistic skip — when the user already confirmed this engagement
+  // earlier in the session, render children immediately and validate
+  // the status in the background. Stops the brief "Independence
+  // questions" flash that some users see on refresh.
+  const [hasSessionPass, setHasSessionPass] = useState<boolean>(() => {
+    if (typeof window === 'undefined') return false;
+    try { return window.sessionStorage.getItem(passKey(engagementId)) === '1'; }
+    catch { return false; }
+  });
+  const [loading, setLoading] = useState(!hasSessionPass);
   const [data, setData] = useState<StatusResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [answers, setAnswers] = useState<Record<string, { answer: boolean | string; notes: string }>>({});
@@ -74,7 +96,27 @@ export function IndependenceGate({ engagementId, children }: Props) {
           return;
         }
         const d: StatusResponse = await res.json();
-        if (!cancelled) { setData(d); setError(null); }
+        if (!cancelled) {
+          setData(d);
+          setError(null);
+          // Persist a session pass when the API confirms the user
+          // doesn't need to gate. Cleared on browser/tab close —
+          // matches the lifetime of a normal sign-in.
+          try {
+            if (typeof window !== 'undefined') {
+              if (!d.required) {
+                window.sessionStorage.setItem(passKey(engagementId), '1');
+                setHasSessionPass(true);
+              } else {
+                // Status flipped to required (e.g. became stale, or an
+                // admin reset the user's confirmation). Drop the flag
+                // so a future refresh shows the gate, not children.
+                window.sessionStorage.removeItem(passKey(engagementId));
+                setHasSessionPass(false);
+              }
+            }
+          } catch { /* private mode — tolerate */ }
+        }
       } catch (err: any) {
         if (!cancelled) setError(err?.message || 'Failed to load independence status');
       } finally {
@@ -95,7 +137,17 @@ export function IndependenceGate({ engagementId, children }: Props) {
     };
   }, [engagementId]);
 
-  // Not gated — render children immediately.
+  // Optimistic pass — when the user already confirmed earlier in this
+  // session we trust the cached pass and render children immediately,
+  // even before the background fetch returns. The fetch above still
+  // runs and will swap in the real gate (questions / declined screen)
+  // if the server says the status has flipped, but for the common case
+  // (a returning, still-confirmed user) the user no longer sees the
+  // spinner-then-children flicker that previously surfaced as "the
+  // Independence questions briefly flashed on refresh".
+  if (hasSessionPass && !error) {
+    return <>{children}</>;
+  }
   if (loading) {
     return (
       <div className="flex items-center justify-center py-20">
