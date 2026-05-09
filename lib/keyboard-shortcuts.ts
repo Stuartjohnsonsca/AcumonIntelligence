@@ -54,7 +54,17 @@ export interface ShortcutDef {
 const MODIFIER_KEYS = new Set(['control', 'alt', 'shift', 'meta']);
 
 function normalizeKey(e: KeyboardEvent): string {
-  return e.key.toLowerCase();
+  // `KeyboardEvent.key` is *usually* set, but synthesised events from
+  // password-manager extensions (1Password, Bitwarden, LastPass) and
+  // some browser autofill paths fire keydown / keyup with `key`
+  // undefined. Returning empty string here is benign — every caller
+  // either compares against a known token (no match) or checks
+  // isModifierKey (no match), so undefined-key events become a no-op
+  // instead of crashing the page with `Cannot read properties of
+  // undefined (reading 'toLowerCase')`. Reported on the portal login
+  // page where typing into the email field crashed before the user
+  // could submit.
+  return typeof e.key === 'string' ? e.key.toLowerCase() : '';
 }
 
 function isModifierKey(key: string): boolean {
