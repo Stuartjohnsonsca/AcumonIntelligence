@@ -73,10 +73,60 @@ async function killIdleBlockers() {
   }
 }
 
+/**
+ * Belt-and-braces SQL safety net. Some schema changes (notably new
+ * non-nullable columns + cross-table join models) have intermittently
+ * failed to land via `prisma db push --accept-data-loss` in production,
+ * and the runtime errors don't surface until an auditor opens the tab
+ * that uses the new column. Each statement here is idempotent
+ * (CREATE TABLE / ADD COLUMN IF NOT EXISTS), so re-running on every
+ * deploy is safe and cheap. Add to this list when a future schema
+ * change shows the same drift symptom; never modify or remove existing
+ * statements (that's what `prisma db push` is for).
+ */
+async function applySchemaSafetyNet() {
+  const prisma = new PrismaClient();
+  try {
+    // 1. AuditDocumentTabAllocation join table — added on commit
+    //    1469f9d. Without it, every per-tab Documents fetch 500s.
+    await prisma.$executeRawUnsafe(`
+      CREATE TABLE IF NOT EXISTS audit_document_tab_allocations (
+        document_id      text        NOT NULL REFERENCES audit_documents(id) ON DELETE CASCADE,
+        tab              text        NOT NULL,
+        allocated_at     timestamptz NOT NULL DEFAULT now(),
+        allocated_by_id  text        REFERENCES users(id) ON DELETE SET NULL,
+        PRIMARY KEY (document_id, tab)
+      )
+    `);
+    await prisma.$executeRawUnsafe(`
+      CREATE INDEX IF NOT EXISTS audit_document_tab_allocations_tab_idx
+        ON audit_document_tab_allocations(tab)
+    `);
+    await prisma.$executeRawUnsafe(`
+      CREATE INDEX IF NOT EXISTS audit_document_tab_allocations_allocated_by_idx
+        ON audit_document_tab_allocations(allocated_by_id)
+    `);
+
+    // 2. AuditDocument.documentTypeAiSuggested column — added on
+    //    commit ca3fc09. Selected by every AuditDocument.findMany.
+    await prisma.$executeRawUnsafe(`
+      ALTER TABLE audit_documents
+        ADD COLUMN IF NOT EXISTS document_type_ai_suggested boolean NOT NULL DEFAULT false
+    `);
+
+    console.error('[db-push] safety-net SQL applied.');
+  } finally {
+    await prisma.$disconnect();
+  }
+}
+
 async function main() {
   console.error('[db-push] applying schema with prisma db push…');
   const first = runPrismaPush();
-  if (first.code === 0) return;
+  if (first.code === 0) {
+    await applySchemaSafetyNet();
+    return;
+  }
 
   if (!looksLikeLockTimeout(first.stderr + first.stdout)) {
     console.error(`[db-push] failed (exit ${first.code}); not a lock-timeout, surfacing failure.`);
@@ -104,6 +154,7 @@ async function main() {
     process.exit(second.code || 1);
   }
   console.error('[db-push] retry succeeded.');
+  await applySchemaSafetyNet();
 }
 
 main().catch(err => {

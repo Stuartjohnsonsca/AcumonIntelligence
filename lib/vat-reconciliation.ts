@@ -305,7 +305,36 @@ export async function readVatRegistration(engagementId: string): Promise<VatRegi
     for (const [, sectionData] of Object.entries(json.data || {})) {
       if (typeof sectionData === 'object' && sectionData) Object.assign(flat, sectionData);
     }
-    const raw = flat[VAT_REGISTERED_KEY];
+    // Lookup is tolerant of question-text variation. The canonical
+    // slug is `is_the_client_vat_registered_col1` (from "Is the client
+    // VAT registered?"), but firms phrase the question slightly
+    // differently — "Is client VAT registered?", "Is the Client VAT-
+    // registered?", etc. — and slugifyQuestionText derives a different
+    // key for each. Walk the flat map: prefer the canonical key when
+    // it's present, otherwise pick the first key that contains both
+    // 'vat' and 'regist' (excluding the companion 'should_…' question)
+    // and carries a usable Y/N answer.
+    function findVatRegisteredAnswer(): unknown {
+      if (VAT_REGISTERED_KEY in flat) return flat[VAT_REGISTERED_KEY];
+      for (const [k, v] of Object.entries(flat)) {
+        const kl = k.toLowerCase();
+        if (!kl.includes('vat')) continue;
+        if (!kl.includes('regist')) continue;
+        // Exclude the "should the client be VAT registered" companion
+        // question and any "vat_registration_…" variants (number, date,
+        // periodicity, etc.) — only the gate question is interesting
+        // here. Match if the key plausibly answers "are they registered
+        // currently".
+        if (kl.includes('should')) continue;
+        if (kl.includes('number')) continue;
+        if (kl.includes('date')) continue;
+        if (kl.includes('period')) continue;
+        if (v === undefined || v === null || v === '') continue;
+        return v;
+      }
+      return undefined;
+    }
+    const raw = findVatRegisteredAnswer();
     const periodicityRaw = flat[VAT_PERIODICITY_KEY];
     const shouldRaw = flat[SHOULD_BE_VAT_REGISTERED_KEY];
     const periodicity: VatPeriodicity | undefined =
