@@ -37,12 +37,19 @@ export async function POST(req: Request) {
       },
     });
 
+    // Log the failure mode server-side so an operator can tell apart
+    // "no portal user with this email" vs "wrong password" without
+    // exposing the difference to the client (which would let an
+    // attacker enumerate valid emails). The client always sees the
+    // same generic 401.
     if (!user) {
+      console.warn('[Portal Login] no active portal user for email', { email: email.toLowerCase() });
       return NextResponse.json({ error: 'Invalid email or password' }, { status: 401 });
     }
 
     const valid = await bcrypt.compare(password, user.passwordHash);
     if (!valid) {
+      console.warn('[Portal Login] wrong password', { email: user.email, userId: user.id, clientId: user.clientId });
       return NextResponse.json({ error: 'Invalid email or password' }, { status: 401 });
     }
 
