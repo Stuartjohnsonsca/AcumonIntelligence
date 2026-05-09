@@ -34,6 +34,12 @@ const DEFAULT_MASTER_SCHEDULES = [
   { key: 'completion_checklist', label: 'Completion Checklist', defaultStage: 'completion' },
   { key: 'test_summary_results', label: 'Test Summary Results', defaultStage: 'completion' },
   { key: 'overall_review_fs', label: 'Overall Review of FS', defaultStage: 'completion' },
+  // Tax on Profits + VAT Reconciliation live as sub-sub-tabs inside
+  // this single Completion sub-tab. CompletionPanel.tsx gates the
+  // sub-tab on scheduleKey 'taxation_completion'; without this entry
+  // the master schedule list, the per-audit-type picker has nothing
+  // labelled "Taxation" to add and the sub-tab never renders.
+  { key: 'taxation_completion', label: 'Taxation', defaultStage: 'completion' },
   { key: 'fs_review', label: 'FS Review', defaultStage: 'completion' },
   { key: 'adj_tb', label: 'Adj TB', defaultStage: 'completion' },
   { key: 'error_schedule', label: 'Error Schedule', defaultStage: 'completion' },
@@ -108,7 +114,21 @@ export default async function AuditTypesPage() {
     }
   }
 
-  const masterSchedules = (masterRow?.data as any)?.schedules || DEFAULT_MASTER_SCHEDULES;
+  // Merge defaults into the saved row so a newly-added default schedule
+  // (e.g. taxation_completion shipped after the firm first saved their
+  // master list) automatically appears in the audit-type picker without
+  // an admin having to re-seed. Saved entries take precedence — labels
+  // / stages the admin has customised aren't clobbered. Only entries
+  // whose key isn't already in the saved set get appended.
+  // The `as any` propagates through the merge so the AuditTypeSchedulesClient
+  // prop accepts the result without us hand-narrowing every union path.
+  const savedSchedules = (masterRow?.data as any)?.schedules;
+  const masterSchedules = (() => {
+    if (!Array.isArray(savedSchedules) || savedSchedules.length === 0) return DEFAULT_MASTER_SCHEDULES as any[];
+    const savedKeys = new Set(savedSchedules.map((s: any) => s.key));
+    const additions = (DEFAULT_MASTER_SCHEDULES as any[]).filter(d => !savedKeys.has(d.key));
+    return additions.length === 0 ? savedSchedules : [...savedSchedules, ...additions];
+  })();
 
   return (
     <div data-howto-id="page.audit-methodology-audit-types.body" className="container mx-auto px-4 py-8 max-w-5xl">
