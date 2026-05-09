@@ -243,6 +243,14 @@ export interface VatPeriodRow {
   vatReturnDocId?: string;
   // For the opening row — manual entry of prior-period HMRC balance.
   hmrcAmount: number | null;
+  /** Free-text companion to `hmrcAmount` on the opening row only.
+   *  Lets the auditor record commentary alongside the figure (e.g.
+   *  "£8,500 per HMRC online portal at period start"). When set, the
+   *  panel renders this verbatim in the opening cell; the numeric
+   *  value parsed out of it (first signed number) is what feeds the
+   *  HMRC running-balance maths. Empty / undefined falls back to the
+   *  legacy hmrcAmount-only behaviour. */
+  hmrcOpeningText?: string;
 }
 
 export interface VatBankVerification {

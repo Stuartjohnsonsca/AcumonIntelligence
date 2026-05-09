@@ -266,6 +266,7 @@ export function VatReconciliationPanel({ engagementId, periodStartDate, periodEn
               performanceMateriality={perfMateriality}
               tbRows={allTbRows.map(r => ({ accountCode: r.accountCode, description: r.description, currentYear: r.currentYear }))}
               onPatch={persist}
+              engagementId={engagementId}
             />
           ) : (
             <div className="px-3 py-3 bg-amber-50 border border-amber-200 rounded text-xs text-amber-800">

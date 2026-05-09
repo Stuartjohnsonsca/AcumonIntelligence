@@ -22,7 +22,7 @@
  */
 
 import { useMemo, useState } from 'react';
-import { Plus, Trash2 } from 'lucide-react';
+import { Plus, Trash2, Send, CheckCircle2, Loader2 } from 'lucide-react';
 import {
   generateVatPeriodRows,
   proRata,
@@ -47,6 +47,12 @@ interface Props {
   performanceMateriality: number;
   tbRows: Array<{ accountCode: string; description: string; currentYear: number | null }>;
   onPatch: (patch: Partial<VatRecData>) => void;
+  /** Engagement id — used by the "Request VAT returns via portal"
+   *  button to spawn a single PortalRequest listing every period the
+   *  client needs to upload. Optional so callers that haven't wired
+   *  this through (e.g. preview / read-only contexts) just hide the
+   *  button instead of erroring. */
+  engagementId?: string;
 }
 
 const fmtMoney = (n: number) => n.toLocaleString('en-GB', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -59,8 +65,15 @@ const fmtDate = (iso: string) => {
 export function VatReconciliationGrid({
   data, firmRates, periodicity, anchorIso, anchorIsPlaceholder,
   periodStartIso, periodEndIso, jurisdiction,
-  performanceMateriality, tbRows, onPatch,
+  performanceMateriality, tbRows, onPatch, engagementId,
 }: Props) {
+  // Portal-request UI state. `requesting` is the inflight flag so the
+  // button shows a spinner; `requestError` surfaces a backend message
+  // inline if the POST fails. The "already sent" state is derived
+  // from data.vatReturnsRequest so a refresh after sending shows the
+  // sent timestamp immediately.
+  const [requesting, setRequesting] = useState(false);
+  const [requestError, setRequestError] = useState<string | null>(null);
 
   // ── Resolve the working set of period rows ──────────────────────────
   //
@@ -121,10 +134,17 @@ export function VatReconciliationGrid({
     const adj = (raw: number | null, r: VatPeriodRow) => proRata(raw, r.daysOverlap, r.daysInPeriod);
     const out = dataRows.map(r => {
       if (r.isOpening) {
+        // Free-text opening field takes precedence — auditor may have
+        // typed "£8,500 per HMRC online portal" or similar. The first
+        // signed number embedded in that string drives the running
+        // balance; if there's no parseable number we fall back to the
+        // legacy hmrcAmount column.
+        const fromText = parseLeadingNumber(r.hmrcOpeningText);
+        const opening = fromText ?? r.hmrcAmount ?? 0;
         return {
           row: r,
           adjNetRevenue: 0, adjNetPurchases: 0, adjSalesVat: 0, adjPurchaseVat: 0, adjNetVat: 0,
-          hmrcClosing: r.hmrcAmount ?? 0,
+          hmrcClosing: opening,
         };
       }
       const adjNetRevenue = adj(r.netRevenue, r);
@@ -274,6 +294,69 @@ export function VatReconciliationGrid({
         </div>
       )}
 
+      {/* Portal request — single-button affordance that creates one
+          PortalRequest covering every period overlapping the audit.
+          Once sent, the button flips to a "Sent on X" badge so the
+          auditor sees they've already asked. The figures the client
+          uploads come back as portal evidence; in a future commit
+          we'll auto-extract them into the rows below. */}
+      {engagementId && (
+        <div className="flex items-center justify-between gap-3 px-3 py-2 bg-blue-50 border border-blue-200 rounded">
+          <div className="text-[11px] text-blue-900">
+            <strong>VAT returns:</strong> request the client to upload their filed VAT returns directly to the portal — the figures will populate the grid rows below once submitted, no rekeying needed.
+          </div>
+          {data.vatReturnsRequest?.portalRequestId ? (
+            <span className="inline-flex items-center gap-1.5 text-[11px] text-emerald-700 bg-emerald-50 border border-emerald-200 rounded px-2 py-1 whitespace-nowrap">
+              <CheckCircle2 className="h-3 w-3" />
+              Requested {data.vatReturnsRequest.sentAt
+                ? new Date(data.vatReturnsRequest.sentAt).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })
+                : 'recently'}
+            </span>
+          ) : (
+            <button
+              type="button"
+              onClick={async () => {
+                if (!engagementId || requesting) return;
+                setRequesting(true);
+                setRequestError(null);
+                try {
+                  const periodEndings = dataRows
+                    .filter(r => !r.isOpening)
+                    .map(r => r.periodEnding);
+                  const res = await fetch(`/api/engagements/${engagementId}/vat-reconciliation/request-returns`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ periodEndings }),
+                  });
+                  if (!res.ok) {
+                    const j = await res.json().catch(() => ({}));
+                    throw new Error(j.error || `Request failed (${res.status})`);
+                  }
+                  const j = await res.json();
+                  // Mirror server-side state into the local data so the
+                  // button flips immediately without waiting for a reload.
+                  onPatch({ vatReturnsRequest: { portalRequestId: j.id, sentAt: j.sentAt } });
+                } catch (err: any) {
+                  setRequestError(err?.message || 'Could not send portal request');
+                } finally {
+                  setRequesting(false);
+                }
+              }}
+              disabled={requesting}
+              className="inline-flex items-center gap-1.5 text-[11px] px-3 py-1.5 bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50 whitespace-nowrap"
+            >
+              {requesting ? <Loader2 className="h-3 w-3 animate-spin" /> : <Send className="h-3 w-3" />}
+              Request VAT returns via portal
+            </button>
+          )}
+        </div>
+      )}
+      {requestError && (
+        <div className="px-3 py-1.5 bg-red-50 border border-red-200 rounded text-[11px] text-red-700">
+          {requestError}
+        </div>
+      )}
+
       {/* Main spreadsheet */}
       <div className="border border-slate-200 rounded overflow-hidden overflow-x-auto">
         <table className="w-full text-[11px]">
@@ -337,7 +420,22 @@ export function VatReconciliationGrid({
                     <td className="px-2 py-1 text-right tabular-nums bg-indigo-50/30">{r.isOpening ? '' : fmtMoney(c.adjNetVat)}</td>
                     <td className="px-2 py-1 text-right tabular-nums">
                       {r.isOpening ? (
-                        <NumCell value={r.hmrcAmount} onChange={v => patchRow(r.id, { hmrcAmount: v })} bare />
+                        // Free-text opening cell — accepts any string
+                        // ("£8,500 per HMRC portal at period start"
+                        // works just as well as "8500"). The maths
+                        // pulls the first signed number out via
+                        // parseLeadingNumber; both the verbatim text
+                        // and the parsed amount round-trip.
+                        <input
+                          type="text"
+                          value={r.hmrcOpeningText ?? (r.hmrcAmount == null ? '' : String(r.hmrcAmount))}
+                          onChange={(e) => {
+                            const text = e.target.value;
+                            patchRow(r.id, { hmrcOpeningText: text, hmrcAmount: parseLeadingNumber(text) });
+                          }}
+                          placeholder="e.g. £8,500 per HMRC portal at period start"
+                          className="w-56 text-right text-[11px] px-1 py-0.5 border border-transparent hover:border-slate-200 focus:border-indigo-300 rounded"
+                        />
                       ) : (
                         fmtMoney(c.hmrcClosing)
                       )}
@@ -551,22 +649,66 @@ export function VatReconciliationGrid({
 
 // ─── Editable numeric cell ────────────────────────────────────────────
 
+/**
+ * Pull the first signed decimal number out of an arbitrary string.
+ * Tolerates leading currency symbols, commas, spaces and trailing
+ * commentary — e.g. "£8,500.00 per HMRC online portal" → 8500. Returns
+ * null when no number is present, which is the cue for the maths
+ * downstream to fall back to the legacy hmrcAmount column.
+ */
+function parseLeadingNumber(text: string | null | undefined): number | null {
+  if (!text || typeof text !== 'string') return null;
+  const stripped = text.replace(/[,£$€\s]/g, '');
+  const m = /-?\d+(\.\d+)?/.exec(stripped);
+  if (!m) return null;
+  const n = Number(m[0]);
+  return Number.isFinite(n) ? n : null;
+}
+
+/**
+ * Numeric cell used across the grid. Implemented as a TEXT input
+ * (rather than `type="number"`) so the auditor can:
+ *   • Type comma-grouped numbers naturally (`1,234,567.89`)
+ *   • Paste values copied from spreadsheets / VAT returns that include
+ *     `£`, spaces or commas — the parser strips presentation chars
+ *     and stores the raw number
+ *   • Enter very large balances without a fixed-width number spinner
+ *     clipping the digits
+ *
+ * Storage is unchanged — `value` round-trips as a `number | null`. The
+ * formatted display is shown when the cell isn't focused; on focus we
+ * swap to the raw editable string so the user can edit any digit
+ * without fighting locale formatting. `bare` suppresses the surrounding
+ * `<td>` chrome for callers that render their own cell wrapper.
+ */
 function NumCell({ value, onChange, bare = false }: { value: number | null; onChange: (n: number | null) => void; bare?: boolean }) {
+  const [focused, setFocused] = useState(false);
+  const [draft, setDraft] = useState('');
+  const formatted = value == null ? '' : value.toLocaleString('en-GB', { maximumFractionDigits: 2 });
+  const display = focused ? draft : formatted;
   return (
     <td className={bare ? '' : 'px-2 py-1 text-right'}>
       <input
-        type="number"
-        step="0.01"
-        value={value == null ? '' : value}
+        type="text"
+        inputMode="decimal"
+        value={display}
+        onFocus={() => { setDraft(value == null ? '' : String(value)); setFocused(true); }}
+        onBlur={() => setFocused(false)}
         onChange={(e) => {
-          const v = e.target.value;
-          if (v === '') onChange(null);
-          else {
-            const n = Number(v);
-            if (Number.isFinite(n)) onChange(n);
+          const raw = e.target.value;
+          setDraft(raw);
+          // Strip everything except digits, dot and minus before parsing.
+          // Commas, currency symbols, spaces all tolerated. Empty input
+          // (or input that only contains symbols) clears to null.
+          const cleaned = raw.replace(/[^0-9.\-]/g, '');
+          if (cleaned === '' || cleaned === '-' || cleaned === '.') {
+            onChange(null);
+            return;
           }
+          const n = Number(cleaned);
+          if (Number.isFinite(n)) onChange(n);
         }}
-        className="w-24 text-right text-[11px] px-1 py-0.5 border border-transparent hover:border-slate-200 focus:border-indigo-300 rounded tabular-nums"
+        className="w-32 text-right text-[11px] px-1 py-0.5 border border-transparent hover:border-slate-200 focus:border-indigo-300 rounded tabular-nums"
       />
     </td>
   );
