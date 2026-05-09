@@ -132,6 +132,21 @@ export async function GET(_req: NextRequest, ctx: RouteCtx) {
 }
 
 export async function POST(req: NextRequest, ctx: RouteCtx) {
+  // Top-level guard so any unhandled Prisma / runtime error returns a
+  // structured JSON body instead of a bare 500. Previously a column-drift
+  // or FK violation would propagate as a content-less 500 and the gate
+  // showed "Submit failed (500)" with no actionable message — now the
+  // user sees the real failure and the server logs it.
+  try {
+    return await handlePost(req, ctx);
+  } catch (err: any) {
+    const msg = err?.message || String(err) || 'Internal error';
+    console.error('[independence] POST failed:', err);
+    return NextResponse.json({ error: `Independence submit failed: ${msg}` }, { status: 500 });
+  }
+}
+
+async function handlePost(req: NextRequest, ctx: RouteCtx) {
   const session = await auth();
   if (!session?.user?.twoFactorVerified) return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
 
@@ -205,17 +220,28 @@ export async function POST(req: NextRequest, ctx: RouteCtx) {
     });
   } catch (err: any) {
     const msg = err?.message || String(err);
-    if (/audit_member_independence/.test(msg) && /does not exist/i.test(msg)) {
+    // Generic "missing schema" detection — the table OR any of its
+    // columns may be missing on production if the SQL migration hasn't
+    // been run. Both cases manifest as Postgres errors containing
+    // "does not exist", so we surface a single actionable message
+    // pointing the operator at the right SQL script. Old-style narrow
+    // match was missing column-drift cases and re-throwing as a bare
+    // 500 — exactly the symptom the user reported.
+    if (/does not exist/i.test(msg)) {
+      console.error('[independence] upsert hit a missing-schema error:', msg);
       return NextResponse.json({
-        error: 'Independence table not migrated yet. Run scripts/sql/independence-gate.sql on Supabase.',
+        error: 'Independence table or column missing. Run scripts/sql/independence-gate.sql then independence-unbar.sql on Supabase.',
       }, { status: 503 });
     }
     throw err;
   }
 
   // Append a history row for this submission — never deleted, powers the
-  // audit trail. Swallows missing-table errors so the user's submit still
-  // succeeds before the history SQL migration lands.
+  // audit trail. Swallows ANY error so the user's submit still succeeds
+  // before the history SQL migration lands. Previously the catch only
+  // handled missing-table errors and re-logged column drift, but the
+  // underlying error could still mask the success path; we now log
+  // unconditionally and never re-throw.
   try {
     await prisma.auditMemberIndependenceHistory.create({
       data: {
@@ -230,10 +256,10 @@ export async function POST(req: NextRequest, ctx: RouteCtx) {
     });
   } catch (err: any) {
     const msg = err?.message || String(err);
-    if (/audit_member_independence_history/.test(msg) && /does not exist/i.test(msg)) {
-      console.warn('[independence] history table missing — run scripts/sql/independence-history.sql on Supabase.');
+    if (/does not exist/i.test(msg)) {
+      console.warn('[independence] history insert: table or column missing — run scripts/sql/independence-history.sql + independence-unbar.sql on Supabase. Original error:', msg);
     } else {
-      console.error('[independence] history insert failed:', err);
+      console.error('[independence] history insert failed (non-fatal):', err);
     }
   }
 
