@@ -1487,7 +1487,7 @@ export function EngagementTabs({ engagement, auditType, clientName, periodEndDat
                     </Fragment>
                   );
                 })}
-                {(['Going Concern', 'Management Override', 'SRMM Memos', 'Subsequent Events', 'Tax Technical', 'Permanent', 'Disclosure'] as const).map(other => (
+                {(['Going Concern', 'Management Override', 'SRMM Memos', 'Subsequent Events', 'Taxation', 'Tax Technical', 'Permanent', 'Disclosure'] as const).map(other => (
                   <button
                     key={other}
                     onClick={() => {

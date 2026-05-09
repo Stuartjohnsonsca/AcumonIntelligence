@@ -14,6 +14,7 @@ import { JournalRiskPanel } from './JournalRiskPanel';
 import { SRMMPanel } from './SRMMPanel';
 import { PlanCustomiserModal } from './PlanCustomiserModal';
 import { VatReconciliationPanel } from './VatReconciliationPanel';
+import { TaxationPanel } from './TaxationPanel';
 import { isRevenueFsLevel } from '@/lib/vat-reconciliation';
 
 interface TBRow {
@@ -104,7 +105,7 @@ interface Props {
 
 const STATEMENT_ORDER = ['Profit & Loss', 'Balance Sheet', 'Cash Flow Statement', 'Notes'];
 const THREE_LEVEL_STATEMENTS = new Set(['Balance Sheet']);
-const OTHER_TABS = ['Going Concern', 'Management Override', 'SRMM Memos', 'Subsequent Events', 'Tax Technical', 'Permanent', 'Disclosure'] as const;
+const OTHER_TABS = ['Going Concern', 'Management Override', 'SRMM Memos', 'Subsequent Events', 'Taxation', 'Tax Technical', 'Permanent', 'Disclosure'] as const;
 type OtherTab = typeof OTHER_TABS[number];
 
 // Statutory format order by framework
@@ -1181,6 +1182,17 @@ export function AuditPlanPanel({ engagementId, clientId, periodId, onClose, peri
       )}
       {activeOtherTab === 'SRMM Memos' && (
         <SRMMPanel engagementId={engagementId} />
+      )}
+      {/* Taxation — embeds the same TaxationPanel that powers the
+          Completion sub-tab, so Tax on Profits (corporation tax) and
+          VAT Reconciliation are reachable directly from the Audit Plan
+          Other strip without leaving the Fieldwork view. */}
+      {activeOtherTab === 'Taxation' && (
+        <TaxationPanel
+          engagementId={engagementId}
+          periodStartDate={periodStartDate}
+          periodEndDate={periodEndDate}
+        />
       )}
       {activeOtherTab === 'Disclosure' && (
         <div className="p-6 text-center">
