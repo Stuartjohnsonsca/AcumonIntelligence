@@ -26,6 +26,19 @@
 
 import { parseRemaps, resolveRemap, flatKey, type ToolSlugRemap } from './tool-slug-remap';
 
+/** Standalone copy of slugifyQuestionText so this module doesn't need
+ *  to pull in the formula-engine bundle on every load. The algorithm
+ *  must stay byte-identical to lib/formula-engine.ts:slugifyQuestionText
+ *  — change one and change the other. */
+function simpleSlugify(text: string): string {
+  return text
+    .toLowerCase()
+    .replace(/%/g, ' pct ')
+    .replace(/&/g, ' and ')
+    .replace(/[^a-z0-9]+/g, '_')
+    .replace(/^_+|_+$/g, '');
+}
+
 /** Tool-name string the VAT Reconciliation registers itself under in
  *  the per-firm slug-remap registry. Stable identifier — don't rename
  *  without migrating any saved remap entries. */
@@ -302,13 +315,26 @@ export type VatRegistration = {
  */
 export async function readVatRegistration(engagementId: string): Promise<VatRegistration> {
   try {
-    // Load the firm's tool slug remaps in parallel with the permanent
-    // file. The remap lets a Methodology Admin redirect the canonical
-    // VAT-registered slug to a different question they've created in
-    // its place — surfaces here so the registration check honours that
-    // override before falling back to the canonical / tolerant scan.
-    const [pfRes, remapsRes] = await Promise.all([
+    // Critical context for this lookup: the engagement's permanent
+    // file stores answers keyed by question UUID, not by slug —
+    // DynamicAppendixForm saves each value under `<questionId>` (or
+    // `<questionId>_col<N>` for table cells). The slug we ship with
+    // the tool ('is_the_client_vat_registered') only matches the
+    // question's TEXT, so to read the answer we need to:
+    //   1. Load the firm's permanent_file_questions template items
+    //      (each carries id + questionText).
+    //   2. Build a slug → questionId map by slugifying every item's
+    //      text — same algorithm slugifyQuestionText uses elsewhere.
+    //   3. Resolve the canonical (slug, column) we care about through
+    //      the firm's tool-slug remap registry, look up its UUID via
+    //      the map, then read the answer.
+    // We also keep a tolerant fallback that scans every item whose
+    // slug contains 'vat' + 'regist' so a firm that's renamed the
+    // question without registering a remap still produces a working
+    // gate.
+    const [pfRes, tplRes, remapsRes] = await Promise.all([
       fetch(`/api/engagements/${engagementId}/permanent-file`),
+      fetch(`/api/methodology-admin/templates?templateType=permanent_file_questions&engagementId=${encodeURIComponent(engagementId)}`).catch(() => null),
       fetch('/api/methodology-admin/tool-slug-remaps').catch(() => null),
     ]);
     if (!pfRes.ok) return { status: 'unanswered' };
@@ -320,62 +346,86 @@ export async function readVatRegistration(engagementId: string): Promise<VatRegi
         remaps = parseRemaps(r?.remaps);
       } catch { /* tolerant */ }
     }
-    // The permanent-file GET returns { data: { [sectionKey]: { ...fields } } }.
-    // We don't know which section the methodology admin will land the
-    // question in, so flatten and look up by key — same pattern
-    // PermanentFileTab uses on load.
+
+    // Flatten the per-section JSON into a single id-keyed map. Each
+    // section's data is `{ [questionId]: value, [questionId]_col<N>: value }`
+    // so a flat merge across sections is safe (ids are UUIDs).
     const flat: Record<string, unknown> = {};
     for (const [, sectionData] of Object.entries(json.data || {})) {
       if (typeof sectionData === 'object' && sectionData) Object.assign(flat, sectionData);
     }
-    // Apply remap (if any) before the canonical / tolerant lookups.
-    const registeredKey = (() => {
-      const r = resolveRemap(remaps, VAT_RECONCILIATION_TOOL_NAME, PERMANENT_FILE_TEMPLATE_TYPE, 'is_the_client_vat_registered', 1);
-      return flatKey(r.slug, r.column);
-    })();
-    const periodicityKeyResolved = (() => {
-      const r = resolveRemap(remaps, VAT_RECONCILIATION_TOOL_NAME, PERMANENT_FILE_TEMPLATE_TYPE, VAT_PERIODICITY_KEY);
-      return flatKey(r.slug, r.column);
-    })();
-    const shouldKeyResolved = (() => {
-      const r = resolveRemap(remaps, VAT_RECONCILIATION_TOOL_NAME, PERMANENT_FILE_TEMPLATE_TYPE, SHOULD_BE_VAT_REGISTERED_KEY);
-      return flatKey(r.slug, r.column);
-    })();
+
+    // Build the slug → questionId map. Items live on
+    // template.items as an array of `{ id, questionText, key? }`.
+    // Both the explicit key and the slugified text are mapped so a
+    // firm that's set an admin key still resolves.
+    const slugToId: Record<string, string> = {};
+    function addSlug(slug: string, id: string) {
+      const s = (slug || '').toLowerCase();
+      if (s && id && !(s in slugToId)) slugToId[s] = id;
+    }
+    if (tplRes && tplRes.ok) {
+      try {
+        const t = await tplRes.json();
+        const items = Array.isArray(t?.template?.items) ? t.template.items : [];
+        for (const item of items) {
+          if (!item || typeof item !== 'object' || !item.id) continue;
+          const text = typeof item.questionText === 'string' ? item.questionText : '';
+          const explicit = typeof item.key === 'string' ? item.key.trim() : '';
+          if (text) addSlug(simpleSlugify(text), String(item.id));
+          if (explicit) addSlug(explicit, String(item.id));
+        }
+      } catch { /* tolerant */ }
+    }
+
+    // Resolve the canonical (slug, column) through the firm's remap
+    // registry. The remap lets the Methodology Admin redirect a
+    // tool's read to a replacement question on the same template.
+    function readAt(canonicalSlug: string, canonicalColumn?: number): unknown {
+      const r = resolveRemap(remaps, VAT_RECONCILIATION_TOOL_NAME, PERMANENT_FILE_TEMPLATE_TYPE, canonicalSlug, canonicalColumn);
+      const targetId = slugToId[(r.slug || '').toLowerCase()];
+      if (!targetId) return undefined;
+      return flat[flatKey(targetId, r.column)];
+    }
     // Lookup is tolerant of question-text variation. The canonical
-    // slug is `is_the_client_vat_registered_col1` (from "Is the client
+    // slug is `is_the_client_vat_registered` (from "Is the client
     // VAT registered?"), but firms phrase the question slightly
     // differently — "Is client VAT registered?", "Is the Client VAT-
     // registered?", etc. — and slugifyQuestionText derives a different
-    // key for each. Walk the flat map: prefer the canonical key when
-    // it's present, otherwise pick the first key that contains both
-    // 'vat' and 'regist' (excluding the companion 'should_…' question)
-    // and carries a usable Y/N answer.
+    // slug for each. Strategy: try the remap-aware canonical lookup
+    // first; on miss, scan the slug→id map for any slug containing
+    // 'vat' + 'regist' that isn't a companion (should/number/date/
+    // periodicity) and resolve through the same id map.
     function findVatRegisteredAnswer(): unknown {
-      // 1. Honour the firm's remap target if set.
-      if (registeredKey in flat) return flat[registeredKey];
-      // 2. Canonical slug from the shipped tool wiring.
-      if (VAT_REGISTERED_KEY in flat) return flat[VAT_REGISTERED_KEY];
-      for (const [k, v] of Object.entries(flat)) {
-        const kl = k.toLowerCase();
-        if (!kl.includes('vat')) continue;
-        if (!kl.includes('regist')) continue;
-        // Exclude the "should the client be VAT registered" companion
-        // question and any "vat_registration_…" variants (number, date,
-        // periodicity, etc.) — only the gate question is interesting
-        // here. Match if the key plausibly answers "are they registered
-        // currently".
-        if (kl.includes('should')) continue;
-        if (kl.includes('number')) continue;
-        if (kl.includes('date')) continue;
-        if (kl.includes('period')) continue;
-        if (v === undefined || v === null || v === '') continue;
-        return v;
+      // 1. Canonical-or-remapped slug lookup at column 1 (the
+      //    multi-column row convention shipped with the tool) and as a
+      //    plain row (in case the firm rebuilt it as a single-column
+      //    Y/N question).
+      const colVal = readAt('is_the_client_vat_registered', 1);
+      if (colVal !== undefined && colVal !== null && colVal !== '') return colVal;
+      const plainVal = readAt('is_the_client_vat_registered');
+      if (plainVal !== undefined && plainVal !== null && plainVal !== '') return plainVal;
+      // 2. Tolerant scan over the slug→id map. We scan SLUGS, not the
+      //    raw flat keys, because the flat data is UUID-keyed.
+      for (const [slug, id] of Object.entries(slugToId)) {
+        if (!slug.includes('vat')) continue;
+        if (!slug.includes('regist')) continue;
+        if (slug.includes('should')) continue;
+        if (slug.includes('number')) continue;
+        if (slug.includes('date')) continue;
+        if (slug.includes('period')) continue;
+        // Try column 1 first (multi-column row convention) then a
+        // plain row read.
+        const c1 = flat[flatKey(id, 1)];
+        if (c1 !== undefined && c1 !== null && c1 !== '') return c1;
+        const plain = flat[id];
+        if (plain !== undefined && plain !== null && plain !== '') return plain;
       }
       return undefined;
     }
     const raw = findVatRegisteredAnswer();
-    const periodicityRaw = flat[periodicityKeyResolved] ?? flat[VAT_PERIODICITY_KEY];
-    const shouldRaw = flat[shouldKeyResolved] ?? flat[SHOULD_BE_VAT_REGISTERED_KEY];
+    const periodicityRaw = readAt(VAT_PERIODICITY_KEY);
+    const shouldRaw = readAt(SHOULD_BE_VAT_REGISTERED_KEY);
     const periodicity: VatPeriodicity | undefined =
       periodicityRaw === 'Monthly' || periodicityRaw === 'Quarterly' || periodicityRaw === 'Annual'
         ? periodicityRaw
