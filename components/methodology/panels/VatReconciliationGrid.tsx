@@ -411,27 +411,32 @@ export function VatReconciliationGrid({
         </div>
       )}
 
-      {/* Main spreadsheet */}
-      <div className="border border-slate-200 rounded overflow-hidden overflow-x-auto">
-        <table className="w-full text-[11px]">
-          <thead className="bg-slate-50 border-b border-slate-200">
-            <tr>
-              <th className="px-2 py-1 text-left font-semibold text-slate-600 whitespace-nowrap">Period ending</th>
-              <th className="px-2 py-1 text-left font-semibold text-slate-600">Jurisdiction</th>
-              <th className="px-2 py-1 text-right font-semibold text-slate-600">Net Revenue</th>
-              <th className="px-2 py-1 text-right font-semibold text-slate-600">Net Purchases</th>
-              <th className="px-2 py-1 text-right font-semibold text-slate-600">Sales VAT</th>
-              <th className="px-2 py-1 text-right font-semibold text-slate-600">Purchase VAT</th>
-              <th className="px-2 py-1 text-right font-semibold text-slate-600 bg-indigo-50/50">Adj Net Revenue</th>
-              <th className="px-2 py-1 text-right font-semibold text-slate-600 bg-indigo-50/50">Adj Net Purchases</th>
-              <th className="px-2 py-1 text-right font-semibold text-slate-600 bg-indigo-50/50">Adj Sales VAT</th>
-              <th className="px-2 py-1 text-right font-semibold text-slate-600 bg-indigo-50/50">Adj Purchase VAT</th>
-              <th className="px-2 py-1 text-right font-semibold text-slate-600 bg-indigo-50/50">Adj Net VAT</th>
-              <th className="px-2 py-1 text-right font-semibold text-slate-600">HMRC</th>
-              <th className="px-2 py-1 text-left font-semibold text-slate-600 bg-emerald-50/50">Verified Date</th>
-              <th className="px-2 py-1 text-right font-semibold text-slate-600 bg-emerald-50/50">Verified Amount</th>
-            </tr>
-          </thead>
+      {/* Main spreadsheet — 14 columns wide. The wrapping
+          `xl:-mx-12 2xl:-mx-24` lets the table bleed past the
+          containing tab's content padding on wide screens so it fits
+          without a horizontal scrollbar. On narrow viewports the
+          surrounding `overflow-x-auto` still kicks in. */}
+      <div className="xl:-mx-12 2xl:-mx-24">
+        <div className="border border-slate-200 rounded overflow-hidden overflow-x-auto">
+          <table className="w-full text-[11px]">
+            <thead className="bg-slate-50 border-b border-slate-200">
+              <tr>
+                <th className="px-1 py-1 text-left font-semibold text-slate-600 whitespace-nowrap">Period ending</th>
+                <th className="px-1 py-1 text-left font-semibold text-slate-600">Juris.</th>
+                <th className="px-1 py-1 text-right font-semibold text-slate-600">Net Rev</th>
+                <th className="px-1 py-1 text-right font-semibold text-slate-600">Net Purch</th>
+                <th className="px-1 py-1 text-right font-semibold text-slate-600">Sales VAT</th>
+                <th className="px-1 py-1 text-right font-semibold text-slate-600">Purch VAT</th>
+                <th className="px-1 py-1 text-right font-semibold text-slate-600 bg-indigo-50/50">Adj Net Rev</th>
+                <th className="px-1 py-1 text-right font-semibold text-slate-600 bg-indigo-50/50">Adj Net Purch</th>
+                <th className="px-1 py-1 text-right font-semibold text-slate-600 bg-indigo-50/50">Adj Sales VAT</th>
+                <th className="px-1 py-1 text-right font-semibold text-slate-600 bg-indigo-50/50">Adj Purch VAT</th>
+                <th className="px-1 py-1 text-right font-semibold text-slate-600 bg-indigo-50/50">Adj Net VAT</th>
+                <th className="px-1 py-1 text-right font-semibold text-slate-600">HMRC</th>
+                <th className="px-1 py-1 text-left font-semibold text-slate-600 bg-emerald-50/50">Verified Date</th>
+                <th className="px-1 py-1 text-right font-semibold text-slate-600 bg-emerald-50/50">Verified Amount</th>
+              </tr>
+            </thead>
           <tbody>
             {computed.map((c, i) => {
               const r = c.row;
@@ -444,17 +449,16 @@ export function VatReconciliationGrid({
               return (
                 <>
                   <tr key={r.id} className={`border-b border-slate-100 ${cutoff ? 'bg-amber-50/30' : ''} ${r.isOpening ? 'bg-slate-50' : ''}`}>
-                    <td className="px-2 py-1 whitespace-nowrap">
+                    <td className="px-1 py-1 whitespace-nowrap">
                       {fmtDate(r.periodEnding)}
                       {r.isOpening && <span className="ml-1 text-[9px] uppercase text-slate-500">opening</span>}
                       {(r.isCutoffStart || r.isCutoffEnd) && <span className="ml-1 text-[9px] uppercase text-amber-700">cut-off</span>}
                     </td>
-                    <td className="px-2 py-1">
-                      <input
-                        type="text"
+                    <td className="px-1 py-1">
+                      <BufferedInput
                         value={r.jurisdiction}
-                        onChange={(e) => patchRow(r.id, { jurisdiction: e.target.value })}
-                        className="w-20 text-[11px] px-1 py-0.5 border border-transparent hover:border-slate-200 focus:border-indigo-300 rounded"
+                        onCommit={(v) => patchRow(r.id, { jurisdiction: v })}
+                        className="w-14 text-[11px] px-1 py-0.5 border border-transparent hover:border-slate-200 focus:border-indigo-300 rounded"
                       />
                     </td>
                     {r.isOpening ? (
@@ -467,12 +471,12 @@ export function VatReconciliationGrid({
                         <NumCell value={r.purchaseVat} onChange={v => patchRow(r.id, { purchaseVat: v })} />
                       </>
                     )}
-                    <td className="px-2 py-1 text-right tabular-nums bg-indigo-50/30">{r.isOpening ? '' : fmtMoney(c.adjNetRevenue)}</td>
-                    <td className="px-2 py-1 text-right tabular-nums bg-indigo-50/30">{r.isOpening ? '' : fmtMoney(c.adjNetPurchases)}</td>
-                    <td className="px-2 py-1 text-right tabular-nums bg-indigo-50/30">{r.isOpening ? '' : fmtMoney(c.adjSalesVat)}</td>
-                    <td className="px-2 py-1 text-right tabular-nums bg-indigo-50/30">{r.isOpening ? '' : fmtMoney(c.adjPurchaseVat)}</td>
-                    <td className="px-2 py-1 text-right tabular-nums bg-indigo-50/30">{r.isOpening ? '' : fmtMoney(c.adjNetVat)}</td>
-                    <td className="px-2 py-1 text-right tabular-nums">
+                    <td className="px-1 py-1 text-right tabular-nums bg-indigo-50/30">{r.isOpening ? '' : fmtMoney(c.adjNetRevenue)}</td>
+                    <td className="px-1 py-1 text-right tabular-nums bg-indigo-50/30">{r.isOpening ? '' : fmtMoney(c.adjNetPurchases)}</td>
+                    <td className="px-1 py-1 text-right tabular-nums bg-indigo-50/30">{r.isOpening ? '' : fmtMoney(c.adjSalesVat)}</td>
+                    <td className="px-1 py-1 text-right tabular-nums bg-indigo-50/30">{r.isOpening ? '' : fmtMoney(c.adjPurchaseVat)}</td>
+                    <td className="px-1 py-1 text-right tabular-nums bg-indigo-50/30">{r.isOpening ? '' : fmtMoney(c.adjNetVat)}</td>
+                    <td className="px-1 py-1 text-right tabular-nums">
                       {r.isOpening ? (
                         // Free-text opening cell — accepts any string
                         // ("£8,500 per HMRC portal at period start"
@@ -480,38 +484,34 @@ export function VatReconciliationGrid({
                         // pulls the first signed number out via
                         // parseLeadingNumber; both the verbatim text
                         // and the parsed amount round-trip.
-                        <input
-                          type="text"
+                        <BufferedInput
                           value={r.hmrcOpeningText ?? (r.hmrcAmount == null ? '' : String(r.hmrcAmount))}
-                          onChange={(e) => {
-                            const text = e.target.value;
+                          onCommit={(text) => {
                             patchRow(r.id, { hmrcOpeningText: text, hmrcAmount: parseLeadingNumber(text) });
                           }}
-                          placeholder="e.g. £8,500 per HMRC portal at period start"
-                          className="w-56 text-right text-[11px] px-1 py-0.5 border border-transparent hover:border-slate-200 focus:border-indigo-300 rounded"
+                          placeholder="e.g. £8,500 per HMRC portal"
+                          className="w-44 text-right text-[11px] px-1 py-0.5 border border-transparent hover:border-slate-200 focus:border-indigo-300 rounded"
                         />
                       ) : (
                         fmtMoney(c.hmrcClosing)
                       )}
                     </td>
-                    <td className="px-2 py-1 bg-emerald-50/30">
+                    <td className="px-1 py-1 bg-emerald-50/30">
                       {verifiedFirst && (
-                        <input
+                        <BufferedInput
                           type="date"
                           value={verifiedFirst.date.slice(0, 10)}
-                          onChange={(e) => patchBankRow(verifiedFirst.id, { date: e.target.value })}
+                          onCommit={(v) => patchBankRow(verifiedFirst.id, { date: v })}
                           className="text-[11px] px-1 py-0.5 border border-transparent hover:border-slate-200 rounded"
                         />
                       )}
                     </td>
-                    <td className="px-2 py-1 text-right tabular-nums bg-emerald-50/30">
+                    <td className="px-1 py-1 text-right tabular-nums bg-emerald-50/30">
                       {verifiedFirst && (
-                        <input
-                          type="number"
-                          step="0.01"
+                        <NumCell
                           value={verifiedFirst.amount}
-                          onChange={(e) => patchBankRow(verifiedFirst.id, { amount: Number(e.target.value) || 0 })}
-                          className="w-24 text-right text-[11px] px-1 py-0.5 border border-transparent hover:border-slate-200 rounded tabular-nums"
+                          onChange={(n) => patchBankRow(verifiedFirst.id, { amount: n ?? 0 })}
+                          bare
                         />
                       )}
                     </td>
@@ -519,15 +519,18 @@ export function VatReconciliationGrid({
                   {/* Split-payment rows for this period (rows 2..N within the period) */}
                   {bankRowsForPeriod.slice(1).map(b => (
                     <tr key={b.id} className="border-b border-slate-50 bg-emerald-50/10">
-                      <td colSpan={12} className="px-2 py-0.5 text-right text-[10px] italic text-slate-400">— additional payment —</td>
-                      <td className="px-2 py-0.5 bg-emerald-50/30">
-                        <input type="date" value={b.date.slice(0, 10)} onChange={(e) => patchBankRow(b.id, { date: e.target.value })}
-                          className="text-[11px] px-1 py-0.5 border border-transparent hover:border-slate-200 rounded" />
+                      <td colSpan={12} className="px-1 py-0.5 text-right text-[10px] italic text-slate-400">— additional payment —</td>
+                      <td className="px-1 py-0.5 bg-emerald-50/30">
+                        <BufferedInput
+                          type="date"
+                          value={b.date.slice(0, 10)}
+                          onCommit={(v) => patchBankRow(b.id, { date: v })}
+                          className="text-[11px] px-1 py-0.5 border border-transparent hover:border-slate-200 rounded"
+                        />
                       </td>
-                      <td className="px-2 py-0.5 text-right bg-emerald-50/30">
+                      <td className="px-1 py-0.5 text-right bg-emerald-50/30">
                         <div className="flex items-center justify-end gap-1">
-                          <input type="number" step="0.01" value={b.amount} onChange={(e) => patchBankRow(b.id, { amount: Number(e.target.value) || 0 })}
-                            className="w-24 text-right text-[11px] px-1 py-0.5 border border-transparent hover:border-slate-200 rounded tabular-nums" />
+                          <NumCell value={b.amount} onChange={(n) => patchBankRow(b.id, { amount: n ?? 0 })} bare />
                           <button onClick={() => removeBankRow(b.id)} className="text-slate-400 hover:text-red-500" title="Remove payment">
                             <Trash2 className="h-3 w-3" />
                           </button>
@@ -541,18 +544,19 @@ export function VatReconciliationGrid({
 
             {/* Totals */}
             <tr className="border-t-2 border-slate-300 bg-slate-100 font-semibold">
-              <td colSpan={6} className="px-2 py-1 text-right text-slate-700">Totals</td>
-              <td className="px-2 py-1 text-right tabular-nums">{fmtMoney(totals.adjNetRevenue)}</td>
-              <td className="px-2 py-1 text-right tabular-nums">{fmtMoney(totals.adjNetPurchases)}</td>
-              <td className="px-2 py-1 text-right tabular-nums">{fmtMoney(totals.adjSalesVat)}</td>
-              <td className="px-2 py-1 text-right tabular-nums">{fmtMoney(totals.adjPurchaseVat)}</td>
-              <td className="px-2 py-1 text-right tabular-nums">{fmtMoney(totals.adjNetVat)}</td>
-              <td className="px-2 py-1 text-right tabular-nums">{fmtMoney(totals.hmrc)}</td>
-              <td className="px-2 py-1 text-right text-slate-700">Verified Total</td>
-              <td className="px-2 py-1 text-right tabular-nums">{fmtMoney(verifiedTotal)}</td>
+              <td colSpan={6} className="px-1 py-1 text-right text-slate-700">Totals</td>
+              <td className="px-1 py-1 text-right tabular-nums">{fmtMoney(totals.adjNetRevenue)}</td>
+              <td className="px-1 py-1 text-right tabular-nums">{fmtMoney(totals.adjNetPurchases)}</td>
+              <td className="px-1 py-1 text-right tabular-nums">{fmtMoney(totals.adjSalesVat)}</td>
+              <td className="px-1 py-1 text-right tabular-nums">{fmtMoney(totals.adjPurchaseVat)}</td>
+              <td className="px-1 py-1 text-right tabular-nums">{fmtMoney(totals.adjNetVat)}</td>
+              <td className="px-1 py-1 text-right tabular-nums">{fmtMoney(totals.hmrc)}</td>
+              <td className="px-1 py-1 text-right text-slate-700">Verified Total</td>
+              <td className="px-1 py-1 text-right tabular-nums">{fmtMoney(verifiedTotal)}</td>
             </tr>
           </tbody>
         </table>
+      </div>
       </div>
 
       <div className="flex justify-end">
@@ -614,11 +618,7 @@ export function VatReconciliationGrid({
                   </div>
                 </td>
                 <td className="px-3 py-0.5 text-right tabular-nums">
-                  <input
-                    type="number" step="0.01" value={r.amount}
-                    onChange={(e) => patchTbVatRow(idx, { amount: Number(e.target.value) || 0 })}
-                    className="w-32 text-right text-[11px] px-1 py-0.5 border border-slate-200 rounded tabular-nums"
-                  />
+                  <NumCell value={r.amount} onChange={(n) => patchTbVatRow(idx, { amount: n ?? 0 })} bare />
                 </td>
               </tr>
             ))}
@@ -732,38 +732,83 @@ function parseLeadingNumber(text: string | null | undefined): number | null {
  * Storage is unchanged — `value` round-trips as a `number | null`. The
  * formatted display is shown when the cell isn't focused; on focus we
  * swap to the raw editable string so the user can edit any digit
- * without fighting locale formatting. `bare` suppresses the surrounding
- * `<td>` chrome for callers that render their own cell wrapper.
+ * without fighting locale formatting.
+ *
+ * Save-on-blur: keystrokes update only the local draft. The upstream
+ * `onChange(n)` fires once when the cell loses focus or the user
+ * presses Enter — so the parent's persistence call (which reaches the
+ * audit_vat_reconciliations save endpoint) doesn't spam one HTTP
+ * request per keystroke.
  */
 function NumCell({ value, onChange, bare = false }: { value: number | null; onChange: (n: number | null) => void; bare?: boolean }) {
   const [focused, setFocused] = useState(false);
   const [draft, setDraft] = useState('');
   const formatted = value == null ? '' : value.toLocaleString('en-GB', { maximumFractionDigits: 2 });
   const display = focused ? draft : formatted;
+  function commit() {
+    const cleaned = draft.replace(/[^0-9.\-]/g, '');
+    if (cleaned === '' || cleaned === '-' || cleaned === '.') {
+      onChange(null);
+      return;
+    }
+    const n = Number(cleaned);
+    if (Number.isFinite(n)) onChange(n);
+  }
   return (
-    <td className={bare ? '' : 'px-2 py-1 text-right'}>
+    <td className={bare ? '' : 'px-1 py-1 text-right'}>
       <input
         type="text"
         inputMode="decimal"
         value={display}
         onFocus={() => { setDraft(value == null ? '' : String(value)); setFocused(true); }}
-        onBlur={() => setFocused(false)}
-        onChange={(e) => {
-          const raw = e.target.value;
-          setDraft(raw);
-          // Strip everything except digits, dot and minus before parsing.
-          // Commas, currency symbols, spaces all tolerated. Empty input
-          // (or input that only contains symbols) clears to null.
-          const cleaned = raw.replace(/[^0-9.\-]/g, '');
-          if (cleaned === '' || cleaned === '-' || cleaned === '.') {
-            onChange(null);
-            return;
+        onBlur={() => { commit(); setFocused(false); }}
+        onChange={(e) => setDraft(e.target.value)}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter') {
+            // Commit + drop focus so the next Tab moves cleanly to the
+            // next cell instead of leaving the unsaved draft behind.
+            (e.target as HTMLInputElement).blur();
           }
-          const n = Number(cleaned);
-          if (Number.isFinite(n)) onChange(n);
         }}
-        className="w-32 text-right text-[11px] px-1 py-0.5 border border-transparent hover:border-slate-200 focus:border-indigo-300 rounded tabular-nums"
+        className="w-24 text-right text-[11px] px-1 py-0.5 border border-transparent hover:border-slate-200 focus:border-indigo-300 rounded tabular-nums"
       />
     </td>
+  );
+}
+
+/**
+ * Buffered text input — same save-on-blur pattern as NumCell but for
+ * free-text and date cells (jurisdiction, HMRC opening narrative,
+ * verified-payment dates). Without this every keystroke hit the
+ * persistence layer; on a slow network the cell ended up fighting the
+ * user's typing as the parent re-rendered with the in-flight value.
+ */
+function BufferedInput({
+  value,
+  onCommit,
+  className,
+  type = 'text',
+  placeholder,
+}: {
+  value: string;
+  onCommit: (next: string) => void;
+  className?: string;
+  type?: 'text' | 'date';
+  placeholder?: string;
+}) {
+  const [focused, setFocused] = useState(false);
+  const [draft, setDraft] = useState(value);
+  const display = focused ? draft : value;
+  return (
+    <input
+      type={type}
+      value={display}
+      placeholder={placeholder}
+      onFocus={() => { setDraft(value); setFocused(true); }}
+      onBlur={() => { setFocused(false); if (draft !== value) onCommit(draft); }}
+      onChange={(e) => setDraft(e.target.value)}
+      onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); }}
+      className={className}
+    />
   );
 }
