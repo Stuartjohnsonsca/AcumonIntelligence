@@ -128,6 +128,19 @@ async function applySchemaSafetyNet() {
   }
 }
 
+/** Run the safety net unconditionally so the must-have columns /
+ *  tables get applied even when the surrounding `prisma db push` is
+ *  erroring on something unrelated. Wrapped in its own try/catch so a
+ *  safety-net failure can't mask the real underlying push error in
+ *  the build log. */
+async function applySchemaSafetyNetSafely(label) {
+  try {
+    await applySchemaSafetyNet();
+  } catch (err) {
+    console.error(`[db-push] safety-net (${label}) errored:`, err?.message || err);
+  }
+}
+
 async function main() {
   console.error('[db-push] applying schema with prisma db push…');
   const first = runPrismaPush();
@@ -135,6 +148,13 @@ async function main() {
     await applySchemaSafetyNet();
     return;
   }
+
+  // Even on failure, attempt the safety net before deciding whether
+  // to surface or retry. Adding columns / creating join tables that
+  // are also defined in schema.prisma can unblock a push that's
+  // otherwise stuck on a transient issue, and it guarantees the UI
+  // doesn't 500 against a half-applied schema.
+  await applySchemaSafetyNetSafely('after first failure');
 
   if (!looksLikeLockTimeout(first.stderr + first.stdout)) {
     console.error(`[db-push] failed (exit ${first.code}); not a lock-timeout, surfacing failure.`);

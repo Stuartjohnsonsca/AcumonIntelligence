@@ -20,9 +20,24 @@ export default async function MyAccountPage() {
     redirect('/login?callbackUrl=/my-account&error=no_user');
   }
 
+  // Explicit select rather than `include: { firm: true }` so the
+  // page only pulls the User + Firm fields it actually renders. This
+  // also insulates the page from schema drift — adding a new column
+  // on Firm won't crash the page when production hasn't picked the
+  // column up yet (lib/auth.ts is being tightened similarly).
   const user = await prisma.user.findUnique({
     where: { id: session.user.id },
-    include: { firm: true },
+    select: {
+      id: true,
+      firmId: true,
+      displayId: true,
+      isSuperAdmin: true,
+      isFirmAdmin: true,
+      isPortfolioOwner: true,
+      isMethodologyAdmin: true,
+      isResourceAdmin: true,
+      firm: { select: { name: true } },
+    },
   });
 
   if (!user) redirect('/login');
