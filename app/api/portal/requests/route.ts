@@ -3,6 +3,8 @@ import { prisma } from '@/lib/db';
 import { fireTrigger } from '@/lib/trigger-engine';
 import { resumeExecution, resumePipelineExecution } from '@/lib/flow-engine';
 import { authorisePortalTenant } from '@/lib/portal-endpoint-auth';
+import { extractVatReturnsFromUploads, mergeExtractionsIntoPeriodRows } from '@/lib/vat-returns-extractor';
+import type { VatPeriodRow } from '@/lib/vat-reconciliation';
 
 /**
  * GET /api/portal/requests?token=X&clientId=Y&status=outstanding|responded
@@ -341,6 +343,61 @@ export async function PUT(req: Request) {
             verifiedAt: new Date(),
           },
         });
+
+        // VAT returns commit — kick off PDF extraction in the background.
+        // The auditor's commit click flips the request to 'committed'
+        // immediately; the extraction happens out-of-band so a slow
+        // Together AI call doesn't block the UI. When it finishes, the
+        // engagement's audit_vat_reconciliations.data.periodRows are
+        // patched in place with the four figures (Net Revenue, Net
+        // Purchases, Sales VAT, Purchase VAT) for each period the
+        // client uploaded — matched to the right row by closest
+        // period-ending date. Refreshing the VAT Reconciliation panel
+        // shows the populated values; nothing else in the UI needs to
+        // change.
+        if (request.section === 'vat_returns' && updated.engagementId) {
+          const engagementId = updated.engagementId;
+          (async () => {
+            try {
+              const uploads = await prisma.portalUpload.findMany({
+                where: { portalRequestId: requestId },
+                select: { storagePath: true, containerName: true, originalName: true },
+              });
+              if (uploads.length === 0) {
+                console.warn('[vat_returns commit] no portal uploads attached to request', requestId);
+                return;
+              }
+              const extractions = await extractVatReturnsFromUploads(uploads);
+              const existing = await (prisma as any).auditVatReconciliation?.findUnique({
+                where: { engagementId },
+              });
+              const baseData = (existing?.data && typeof existing.data === 'object' && !Array.isArray(existing.data))
+                ? existing.data as Record<string, unknown>
+                : {};
+              const periodRows = (Array.isArray((baseData as any).periodRows) ? (baseData as any).periodRows : []) as VatPeriodRow[];
+              if (periodRows.length === 0) {
+                console.warn('[vat_returns commit] engagement has no periodRows yet — auditor needs to open the panel once before extractions can land. Storing extractions verbatim under data.pendingVatExtractions for the panel to pick up.');
+                const merged = { ...baseData, pendingVatExtractions: extractions };
+                await (prisma as any).auditVatReconciliation?.upsert({
+                  where: { engagementId },
+                  create: { id: crypto.randomUUID(), engagementId, data: merged as object },
+                  update: { data: merged as object },
+                });
+                return;
+              }
+              const { rows: nextRows, report } = mergeExtractionsIntoPeriodRows(periodRows, extractions);
+              const mergedData = { ...baseData, periodRows: nextRows };
+              await (prisma as any).auditVatReconciliation?.upsert({
+                where: { engagementId },
+                create: { id: crypto.randomUUID(), engagementId, data: mergedData as object },
+                update: { data: mergedData as object },
+              });
+              console.log('[vat_returns commit] extraction complete:', JSON.stringify(report));
+            } catch (err) {
+              console.error('[vat_returns commit] extraction failed:', err);
+            }
+          })().catch(err => console.error('[vat_returns commit] background task error:', err));
+        }
 
         // If this came from PAR (section=explanations), paste back to the PAR row
         if (request.section === 'explanations' && request.engagementId) {
