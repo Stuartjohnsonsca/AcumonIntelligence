@@ -435,7 +435,29 @@ export async function readVatRegistration(engagementId: string): Promise<VatRegi
       return undefined;
     }
     const raw = findVatRegisteredAnswer();
-    const periodicityRaw = readAt(VAT_PERIODICITY_KEY);
+    // Tolerant scan for the periodicity question. The canonical slug
+    // is `vat_periodicity` but the firm's permanent-file question is
+    // typically phrased "What is the VAT Reporting Periodicity?"
+    // (slug `what_is_the_vat_reporting_periodicity`). Honour the
+    // remap registry first, then walk the slug→id map for any slug
+    // mentioning 'periodicity' (excluding date-end / anchor variants).
+    function findPeriodicityAnswer(): unknown {
+      const direct = readAt(VAT_PERIODICITY_KEY);
+      if (direct !== undefined && direct !== null && direct !== '') return direct;
+      const direct1 = readAt(VAT_PERIODICITY_KEY, 1);
+      if (direct1 !== undefined && direct1 !== null && direct1 !== '') return direct1;
+      for (const [slug, id] of Object.entries(slugToId)) {
+        if (!slug.includes('periodic')) continue;
+        if (slug.includes('end')) continue;
+        if (slug.includes('anchor')) continue;
+        const c1 = flat[flatKey(id, 1)];
+        if (c1 !== undefined && c1 !== null && c1 !== '') return c1;
+        const plain = flat[id];
+        if (plain !== undefined && plain !== null && plain !== '') return plain;
+      }
+      return undefined;
+    }
+    const periodicityRaw = findPeriodicityAnswer();
     const shouldRaw = readAt(SHOULD_BE_VAT_REGISTERED_KEY);
     const periodicity: VatPeriodicity | undefined =
       periodicityRaw === 'Monthly' || periodicityRaw === 'Quarterly' || periodicityRaw === 'Annual'
@@ -656,19 +678,97 @@ export async function readVatAnchor(
   fallbackPeriodEnd: string,
 ): Promise<{ anchorIso: string; isPlaceholder: boolean }> {
   try {
-    const res = await fetch(`/api/engagements/${engagementId}/permanent-file`);
-    if (!res.ok) return { anchorIso: fallbackPeriodEnd, isPlaceholder: true };
-    const json = await res.json();
+    // Same slug→id resolution as readVatRegistration — answers in the
+    // permanent file are keyed by question UUID, not by slug, so we
+    // need the template's items list to translate the canonical
+    // 'vat_period_end_anchor' (or any question whose slug mentions
+    // 'period' + 'end') to the right cell. Also accepts a month-name
+    // answer (Jan / February / Mar etc.) and converts it to an ISO
+    // date in the engagement's period-end year — supports firms whose
+    // anchor question is a 12-option dropdown rather than a date
+    // picker.
+    const [pfRes, tplRes] = await Promise.all([
+      fetch(`/api/engagements/${engagementId}/permanent-file`),
+      fetch(`/api/methodology-admin/templates?templateType=permanent_file_questions&engagementId=${encodeURIComponent(engagementId)}`).catch(() => null),
+    ]);
+    if (!pfRes.ok) return { anchorIso: fallbackPeriodEnd, isPlaceholder: true };
+    const json = await pfRes.json();
     const flat: Record<string, unknown> = {};
     for (const [, sectionData] of Object.entries(json.data || {})) {
       if (typeof sectionData === 'object' && sectionData) Object.assign(flat, sectionData);
     }
-    const raw = flat[VAT_PERIOD_END_ANCHOR_KEY];
-    if (typeof raw === 'string' && /^\d{4}-\d{2}-\d{2}/.test(raw)) {
-      return { anchorIso: raw, isPlaceholder: false };
+    const slugToId: Record<string, string> = {};
+    if (tplRes && tplRes.ok) {
+      try {
+        const t = await tplRes.json();
+        const rawItems = t?.template?.items ?? t?.items;
+        let items: any[] = [];
+        if (Array.isArray(rawItems)) items = rawItems;
+        else if (rawItems && typeof rawItems === 'object' && Array.isArray((rawItems as any).questions)) {
+          items = (rawItems as any).questions;
+        }
+        for (const item of items) {
+          if (!item || typeof item !== 'object' || !item.id) continue;
+          const text = typeof item.questionText === 'string' ? item.questionText : '';
+          const explicit = typeof item.key === 'string' ? item.key.trim() : '';
+          if (text) slugToId[simpleSlugify(text).toLowerCase()] = String(item.id);
+          if (explicit) slugToId[explicit.toLowerCase()] = String(item.id);
+        }
+      } catch { /* tolerant */ }
+    }
+
+    function readBySlug(slug: string, column?: number): unknown {
+      const id = slugToId[slug.toLowerCase()];
+      if (!id) return undefined;
+      return flat[flatKey(id, column)];
+    }
+
+    // Direct canonical lookup first.
+    const direct = readBySlug(VAT_PERIOD_END_ANCHOR_KEY)
+      ?? readBySlug(VAT_PERIOD_END_ANCHOR_KEY, 1);
+    let raw: unknown = direct;
+    if (raw === undefined || raw === null || raw === '') {
+      // Tolerant scan — any slug mentioning 'period' + 'end' (or
+      // 'anchor') that doesn't look like a periodicity / number /
+      // total companion question.
+      for (const [slug, id] of Object.entries(slugToId)) {
+        const looksAnchor = (slug.includes('period') && slug.includes('end')) || slug.includes('anchor');
+        if (!looksAnchor) continue;
+        if (slug.includes('periodic')) continue;
+        const c1 = flat[flatKey(id, 1)];
+        if (c1 !== undefined && c1 !== null && c1 !== '') { raw = c1; break; }
+        const plain = flat[id];
+        if (plain !== undefined && plain !== null && plain !== '') { raw = plain; break; }
+      }
+    }
+    if (typeof raw === 'string') {
+      // ISO date direct hit.
+      if (/^\d{4}-\d{2}-\d{2}/.test(raw)) {
+        return { anchorIso: raw, isPlaceholder: false };
+      }
+      // Month-name answer — combine with the engagement's period-end
+      // year + last day of the named month so the grid still anchors
+      // correctly. Falls back to the engagement period end if either
+      // the year or the month can't be parsed.
+      const monthIdx = monthNameToIndex(raw);
+      const fallbackYearMatch = /^(\d{4})/.exec(fallbackPeriodEnd);
+      if (monthIdx != null && fallbackYearMatch) {
+        const y = Number(fallbackYearMatch[1]);
+        const lastDay = new Date(Date.UTC(y, monthIdx + 1, 0)).getUTCDate();
+        const anchorIso = `${y}-${String(monthIdx + 1).padStart(2, '0')}-${String(lastDay).padStart(2, '0')}`;
+        return { anchorIso, isPlaceholder: false };
+      }
     }
     return { anchorIso: fallbackPeriodEnd, isPlaceholder: true };
   } catch {
     return { anchorIso: fallbackPeriodEnd, isPlaceholder: true };
   }
+}
+
+/** Map any reasonable month-name spelling (Jan / January / JAN /
+ *  january) to a 0-based month index. Returns null on no match. */
+function monthNameToIndex(s: string): number | null {
+  const cleaned = s.trim().toLowerCase().slice(0, 3);
+  const idx = ['jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', 'oct', 'nov', 'dec'].indexOf(cleaned);
+  return idx >= 0 ? idx : null;
 }
