@@ -21,7 +21,7 @@
  * audit_vat_reconciliations.data blob holds the lot.
  */
 
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Plus, Trash2, Send, CheckCircle2, Loader2 } from 'lucide-react';
 import {
   generateVatPeriodRows,
@@ -74,6 +74,31 @@ export function VatReconciliationGrid({
   // sent timestamp immediately.
   const [requesting, setRequesting] = useState(false);
   const [requestError, setRequestError] = useState<string | null>(null);
+
+  // Source detection — the firm may have an accounting connector
+  // (Xero today; Sage / QuickBooks later) on the client that surfaces
+  // VAT returns directly. When that's the case, the panel skips the
+  // portal route and pulls the data straight from the connector. We
+  // load this once on mount to drive the button label and target
+  // endpoint; falls back to portal mode if the lookup errors.
+  type Source =
+    | { kind: 'portal'; hint?: string; connector?: { system: string; label: string; orgName: string | null } }
+    | { kind: 'accounting'; connector: { system: string; label: string; orgName: string | null } };
+  const [source, setSource] = useState<Source>({ kind: 'portal' });
+  useEffect(() => {
+    if (!engagementId) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch(`/api/engagements/${engagementId}/vat-reconciliation/source`);
+        if (!cancelled && res.ok) {
+          const j = await res.json();
+          if (j && (j.kind === 'portal' || j.kind === 'accounting')) setSource(j);
+        }
+      } catch { /* tolerant — stays portal */ }
+    })();
+    return () => { cancelled = true; };
+  }, [engagementId]);
 
   // ── Resolve the working set of period rows ──────────────────────────
   //
@@ -294,16 +319,29 @@ export function VatReconciliationGrid({
         </div>
       )}
 
-      {/* Portal request — single-button affordance that creates one
-          PortalRequest covering every period overlapping the audit.
-          Once sent, the button flips to a "Sent on X" badge so the
-          auditor sees they've already asked. The figures the client
-          uploads come back as portal evidence; in a future commit
-          we'll auto-extract them into the rows below. */}
+      {/* VAT returns source — single banner that auto-routes between
+          'pull straight from the connected accounting system' and
+          'ask the client via the portal'. The label reflects what's
+          actually available for this client, so the auditor never
+          bothers the portal user when the data is already on the
+          firm's side. Once a request has been sent (or once an
+          extract has populated the rows), the button flips to a
+          confirmation badge. */}
       {engagementId && (
         <div className="flex items-center justify-between gap-3 px-3 py-2 bg-blue-50 border border-blue-200 rounded">
           <div className="text-[11px] text-blue-900">
-            <strong>VAT returns:</strong> request the client to upload their filed VAT returns directly to the portal — the figures will populate the grid rows below once submitted, no rekeying needed.
+            {source.kind === 'accounting' ? (
+              <>
+                <strong>VAT returns:</strong> {source.connector.label} is connected for this client — fetch the filed returns directly so the figures populate the grid rows below without going to the portal.
+              </>
+            ) : (
+              <>
+                <strong>VAT returns:</strong> request the client to upload their filed VAT returns directly to the portal — the figures will populate the grid rows below once submitted, no rekeying needed.
+                {source.hint && (
+                  <span className="block text-[10px] text-blue-700 italic mt-0.5">{source.hint}</span>
+                )}
+              </>
+            )}
           </div>
           {data.vatReturnsRequest?.portalRequestId ? (
             <span className="inline-flex items-center gap-1.5 text-[11px] text-emerald-700 bg-emerald-50 border border-emerald-200 rounded px-2 py-1 whitespace-nowrap">
@@ -323,7 +361,16 @@ export function VatReconciliationGrid({
                   const periodEndings = dataRows
                     .filter(r => !r.isOpening)
                     .map(r => r.periodEnding);
-                  const res = await fetch(`/api/engagements/${engagementId}/vat-reconciliation/request-returns`, {
+                  // Endpoint choice mirrors the detected source. The
+                  // /extract path will eventually wire to the
+                  // connector and populate periodRows server-side; for
+                  // now it's wired only when source.kind === 'accounting'
+                  // and the connector reports support — which today
+                  // means Xero with VAT scopes (not yet enabled).
+                  const url = source.kind === 'accounting'
+                    ? `/api/engagements/${engagementId}/vat-reconciliation/extract`
+                    : `/api/engagements/${engagementId}/vat-reconciliation/request-returns`;
+                  const res = await fetch(url, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ periodEndings }),
@@ -333,11 +380,16 @@ export function VatReconciliationGrid({
                     throw new Error(j.error || `Request failed (${res.status})`);
                   }
                   const j = await res.json();
-                  // Mirror server-side state into the local data so the
-                  // button flips immediately without waiting for a reload.
-                  onPatch({ vatReturnsRequest: { portalRequestId: j.id, sentAt: j.sentAt } });
+                  // Two response shapes:
+                  //   • portal:    { id, sentAt }
+                  //   • extract:   { periodRows, sourceLabel } (overlays into the grid directly)
+                  if (Array.isArray(j.periodRows)) {
+                    onPatch({ periodRows: j.periodRows });
+                  } else if (j.id && j.sentAt) {
+                    onPatch({ vatReturnsRequest: { portalRequestId: j.id, sentAt: j.sentAt } });
+                  }
                 } catch (err: any) {
-                  setRequestError(err?.message || 'Could not send portal request');
+                  setRequestError(err?.message || 'Could not complete request');
                 } finally {
                   setRequesting(false);
                 }
@@ -346,7 +398,9 @@ export function VatReconciliationGrid({
               className="inline-flex items-center gap-1.5 text-[11px] px-3 py-1.5 bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50 whitespace-nowrap"
             >
               {requesting ? <Loader2 className="h-3 w-3 animate-spin" /> : <Send className="h-3 w-3" />}
-              Request VAT returns via portal
+              {source.kind === 'accounting'
+                ? `Fetch VAT returns from ${source.connector.label}`
+                : 'Request VAT returns via portal'}
             </button>
           )}
         </div>
