@@ -1109,8 +1109,12 @@ export function EngagementTabs({ engagement, auditType, clientName, periodEndDat
     }
   }
 
-  // Wrap content with SignOffHeader for applicable tabs
-  const hasSignOff = activeTab in SIGNOFF_TABS;
+  // Wrap content with SignOffHeader for applicable tabs.
+  // Communication is intentionally excluded — its panel renders its own
+  // rolled-up Preparer/Reviewer/RI dot row (with subsidiary progress from
+  // every sub-tab), so the legacy SignOffHeader would duplicate the row
+  // with stale "Partner" wording and an unwired endpoint.
+  const hasSignOff = activeTab in SIGNOFF_TABS && activeTab !== 'communication';
   const signOffTitle = SIGNOFF_TABS[activeTab] || '';
   const signOffEndpoint = TAB_ENDPOINTS[activeTab] || '';
 

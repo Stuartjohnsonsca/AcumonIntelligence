@@ -152,13 +152,11 @@ export function CommunicationTab({ engagementId, teamMembers, currentUserId }: P
         {/* Tab-level overall sign-off — one row for the whole Communication tab */}
         <div className="shrink-0 border-l border-slate-200 pl-3">
           <SignOffDots
-            label="Communications"
             signOffs={overallBucket}
             teamMembers={teamMembers}
             currentUserId={currentUserId}
             onToggle={role => toggleSignOff('overall', role)}
             size="sm"
-            hideRoleLabels
             subsidiaryProgress={topRollup}
           />
         </div>

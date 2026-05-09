@@ -543,7 +543,7 @@ export function PriorPeriodTab({ engagementId, teamMembers = [], clientName, per
             {/* 3 approval dots at heading level */}
             {(['operator', 'reviewer', 'partner'] as const).map(role => (
               <div key={role} className="flex flex-col items-center">
-                <span className="text-[8px] text-slate-500">{role === 'operator' ? 'Preparer' : role === 'reviewer' ? 'Reviewer' : 'Partner'}</span>
+                <span className="text-[8px] text-slate-500">{role === 'operator' ? 'Preparer' : role === 'reviewer' ? 'Reviewer' : 'RI'}</span>
                 <div className="w-4 h-4 rounded-full border-2 bg-white border-slate-300" />
               </div>
             ))}

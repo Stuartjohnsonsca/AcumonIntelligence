@@ -51,7 +51,7 @@ const ROLE_MAP: Record<string, string> = { Junior: 'operator', Manager: 'reviewe
 const SIGN_OFF_ROLES = [
   { key: 'operator' as const, label: 'Preparer' },
   { key: 'reviewer' as const, label: 'Reviewer' },
-  { key: 'partner' as const, label: 'Partner' },
+  { key: 'partner' as const, label: 'RI' },
 ];
 
 /**
@@ -235,7 +235,7 @@ export function SignOffHeader({ engagementId, endpoint, title, teamMembers, chil
                 // records their actual sign-off against their own user.
                 const titleBase = hasSigned
                   ? isCascaded
-                    ? `${effective!.userName} — ${new Date(effective!.timestamp).toLocaleString()} (signed as ${viaRole === 'partner' ? 'Partner' : viaRole === 'reviewer' ? 'Reviewer' : 'Preparer'})`
+                    ? `${effective!.userName} — ${new Date(effective!.timestamp).toLocaleString()} (signed as ${viaRole === 'partner' ? 'RI' : viaRole === 'reviewer' ? 'Reviewer' : 'Preparer'})`
                     : `${effective!.userName} — ${new Date(effective!.timestamp).toLocaleString()}`
                   : canSign
                     ? `Click to sign off as ${label}`
