@@ -13,6 +13,7 @@ import { evaluateRulesForSchedule, type ValidationRule, type RuleEvaluation } fr
 import type { TemplateQuestion, TemplateSectionMeta, SectionLayout } from '@/types/methodology';
 import { DEFAULT_COLUMN_HEADERS } from '@/types/methodology';
 import { subscribeTemplateRefsChanged } from '@/lib/template-references-bus';
+import { useFieldReferencesEnabled } from '@/lib/user-preferences';
 import { formatDisplayValue } from '@/lib/format-display';
 
 /**
@@ -230,6 +231,11 @@ export function DynamicAppendixForm({
   // failing silently is fine — no highlights is a sensible default.
   const [referencedPaths, setReferencedPaths] = useState<Set<string>>(new Set());
   const [referencedByPath, setReferencedByPath] = useState<Record<string, Array<{ templateId: string; templateName: string; kind: string }>>>({});
+  // Per-session admin preference — when off (the default on every new
+  // login) the red outline still renders but the "Referenced by:" hover
+  // tooltip is suppressed. Methodology / super admins flip this from
+  // My Account → Preferences when investigating template coverage.
+  const showFieldReferences = useFieldReferencesEnabled();
 
   // ── AI-populated field provenance ──────────────────────────────────
   // Fields written by the Import Options pop-up (prior-period AI) or by
@@ -984,7 +990,7 @@ export function DynamicAppendixForm({
                             const colReferenced = isColumnReferenced(q, colN);
                             const colTitle = aiPopulatedFieldIds.has(cellKey)
                               ? aiFieldTooltips[cellKey]
-                              : (colReferenced ? referencedByTooltip(q, colN) : undefined);
+                              : (colReferenced && showFieldReferences ? referencedByTooltip(q, colN) : undefined);
                             // Both classes are additive — ring sits inside, outline sits outside.
                             const refClass = `${colReferenced ? 'ring-2 ring-red-500 ring-offset-1' : ''} ${aiOutlineClass(cellKey)}`.trim();
                             // Per-cell conditional — e.g. col2 is only
@@ -1308,7 +1314,7 @@ export function DynamicAppendixForm({
                       className={`flex-1 px-2 py-1.5 ${outline} relative ${isQuestionReferenced(q) ? 'ring-2 ring-red-500 ring-offset-0 rounded' : ''} ${aiOutlineClass(q.id)}`}
                       title={
                         aiPopulatedFieldIds.has(q.id) ? aiFieldTooltips[q.id]
-                        : isQuestionReferenced(q) ? referencedByTooltip(q)
+                        : isQuestionReferenced(q) && showFieldReferences ? referencedByTooltip(q)
                         : undefined
                       }
                     >

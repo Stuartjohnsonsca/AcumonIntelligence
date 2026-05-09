@@ -125,7 +125,7 @@ export function MyAccountClient({ userId, firmId, isSuperAdmin, isFirmAdmin, isP
         </TabsContent>
 
         <TabsContent value="preferences">
-          <PreferencesTab />
+          <PreferencesTab isAdmin={isMethodologyAdmin || isSuperAdmin} />
         </TabsContent>
 
       </Tabs>

@@ -10,6 +10,7 @@ import { useEffect, useState } from 'react';
  */
 
 const FORMULA_TOOLTIPS_KEY = 'acumon:pref:formulaTooltips';
+const FIELD_REFERENCES_KEY = 'acumon:pref:fieldReferences';
 const PREF_CHANGED_EVENT = 'acumon:preferences-changed';
 
 function readBool(key: string, fallback: boolean): boolean {
@@ -52,6 +53,39 @@ export function useFormulaTooltipsEnabled(): boolean {
     function onChange(e: Event) {
       const detail = (e as CustomEvent<{ key: string }>).detail;
       if (detail?.key === FORMULA_TOOLTIPS_KEY) setEnabled(getFormulaTooltipsEnabled());
+    }
+    window.addEventListener(PREF_CHANGED_EVENT, onChange);
+    return () => window.removeEventListener(PREF_CHANGED_EVENT, onChange);
+  }, []);
+
+  return enabled;
+}
+
+/**
+ * Field-reference tooltip preference — controls whether schedule cells
+ * with a red template-reference outline ALSO show the "Referenced by:"
+ * hover tooltip listing the templates that consume the cell. Off by
+ * default (and reset to off on every new login) because the tooltip is
+ * primarily an admin-debugging aid; methodology admins / super admins
+ * can flip it on from the Preferences tab when investigating template
+ * coverage. The red outline itself is unaffected by this toggle.
+ */
+export function getFieldReferencesEnabled(): boolean {
+  return readBool(FIELD_REFERENCES_KEY, false);
+}
+
+export function setFieldReferencesEnabled(value: boolean) {
+  writeBool(FIELD_REFERENCES_KEY, value);
+}
+
+export function useFieldReferencesEnabled(): boolean {
+  const [enabled, setEnabled] = useState(false);
+
+  useEffect(() => {
+    setEnabled(getFieldReferencesEnabled());
+    function onChange(e: Event) {
+      const detail = (e as CustomEvent<{ key: string }>).detail;
+      if (detail?.key === FIELD_REFERENCES_KEY) setEnabled(getFieldReferencesEnabled());
     }
     window.addEventListener(PREF_CHANGED_EVENT, onChange);
     return () => window.removeEventListener(PREF_CHANGED_EVENT, onChange);
