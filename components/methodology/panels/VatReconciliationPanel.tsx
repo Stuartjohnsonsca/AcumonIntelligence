@@ -161,8 +161,16 @@ export function VatReconciliationPanel({ engagementId, periodStartDate, periodEn
   const allMapped = revenueRows.length > 0 && mappedCount === revenueRows.length;
 
   // ── Render ──────────────────────────────────────────────────────────
+  // Width handling for the reconciliation grid (14 columns) lives at
+  // the panel level so every block — toolbar, mapping table, grid,
+  // reconciliation block, cross-check — shares the same content
+  // width. On wide screens the inline wrapper bleeds past the tab's
+  // content padding via negative horizontal margin so the grid fits
+  // without a horizontal scrollbar; narrower viewports retain the
+  // `overflow-x-auto` fallback inside the grid itself. The modal
+  // wrapper bumps to a wider max-width for the same reason.
   const Wrapper: React.FC<{ children: React.ReactNode }> = inline
-    ? ({ children }) => <div className="space-y-4">{children}</div>
+    ? ({ children }) => <div className="space-y-4 xl:-mx-12 2xl:-mx-24">{children}</div>
     : ({ children }) => <Modal onClose={onClose} title="VAT Reconciliation">{children}</Modal>;
   return (
     <Wrapper>
@@ -307,7 +315,7 @@ export function VatReconciliationPanel({ engagementId, periodStartDate, periodEn
 function Modal({ children, onClose, title }: { children: React.ReactNode; onClose: () => void; title: string }) {
   return (
     <div className="fixed inset-0 z-50 flex items-start justify-center bg-slate-900/40 p-4 overflow-y-auto">
-      <div className="bg-white rounded-lg shadow-xl border border-slate-200 w-full max-w-4xl my-8">
+      <div className="bg-white rounded-lg shadow-xl border border-slate-200 w-full max-w-7xl my-8">
         <div className="flex items-center justify-between px-4 py-3 border-b border-slate-200">
           <h2 className="text-sm font-semibold text-slate-800">{title}</h2>
           <button onClick={onClose} className="p-1 rounded hover:bg-slate-100 text-slate-500" aria-label="Close">

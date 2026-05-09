@@ -411,14 +411,13 @@ export function VatReconciliationGrid({
         </div>
       )}
 
-      {/* Main spreadsheet — 14 columns wide. The wrapping
-          `xl:-mx-12 2xl:-mx-24` lets the table bleed past the
-          containing tab's content padding on wide screens so it fits
-          without a horizontal scrollbar. On narrow viewports the
-          surrounding `overflow-x-auto` still kicks in. */}
-      <div className="xl:-mx-12 2xl:-mx-24">
-        <div className="border border-slate-200 rounded overflow-hidden overflow-x-auto">
-          <table className="w-full text-[11px]">
+      {/* Main spreadsheet — 14 columns wide. Width-management lives
+          on the parent VatReconciliationPanel so this table, the
+          toolbar above, and the reconciliation blocks below all
+          share the same content width. `overflow-x-auto` is the
+          narrow-viewport fallback. */}
+      <div className="border border-slate-200 rounded overflow-hidden overflow-x-auto">
+        <table className="w-full text-[11px]">
             <thead className="bg-slate-50 border-b border-slate-200">
               <tr>
                 <th className="px-1 py-1 text-left font-semibold text-slate-600 whitespace-nowrap">Period ending</th>
@@ -556,7 +555,6 @@ export function VatReconciliationGrid({
             </tr>
           </tbody>
         </table>
-      </div>
       </div>
 
       <div className="flex justify-end">
