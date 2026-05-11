@@ -270,6 +270,26 @@ export function SignificantRiskPanel({ engagementId, userId, userName, teamMembe
 
   useEffect(() => { loadAll(); }, [loadAll]);
 
+  // Roll up Reviewer + RI sign-off state across every significant
+  // risk and broadcast it to CompletionPanel so the tab-strip dots
+  // stay in sync with the per-risk dots inside this panel. Green
+  // only when every risk has the role signed; pending otherwise.
+  useEffect(() => {
+    if (loading) return;
+    try {
+      const total = rmmRows.length;
+      const reviewerOk = total > 0 && rmmRows.every(r => !!records[r.id]?.signOffs?.reviewer?.timestamp);
+      const riOk = total > 0 && rmmRows.every(r => !!records[r.id]?.signOffs?.ri?.timestamp);
+      window.dispatchEvent(new CustomEvent('engagement:significant-risk-signoffs', {
+        detail: {
+          engagementId,
+          reviewer: reviewerOk ? 'green' : 'pending',
+          ri: riOk ? 'green' : 'pending',
+        },
+      }));
+    } catch {}
+  }, [engagementId, rmmRows, records, loading]);
+
   const activeRisk = rmmRows.find(r => r.id === activeRiskId);
   const activeRecord = activeRiskId ? records[activeRiskId] : undefined;
   const activeAnswers = activeRecord?.answers || {};
@@ -415,8 +435,13 @@ export function SignificantRiskPanel({ engagementId, userId, userName, teamMembe
   }
 
   async function openPlanCustomiser() {
-    if (!activeRisk) return;
-    const ctx = resolveFsLine(activeRisk.lineItem);
+    // RI may always open the customiser — even when no significant
+    // risk is selected — so they can pull more work into the plan
+    // without the panel state blocking them. Falls back to a
+    // synthetic "Significant Risks" scope when no risk is active.
+    const ctx = activeRisk
+      ? resolveFsLine(activeRisk.lineItem)
+      : { id: '__synthetic__Significant Risks', name: 'Significant Risks' };
     setPlanCustomiserContext({ fsLineId: ctx.id, fsLineName: ctx.name });
     try {
       const res = await fetch(`/api/engagements/${engagementId}/test-allocations`);
@@ -446,25 +471,6 @@ export function SignificantRiskPanel({ engagementId, userId, userName, teamMembe
 
   return (
     <div className="flex flex-col gap-3">
-      {/* Plan Customiser action bar — pinned to the top so the auditor
-          can scope custom tests / N/A overrides for the active risk's
-          FS Line without leaving the panel. */}
-      <div className="flex items-center justify-between gap-3 px-3 py-2 bg-indigo-50 border border-indigo-200 rounded">
-        <div className="text-xs text-slate-700">
-          <span className="text-[10px] uppercase tracking-wide text-indigo-700 font-semibold">Audit Plan for:</span>{' '}
-          <span className="font-semibold">{activeRisk?.lineItem || 'Select a significant risk'}</span>
-        </div>
-        <button
-          onClick={openPlanCustomiser}
-          disabled={!activeRisk}
-          className="inline-flex items-center gap-1.5 text-xs font-semibold px-3 py-1.5 rounded bg-indigo-600 text-white border border-indigo-700 hover:bg-indigo-700 shadow-sm whitespace-nowrap disabled:opacity-50 disabled:cursor-not-allowed"
-          title="Open Plan Customiser for this significant risk's FS Line"
-        >
-          <ClipboardList className="h-3.5 w-3.5" />
-          Plan Customiser
-        </button>
-      </div>
-
       {saving && <div className="text-[10px] text-blue-500 animate-pulse">Saving...</div>}
 
       <div className="flex gap-4 min-h-[500px]">
@@ -513,10 +519,19 @@ export function SignificantRiskPanel({ engagementId, userId, userName, teamMembe
             // newly-selected risk's data. Without this, the open/closed
             // state from the previous risk would carry over.
             <div key={activeRisk.id} className="space-y-2">
-              {/* Sign-off bar — top right of the right pane. The
-                  Reviewer/RI dots here drive the left-sidebar dots
-                  via shared signOffs state. */}
-              <div className="flex justify-end">
+              {/* Top-right action row — Plan Customiser button sits
+                  above the tests, paired with the Reviewer/RI sign-off
+                  dots. The customiser is always enabled (RI can pull
+                  more work into the plan at any time). */}
+              <div className="flex items-center justify-end gap-4">
+                <button
+                  onClick={openPlanCustomiser}
+                  className="inline-flex items-center gap-1.5 text-xs font-semibold px-3 py-1.5 rounded bg-indigo-600 text-white border border-indigo-700 hover:bg-indigo-700 shadow-sm whitespace-nowrap"
+                  title="Open Plan Customiser — RI can always add or trim work"
+                >
+                  <ClipboardList className="h-3.5 w-3.5" />
+                  Plan Customiser
+                </button>
                 <div className="flex items-center gap-3">
                   {visibleRoles.map(({ key, label }) => {
                     const so = activeRecord?.signOffs?.[key];

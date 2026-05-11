@@ -114,6 +114,26 @@ const SUBTAB_AGGREGATE_EVENTS: Partial<Record<CompletionTabKey, string>> = {
   'test-summary': 'engagement:test-summary-aggregates',
 };
 
+// Sub-tab sign-off aggregates — Reviewer + RI rolled across every
+// signed unit inside the sub-tab (per-risk for Significant Risk,
+// per-section for structured schedules, per-sub-tab for Taxation,
+// etc.). Each panel dispatches `engagement:<key>-signoffs` with
+// detail { reviewer, ri }; the dots on the tab pill mirror the
+// aggregate so reviewers can scan the strip without opening tabs.
+const SUBTAB_SIGNOFF_EVENTS: Record<CompletionTabKey, string> = {
+  'summary-memo':         'engagement:summary-memo-signoffs',
+  'significant-risk':     'engagement:significant-risk-signoffs',
+  'eqr-review':           'engagement:eqr-review-signoffs',
+  'update-procedures':    'engagement:update-procedures-signoffs',
+  'completion-checklist': 'engagement:completion-checklist-signoffs',
+  'test-summary':         'engagement:test-summary-signoffs',
+  'overall-review':       'engagement:overall-review-signoffs',
+  'taxation':             'engagement:taxation-signoffs',
+  'fs-review':            'engagement:fs-review-signoffs',
+  'adj-tb':               'engagement:adj-tb-signoffs',
+  'error-schedule':       'engagement:error-schedule-signoffs',
+};
+
 type Dot = 'green' | 'orange' | 'red' | 'pending';
 const DOT_BG: Record<Dot, string> = {
   green: 'bg-green-500',
@@ -122,6 +142,7 @@ const DOT_BG: Record<Dot, string> = {
   pending: 'bg-slate-300',
 };
 interface SubTabAggregate { progress: Dot; result: Dot; }
+interface SubTabSignOff { reviewer: Dot; ri: Dot; }
 
 type CompletionTabKey = typeof COMPLETION_TABS[number]['key'];
 
@@ -154,6 +175,26 @@ export function CompletionPanel({
         if (!detail || detail.engagementId !== engagementId) return;
         if (!detail.progress || !detail.result) return;
         setSubTabAggregates(prev => ({ ...prev, [subTabKey as CompletionTabKey]: { progress: detail.progress!, result: detail.result! } }));
+      };
+      window.addEventListener(eventName, fn);
+      handlers.push({ event: eventName, fn });
+    }
+    return () => { for (const { event, fn } of handlers) window.removeEventListener(event, fn); };
+  }, [engagementId]);
+
+  // Sub-tab Reviewer/RI sign-off aggregates — same dispatch pattern
+  // as Progress/Result aggregates above, fed by each panel's own
+  // sign-off state. Tabs that haven't dispatched yet (or have no
+  // sign-off concept) render both dots in the pending state.
+  const [subTabSignOffs, setSubTabSignOffs] = useState<Partial<Record<CompletionTabKey, SubTabSignOff>>>({});
+  useEffect(() => {
+    const handlers: Array<{ event: string; fn: (e: Event) => void }> = [];
+    for (const [subTabKey, eventName] of Object.entries(SUBTAB_SIGNOFF_EVENTS)) {
+      const fn = (e: Event) => {
+        const detail = (e as CustomEvent).detail as { engagementId?: string; reviewer?: Dot; ri?: Dot } | undefined;
+        if (!detail || detail.engagementId !== engagementId) return;
+        if (!detail.reviewer || !detail.ri) return;
+        setSubTabSignOffs(prev => ({ ...prev, [subTabKey as CompletionTabKey]: { reviewer: detail.reviewer!, ri: detail.ri! } }));
       };
       window.addEventListener(eventName, fn);
       handlers.push({ event: eventName, fn });
@@ -218,6 +259,7 @@ export function CompletionPanel({
           // listed in SUBTAB_AGGREGATE_EVENTS that have actually
           // dispatched their first aggregate event.
           const agg = subTabAggregates[tab.key as CompletionTabKey];
+          const so = subTabSignOffs[tab.key as CompletionTabKey] || { reviewer: 'pending' as Dot, ri: 'pending' as Dot };
           return (
             <button key={tab.key} onClick={() => setActiveTab(tab.key)}
               className={`flex items-center gap-1 px-2.5 py-1.5 text-[10px] font-medium rounded-md whitespace-nowrap transition-colors ${
@@ -230,6 +272,13 @@ export function CompletionPanel({
                   <span className={`w-1.5 h-1.5 rounded-full ${DOT_BG[agg.result]}`} />
                 </span>
               )}
+              {/* Reviewer + RI sign-off dots — driven by each panel's
+                  own dispatch; pending until the panel emits its first
+                  signoff event. */}
+              <span className="inline-flex items-center gap-0.5 ml-1" title={`Reviewer ${so.reviewer} · RI ${so.ri}`}>
+                <span className={`w-1.5 h-1.5 rounded-full ${DOT_BG[so.reviewer]}`} />
+                <span className={`w-1.5 h-1.5 rounded-full ${DOT_BG[so.ri]}`} />
+              </span>
             </button>
           );
         })}
@@ -379,6 +428,47 @@ function StructuredScheduleTab({ engagementId, templateType, title, showAutoComp
       } catch {} finally { setLoading(false); }
     })();
   }, [engagementId, templateType]);
+
+  // Broadcast aggregate Reviewer/RI sign-off state to CompletionPanel
+  // so the tab-strip pill dots stay in sync with the per-section
+  // sign-offs inside the schedule. Green only when every sign-off-
+  // enabled section has the role signed; pending otherwise. Skipped
+  // for templates whose key has no matching Completion sub-tab.
+  useEffect(() => {
+    if (loading) return;
+    const TEMPLATE_TO_TAB: Record<string, string> = {
+      audit_summary_memo_questions: 'summary-memo',
+      update_procedures_questions: 'update-procedures',
+      completion_checklist_questions: 'completion-checklist',
+      overall_review_fs_questions: 'overall-review',
+    };
+    const tabKey = TEMPLATE_TO_TAB[templateType];
+    if (!tabKey) return;
+
+    // Build the same sections map as the render uses.
+    const sectionKeys = new Set<string>();
+    for (const q of questions) sectionKeys.add(q.sectionKey);
+    for (const k of Object.keys(customSections)) sectionKeys.add(k);
+
+    const signedSections = Array.from(sectionKeys).filter(k => {
+      const meta = sectionMeta[k] || customSections[k];
+      return meta?.signOff !== false; // Default to true; matches render.
+    });
+
+    const allSigned = (role: string) =>
+      signedSections.length > 0 &&
+      signedSections.every(k => !!signOffs[`${k}_${role}`]);
+
+    try {
+      window.dispatchEvent(new CustomEvent(`engagement:${tabKey}-signoffs`, {
+        detail: {
+          engagementId,
+          reviewer: allSigned('reviewer') ? 'green' : 'pending',
+          ri: allSigned('ri') ? 'green' : 'pending',
+        },
+      }));
+    } catch {}
+  }, [engagementId, templateType, loading, signOffs, questions, sectionMeta, customSections]);
 
   // Auto-save answers
   function updateAnswer(questionId: string, columnKey: string, value: string) {

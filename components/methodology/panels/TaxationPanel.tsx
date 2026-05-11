@@ -145,6 +145,24 @@ export function TaxationPanel({
     'vat-reconciliation': vatReconciliationSO,
   };
 
+  // Roll up Reviewer/RI sign-offs across both Taxation sub-tabs and
+  // broadcast to CompletionPanel so the tab-strip Reviewer/RI dots
+  // mirror what's signed inside this panel. Green only when both
+  // sub-tabs have the role signed; pending otherwise.
+  useEffect(() => {
+    const reviewerOk = !!taxOnProfitsSO.reviewer?.timestamp && !!vatReconciliationSO.reviewer?.timestamp;
+    const riOk = !!taxOnProfitsSO.ri?.timestamp && !!vatReconciliationSO.ri?.timestamp;
+    try {
+      window.dispatchEvent(new CustomEvent('engagement:taxation-signoffs', {
+        detail: {
+          engagementId,
+          reviewer: reviewerOk ? 'green' : 'pending',
+          ri: riOk ? 'green' : 'pending',
+        },
+      }));
+    } catch {}
+  }, [engagementId, taxOnProfitsSO, vatReconciliationSO]);
+
   return (
     <div className="space-y-3">
       {/* Sub-sub-tab strip — proper border-bottom underline tabs to

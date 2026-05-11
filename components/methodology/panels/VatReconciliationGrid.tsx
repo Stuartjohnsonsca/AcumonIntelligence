@@ -74,6 +74,11 @@ export function VatReconciliationGrid({
   // sent timestamp immediately.
   const [requesting, setRequesting] = useState(false);
   const [requestError, setRequestError] = useState<string | null>(null);
+  // Per-file report from the most recent extract-from-portal run.
+  // Used to surface which uploads landed in a row vs which failed +
+  // why. Cleared when the auditor closes the report or kicks off
+  // another extract.
+  const [extractReport, setExtractReport] = useState<Array<{ fileName: string; matchedRowDate: string | null; reason: string }> | null>(null);
 
   // Source detection — the firm may have an accounting connector
   // (Xero today; Sage / QuickBooks later) on the client that surfaces
@@ -102,29 +107,45 @@ export function VatReconciliationGrid({
 
   // ── Resolve the working set of period rows ──────────────────────────
   //
-  // Rows persisted on the engagement take precedence over freshly
-  // generated rows, so reviewer edits survive periodicity/anchor
-  // changes upstream. We re-generate whenever the saved set is empty
-  // or when the periodicity / anchor / engagement period changed.
+  // The Permanent tab feeds us the VAT-period anchor + periodicity.
+  // When either changes (e.g. auditor flips from quarterly to monthly,
+  // or moves the period-end anchor by a month), the saved periodRows
+  // need to track. The previous behaviour ("saved rows always win")
+  // meant anchor changes silently failed to propagate, AND the
+  // extractor's ±45-day matcher couldn't land uploads on the right
+  // rows because the rows were stuck on the old schedule.
+  //
+  // Strategy: build a fresh schedule from the current anchor /
+  // periodicity / engagement period, then merge auditor-entered
+  // values from saved rows whose period-ending matches a new row
+  // within 15 days. Values on saved rows whose period no longer
+  // exists in the new schedule are dropped — acceptable cost of a
+  // deliberate anchor change.
   const generated = useMemo(() => {
     if (!periodicity || !anchorIso || !periodStartIso || !periodEndIso) return [];
     return generateVatPeriodRows(anchorIso, periodicity, periodStartIso, periodEndIso);
   }, [periodicity, anchorIso, periodStartIso, periodEndIso]);
 
   const dataRows: VatPeriodRow[] = useMemo(() => {
-    if (data.periodRows && data.periodRows.length > 0) return data.periodRows;
-    // Build the initial row set: opening + generated, blank values.
-    const opening: VatPeriodRow = {
-      id: 'opening',
-      periodEnding: periodStartIso,
-      jurisdiction,
-      isOpening: true,
-      daysInPeriod: 0,
-      daysOverlap: 0,
-      netRevenue: null, netPurchases: null, salesVat: null, purchaseVat: null,
-      hmrcAmount: null,
-    };
-    const rest: VatPeriodRow[] = generated.map((g, i) => ({
+    const savedRows = data.periodRows || [];
+    const savedOpening = savedRows.find(r => r.isOpening);
+
+    // Build the canonical "what the schedule should look like" set
+    // first — opening + one row per generated VAT period.
+    const opening: VatPeriodRow = savedOpening
+      ? { ...savedOpening, periodEnding: periodStartIso, jurisdiction: savedOpening.jurisdiction || jurisdiction }
+      : {
+        id: 'opening',
+        periodEnding: periodStartIso,
+        jurisdiction,
+        isOpening: true,
+        daysInPeriod: 0,
+        daysOverlap: 0,
+        netRevenue: null, netPurchases: null, salesVat: null, purchaseVat: null,
+        hmrcAmount: null,
+      };
+
+    const newRest: VatPeriodRow[] = generated.map((g, i) => ({
       id: `vp-${i}-${g.periodEnd}`,
       periodEnding: g.periodEnd,
       jurisdiction,
@@ -135,8 +156,67 @@ export function VatReconciliationGrid({
       netRevenue: null, netPurchases: null, salesVat: null, purchaseVat: null,
       hmrcAmount: null,
     }));
-    return [opening, ...rest];
+
+    // If we have no saved rows, return the fresh schedule as-is.
+    if (savedRows.length === 0) return [opening, ...newRest];
+
+    // Detect schedule drift — compare sorted period-ending sets.
+    // We only check the non-opening rows; opening always tracks
+    // periodStartIso.
+    const savedKeys = savedRows.filter(r => !r.isOpening).map(r => r.periodEnding).sort().join('|');
+    const newKeys = newRest.map(r => r.periodEnding).sort().join('|');
+
+    // No drift — return the saved rows untouched so auditor edits
+    // survive every render. The fast-path; matches the old
+    // behaviour for the common case of no anchor change.
+    if (savedKeys === newKeys && newKeys.length > 0) return savedRows;
+
+    // Drift detected. Rebuild using the new schedule but merge
+    // entered values from any saved row whose period-ending falls
+    // within 15 days of a new row — same-month / minor-shift edits
+    // don't lose data, but a deliberate periodicity flip rebuilds
+    // cleanly.
+    const TOLERANCE_MS = 15 * 86_400_000;
+    const mergedRest: VatPeriodRow[] = newRest.map(newRow => {
+      const newTs = new Date(newRow.periodEnding).getTime();
+      const match = savedRows.find(s => {
+        if (s.isOpening) return false;
+        const sTs = new Date(s.periodEnding).getTime();
+        return Number.isFinite(sTs) && Math.abs(sTs - newTs) <= TOLERANCE_MS;
+      });
+      if (!match) return newRow;
+      return {
+        ...newRow,
+        netRevenue: match.netRevenue ?? newRow.netRevenue,
+        netPurchases: match.netPurchases ?? newRow.netPurchases,
+        salesVat: match.salesVat ?? newRow.salesVat,
+        purchaseVat: match.purchaseVat ?? newRow.purchaseVat,
+        hmrcAmount: match.hmrcAmount ?? newRow.hmrcAmount,
+        hmrcOpeningText: match.hmrcOpeningText ?? newRow.hmrcOpeningText,
+      };
+    });
+
+    return [opening, ...mergedRest];
   }, [data.periodRows, generated, jurisdiction, periodStartIso]);
+
+  // After rendering with a drift-merged schedule, persist the new
+  // shape so subsequent loads + the API-driven extractor see the
+  // updated periodRows immediately. Skips the persist when nothing
+  // changed (compares JSON shape rather than reference). Without
+  // this the user would see the rows update visually but a refresh
+  // would revert to the stale saved set.
+  useEffect(() => {
+    const saved = data.periodRows || [];
+    if (saved.length === dataRows.length) {
+      const sameKeys = saved
+        .filter(r => !r.isOpening).map(r => r.periodEnding).sort().join('|')
+        === dataRows.filter(r => !r.isOpening).map(r => r.periodEnding).sort().join('|');
+      if (sameKeys) return;
+    }
+    // Schedule drift detected — push the new shape to the server.
+    onPatch({ periodRows: dataRows });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [dataRows]);
 
   function patchRow(rowId: string, patch: Partial<VatPeriodRow>) {
     const next = dataRows.map(r => r.id === rowId ? { ...r, ...patch } : r);
@@ -368,6 +448,7 @@ export function VatReconciliationGrid({
                     if (requesting) return;
                     setRequesting(true);
                     setRequestError(null);
+                    setExtractReport(null);
                     try {
                       const res = await fetch(`/api/engagements/${engagementId}/vat-reconciliation/extract-from-portal`, {
                         method: 'POST',
@@ -382,6 +463,13 @@ export function VatReconciliationGrid({
                         // PDFs are gone, but the audit trail of when
                         // the request was sent is still useful.
                         onPatch({ periodRows: j.periodRows });
+                      }
+                      // Surface the per-file report so the auditor
+                      // can see which uploads landed in a row vs
+                      // which fell out (no period date, no row
+                      // within tolerance, AI parse empty, etc.).
+                      if (Array.isArray(j.report)) {
+                        setExtractReport(j.report);
                       }
                       if (typeof j.deletedUploadCount === 'number' && j.deletedUploadCount > 0) {
                         console.log(`[vat-extract/portal] deleted ${j.deletedUploadCount} source upload(s)`);
@@ -458,6 +546,51 @@ export function VatReconciliationGrid({
       {requestError && (
         <div className="px-3 py-1.5 bg-red-50 border border-red-200 rounded text-[11px] text-red-700">
           {requestError}
+        </div>
+      )}
+
+      {/* Extraction report — surfaces per-file outcomes from the
+          most recent "Pull from uploads" run. Lets the auditor see
+          which of N uploaded VAT returns matched a period row vs
+          which fell out (no period date in the PDF, no row within
+          ±45 days, AI returned empty). Each row links to a
+          period-end target where matched. */}
+      {extractReport && extractReport.length > 0 && (
+        <div className="px-3 py-2 bg-amber-50 border border-amber-200 rounded text-[11px] text-amber-900">
+          <div className="flex items-center justify-between mb-1">
+            <span className="font-semibold">
+              Extraction report — {extractReport.filter(r => r.reason === 'merged').length} of {extractReport.length} file{extractReport.length === 1 ? '' : 's'} merged
+            </span>
+            <button
+              type="button"
+              onClick={() => setExtractReport(null)}
+              className="text-amber-700 hover:text-amber-900 text-[11px]"
+              title="Dismiss this report"
+            >
+              ✕
+            </button>
+          </div>
+          <ul className="space-y-0.5">
+            {extractReport.map((r, idx) => (
+              <li key={idx} className="flex items-start gap-2">
+                <span className="font-mono text-[10px] mt-0.5">
+                  {r.reason === 'merged' ? '✓' : '✗'}
+                </span>
+                <span className="flex-1">
+                  <span className="font-medium">{r.fileName}</span>
+                  {' — '}
+                  {r.reason === 'merged'
+                    ? <>merged into period ending {r.matchedRowDate ? fmtDate(r.matchedRowDate) : '?'}</>
+                    : <span className="italic text-amber-700">{r.reason}</span>}
+                </span>
+              </li>
+            ))}
+          </ul>
+          {extractReport.some(r => r.reason !== 'merged') && (
+            <p className="mt-1.5 text-[10px] text-amber-700 italic">
+              Files that didn&rsquo;t merge: the AI either couldn&rsquo;t read a period-end date from the PDF, or the date sits more than 45 days from any row in the schedule. If you&rsquo;ve recently changed the VAT-period anchor on the Permanent tab, the rows should now refresh — retry Pull from uploads.
+            </p>
+          )}
         </div>
       )}
 
