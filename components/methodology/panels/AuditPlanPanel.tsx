@@ -11,7 +11,6 @@ import { AnalyticalReviewPanel } from './AnalyticalReviewPanel';
 import { PayrollTestPanel } from './PayrollTestPanel';
 import { assertionShortLabel } from '@/types/methodology';
 import { JournalRiskPanel } from './JournalRiskPanel';
-import { SRMMPanel } from './SRMMPanel';
 import { PlanCustomiserModal } from './PlanCustomiserModal';
 import { VatReconciliationPanel } from './VatReconciliationPanel';
 import { TaxationPanel } from './TaxationPanel';
@@ -99,13 +98,13 @@ interface Props {
    * matching statement — afterwards the user's level clicks take over.
    */
   initialLevel?: string;
-  /** Same idea for the "Other" group (Going Concern, SRMM, etc.). */
+  /** Same idea for the "Other" group (Going Concern, etc.). */
   initialOtherTab?: string;
 }
 
 const STATEMENT_ORDER = ['Profit & Loss', 'Balance Sheet', 'Cash Flow Statement', 'Notes'];
 const THREE_LEVEL_STATEMENTS = new Set(['Balance Sheet']);
-const OTHER_TABS = ['Going Concern', 'Management Override', 'SRMM Memos', 'Subsequent Events', 'Taxation', 'Tax Technical', 'Permanent', 'Disclosure'] as const;
+const OTHER_TABS = ['Going Concern', 'Management Override', 'Subsequent Events', 'Taxation', 'Tax Technical', 'Permanent', 'Disclosure'] as const;
 type OtherTab = typeof OTHER_TABS[number];
 
 // Statutory format order by framework
@@ -1024,25 +1023,44 @@ export function AuditPlanPanel({ engagementId, clientId, periodId, onClose, peri
     });
   }, [visibleTestExecutions, dbExecutions, dbConclusions]);
 
+  // Deep-link consumed flag — the host can pass initialOtherTab /
+  // initialStatement on first mount to land the user on a specific
+  // tab. We must only honour it ONCE; without this flag the effect
+  // re-fires on every activeStatement change and keeps overwriting
+  // the user's tab clicks (e.g. clicking Profit & Loss flickered
+  // straight back to whatever initialOtherTab was passed).
+  const [topLevelDeepLinkConsumed, setTopLevelDeepLinkConsumed] = useState(false);
   useEffect(() => {
-    // Deep-link path: when the host supplied an initial Statement /
-    // Other-tab target, honour it on first render. Falls back to the
-    // first available statement if the named target isn't present.
+    if (topLevelDeepLinkConsumed) {
+      // Defaulting branch only — never re-apply props once the user
+      // has had a chance to click. activeStatement remains whatever
+      // the user (or a later click) set it to.
+      if (statements.length > 0 && !activeStatement && !activeOtherTab) {
+        setActiveStatement(statements[0]);
+      }
+      return;
+    }
+    // First-mount branch: honour the supplied deep-link target.
     if (initialOtherTab && (OTHER_TABS as readonly string[]).includes(initialOtherTab)) {
       setActiveOtherTab(initialOtherTab as OtherTab);
       setActiveStatement('');
       setActiveLevel('');
       setActiveNote('');
+      setTopLevelDeepLinkConsumed(true);
       return;
     }
     if (initialStatement && statements.includes(initialStatement) && !activeStatement) {
       setActiveStatement(initialStatement);
       setActiveOtherTab('');
+      setTopLevelDeepLinkConsumed(true);
       return;
     }
-    if (statements.length > 0 && !activeStatement) setActiveStatement(statements[0]);
+    if (statements.length > 0 && !activeStatement) {
+      setActiveStatement(statements[0]);
+      setTopLevelDeepLinkConsumed(true);
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [statements, activeStatement, initialStatement, initialOtherTab]);
+  }, [statements, activeStatement, activeOtherTab, initialStatement, initialOtherTab, topLevelDeepLinkConsumed]);
 
   // Tracks whether we've already consumed the initialLevel deep-link.
   // Once the user clicks any level (or moves to a different statement)
@@ -1180,9 +1198,6 @@ export function AuditPlanPanel({ engagementId, clientId, periodId, onClose, peri
       {activeOtherTab === 'Management Override' && (
         <JournalRiskPanel engagementId={engagementId} periodStartDate={periodStartDate} periodEndDate={periodEndDate} />
       )}
-      {activeOtherTab === 'SRMM Memos' && (
-        <SRMMPanel engagementId={engagementId} />
-      )}
       {/* Taxation — embeds the same TaxationPanel that powers the
           Completion sub-tab, so Tax on Profits (corporation tax) and
           VAT Reconciliation are reachable directly from the Audit Plan
@@ -1219,8 +1234,8 @@ export function AuditPlanPanel({ engagementId, clientId, periodId, onClose, peri
       {/*
         Plan Customiser action bar — visible on every Audit Plan
         view (Statement / Level / Note AND the "Other" tabs:
-        Going Concern, Management Override, SRMM Memos,
-        Disclosure, etc.). The auditor flagged that hiding the
+        Going Concern, Management Override, Disclosure, etc.).
+        The auditor flagged that hiding the
         button on Other tabs left them unable to add custom tests
         or audit-tools to those sections. Scope name falls back:
         Other tab > Level > Statement.

@@ -249,8 +249,13 @@ export function CompletionPanel({
 
   return (
     <div className="flex-1 flex flex-col min-h-0">
-      {/* Tab bar */}
-      <div className="flex items-center gap-1 px-3 py-2 border-b border-slate-200 bg-slate-50/50 overflow-x-auto">
+      {/* Tab bar — Plan Customiser button sits on the same row, pinned
+          to the right. Visible only on the Significant Risk tab today;
+          clicking dispatches `engagement:open-plan-customiser` and
+          SignificantRiskPanel handles the modal locally (so the active
+          risk's FS-line context is preserved). */}
+      <div className="flex items-center gap-1 px-3 py-2 border-b border-slate-200 bg-slate-50/50">
+        <div className="flex items-center gap-1 overflow-x-auto flex-1 min-w-0">
         {orderedCompletionTabs.map(tab => {
           const Icon = tab.icon;
           const isActive = activeTab === tab.key;
@@ -282,6 +287,28 @@ export function CompletionPanel({
             </button>
           );
         })}
+        </div>
+        {/* Plan Customiser — pinned to the right of the tab strip on
+            Significant Risk. Always enabled (RI can pull more work in
+            at any time). The SignificantRiskPanel owns the modal +
+            active-risk context; this button just sends a window event
+            it listens for. */}
+        {activeTab === 'significant-risk' && (
+          <button
+            onClick={() => {
+              try {
+                window.dispatchEvent(new CustomEvent('engagement:open-plan-customiser', {
+                  detail: { engagementId },
+                }));
+              } catch {}
+            }}
+            className="ml-2 inline-flex items-center gap-1.5 text-xs font-semibold px-3 py-1.5 rounded bg-indigo-600 text-white border border-indigo-700 hover:bg-indigo-700 shadow-sm whitespace-nowrap flex-shrink-0"
+            title="Open Plan Customiser — RI can always add or trim work"
+          >
+            <ClipboardList className="h-3.5 w-3.5" />
+            Plan Customiser
+          </button>
+        )}
       </div>
 
       {/* Tab content */}

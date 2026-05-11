@@ -1,8 +1,8 @@
 'use client';
 
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useEffect, useCallback, useRef, useMemo, Fragment } from 'react';
 import { useSession } from 'next-auth/react';
-import { ChevronDown, ChevronUp, AlertTriangle, Loader2, Plus, X, ClipboardList } from 'lucide-react';
+import { ChevronDown, ChevronUp, AlertTriangle, Loader2, Plus, X } from 'lucide-react';
 import { PlanCustomiserModal } from './PlanCustomiserModal';
 
 interface RMMRow {
@@ -66,16 +66,6 @@ interface RiskAnswers {
 interface RiskRecord {
   answers: RiskAnswers;
   signOffs: Record<string, { userId: string; userName: string; timestamp: string }>;
-}
-
-// SRMM (Significant Risk Memo) records authored in the planning
-// stage. We pull these into the completion-stage Significant Risk
-// tab so the same risk can be reviewed and concluded against the
-// memo without re-typing planning context. SRMM authors against
-// the same rmmRowId, so tabs match one-to-one.
-interface SrmmMemo {
-  rmmRowId: string;
-  memo: Record<string, string>;
 }
 
 type TeamMember = { userId: string; userName?: string; role: string };
@@ -158,15 +148,15 @@ function Section({ title, children, defaultOpen = false, hasContent = false }: {
 
 // Auto-sizing textarea — rows defaults to 1 then grows with the
 // content, capped by maxRows. Used in the Significant Risk panel so
-// that pre-populated SRMM text is fully visible on open without
-// the user having to drag-resize the box. Falls back to the static
-// rows prop until the user types.
+// that pre-populated text is fully visible on open without the user
+// having to drag-resize the box. Falls back to the static rows
+// prop until the user types.
 function AutoTextarea({ value, onChange, placeholder, minRows = 2, maxRows = 18, className = '' }: {
   value: string; onChange: (v: string) => void; placeholder?: string; minRows?: number; maxRows?: number; className?: string;
 }) {
   const ref = useRef<HTMLTextAreaElement | null>(null);
-  // Resize on mount + every value change so SRMM-prefilled text
-  // shows in full, and the box keeps growing as the user types.
+  // Resize on mount + every value change so prefilled text shows
+  // in full, and the box keeps growing as the user types.
   useEffect(() => {
     const el = ref.current;
     if (!el) return;
@@ -196,7 +186,6 @@ export function SignificantRiskPanel({ engagementId, userId, userName, teamMembe
   const [records, setRecords] = useState<Record<string, RiskRecord>>({});
   const [allocations, setAllocations] = useState<TestAllocation[]>([]);
   const [conclusions, setConclusions] = useState<TestConclusion[]>([]);
-  const [srmmByRisk, setSrmmByRisk] = useState<Record<string, Record<string, string>>>({});
   const [loading, setLoading] = useState(true);
   const [activeRiskId, setActiveRiskId] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
@@ -210,17 +199,11 @@ export function SignificantRiskPanel({ engagementId, userId, userName, teamMembe
 
   const loadAll = useCallback(async () => {
     try {
-      // SRMM is fetched alongside the rest so the planning-stage
-      // memo content is available to pre-fill matching fields in
-      // this completion-stage panel. It's optional — if the API
-      // doesn't return memos (e.g. older engagements) the panel
-      // still works as before.
-      const [rmmRes, sigRes, allocRes, concRes, srmmRes, fsRes] = await Promise.all([
+      const [rmmRes, sigRes, allocRes, concRes, fsRes] = await Promise.all([
         fetch(`/api/engagements/${engagementId}/rmm`),
         fetch(`/api/engagements/${engagementId}/significant-risk`),
         fetch(`/api/engagements/${engagementId}/test-allocations`),
         fetch(`/api/engagements/${engagementId}/test-conclusions`),
-        fetch(`/api/engagements/${engagementId}/srmm`),
         fetch(`/api/firm/fs-lines`),
       ]);
 
@@ -248,16 +231,6 @@ export function SignificantRiskPanel({ engagementId, userId, userName, teamMembe
         setConclusions(data.conclusions || data.rows || []);
       }
 
-      if (srmmRes.ok) {
-        const data = await srmmRes.json();
-        const memos: SrmmMemo[] = Array.isArray(data?.memos) ? data.memos : [];
-        const byId: Record<string, Record<string, string>> = {};
-        for (const m of memos) {
-          if (m.rmmRowId && m.memo && typeof m.memo === 'object') byId[m.rmmRowId] = m.memo;
-        }
-        setSrmmByRisk(byId);
-      }
-
       if (fsRes.ok) {
         const data = await fsRes.json();
         setFsLines(Array.isArray(data?.fsLines) ? data.fsLines : []);
@@ -269,6 +242,24 @@ export function SignificantRiskPanel({ engagementId, userId, userName, teamMembe
   }, [engagementId, activeRiskId]);
 
   useEffect(() => { loadAll(); }, [loadAll]);
+
+  // Plan Customiser button now lives in the Completion tab strip (so
+  // it shares the row with the top tabs). It dispatches this event
+  // when clicked; this panel still owns the modal + active-risk
+  // context, so we open the customiser locally on receipt. Matched
+  // by engagementId so a second open engagement in another tab
+  // doesn't react. We route through a ref so the listener always
+  // calls the latest function (active risk / fsLines can change).
+  const openPlanCustomiserRef = useRef<() => void>(() => {});
+  useEffect(() => {
+    function onOpen(e: Event) {
+      const detail = (e as CustomEvent).detail as { engagementId?: string } | undefined;
+      if (detail?.engagementId !== engagementId) return;
+      openPlanCustomiserRef.current();
+    }
+    window.addEventListener('engagement:open-plan-customiser', onOpen);
+    return () => window.removeEventListener('engagement:open-plan-customiser', onOpen);
+  }, [engagementId]);
 
   // Roll up Reviewer + RI sign-off state across every significant
   // risk and broadcast it to CompletionPanel so the tab-strip dots
@@ -293,32 +284,17 @@ export function SignificantRiskPanel({ engagementId, userId, userName, teamMembe
   const activeRisk = rmmRows.find(r => r.id === activeRiskId);
   const activeRecord = activeRiskId ? records[activeRiskId] : undefined;
   const activeAnswers = activeRecord?.answers || {};
-  const activeSrmm = activeRiskId ? (srmmByRisk[activeRiskId] || {}) : {};
 
-  // Map an SRMM "testingApproach" free-text value onto the constrained
-  // RiskAnswers enum. Anything else returns '' so we don't show a
-  // dropdown value the form can't represent.
-  const srmmTestingApproach = ((): RiskAnswers['testingApproach'] => {
-    const t = (activeSrmm.testingApproach || '').trim().toLowerCase();
-    if (t.startsWith('substantive')) return 'substantive';
-    if (t.startsWith('control'))     return 'controls';
-    if (t.startsWith('defrayment'))  return 'defrayment';
-    return '';
-  })();
-
-  // Pre-fill defaults from RMM data + SRMM memo (planning-stage).
-  // Order of preference for each field: completion-stage answer wins,
-  // then SRMM memo, then RMM seed, then empty. Once the user types
-  // anything in the Significant Risk panel it's treated as the
-  // completion-stage answer and overrides SRMM.
+  // Pre-fill defaults from RMM seed only. Order of preference per
+  // field: completion-stage answer wins, then RMM seed, then empty.
   const effectiveAnswers: RiskAnswers = {
-    riskDescription: activeAnswers.riskDescription ?? activeSrmm.riskDescription ?? activeRisk?.riskIdentified ?? '',
+    riskDescription: activeAnswers.riskDescription ?? activeRisk?.riskIdentified ?? '',
     impactedAssertions: activeAnswers.impactedAssertions ?? (activeRisk?.assertions?.join(', ') || ''),
-    estimates: activeAnswers.estimates ?? activeSrmm.estimatesJudgements ?? '',
-    controlDeficiencies: activeAnswers.controlDeficiencies ?? activeSrmm.controlDeficiencies ?? '',
-    operatingEffectiveness: activeAnswers.operatingEffectiveness ?? activeSrmm.controlEffectiveness ?? '',
-    testingApproach: activeAnswers.testingApproach ?? srmmTestingApproach,
-    changesToRisk: activeAnswers.changesToRisk ?? activeSrmm.changesAssessedRisk ?? '',
+    estimates: activeAnswers.estimates ?? '',
+    controlDeficiencies: activeAnswers.controlDeficiencies ?? '',
+    operatingEffectiveness: activeAnswers.operatingEffectiveness ?? '',
+    testingApproach: activeAnswers.testingApproach ?? '',
+    changesToRisk: activeAnswers.changesToRisk ?? '',
     customTests: activeAnswers.customTests ?? [],
     auditExperts: activeAnswers.auditExperts ?? {},
     managementExpert: activeAnswers.managementExpert ?? {},
@@ -331,13 +307,11 @@ export function SignificantRiskPanel({ engagementId, userId, userName, teamMembe
     other: activeAnswers.other ?? {},
     standback: activeAnswers.standback ?? '',
     difficulties: activeAnswers.difficulties ?? '',
-    conclusion: activeAnswers.conclusion ?? activeSrmm.conclusion ?? '',
+    conclusion: activeAnswers.conclusion ?? '',
   };
 
   // Helper to test whether a string field has user-visible content
-  // — used to drive the Section auto-expand behaviour. We treat
-  // SRMM fallbacks as "has content" so a section pre-populated
-  // from the planning memo also opens automatically.
+  // — used to drive the Section auto-expand behaviour.
   const hasText = (s?: string | null) => !!(s && s.toString().trim().length > 0);
   const hasArr = (a?: any[]) => Array.isArray(a) && a.length > 0;
   const hasRecord = (r?: Record<string, string>) => !!r && Object.values(r).some(v => hasText(v));
@@ -467,7 +441,423 @@ export function SignificantRiskPanel({ engagementId, userId, userName, teamMembe
     setPlanCustomiserOpen(true);
   }
 
+  // Keep the listener's ref pointed at the latest openPlanCustomiser
+  // closure (so it sees the freshest activeRisk / fsLines).
+  openPlanCustomiserRef.current = openPlanCustomiser;
+
   const visibleRoles = teamMembers?.some(m => m.role === 'EQR') ? SIGN_OFF_ROLES_WITH_EQR : SIGN_OFF_ROLES_BASE;
+
+  // ─── Section render order ──────────────────────────────────────
+  // Audit team wanted Conclusion pinned at the top, then the rest of
+  // the form top-down in its original order BUT with empty sections
+  // pushed below populated ones — so the auditor lands on the work
+  // that already has content and can scroll down for the gaps. The
+  // order is frozen at the time a risk is selected (or the tab is
+  // entered, which remounts this panel) so a section the user just
+  // started typing in doesn't jump up the page on every keystroke.
+  // Each entry carries its own hasContent flag so the Section's
+  // built-in "open when has content" auto-expand still works.
+
+  const sectionDescriptors = [
+    { key: 'risk-description',         hasContent: hasText(effectiveAnswers.riskDescription) },
+    { key: 'impacted-assertions',      hasContent: hasText(effectiveAnswers.impactedAssertions) },
+    { key: 'estimates',                hasContent: hasText(effectiveAnswers.estimates) },
+    { key: 'control-deficiencies',     hasContent: hasText(effectiveAnswers.controlDeficiencies) },
+    { key: 'operating-effectiveness',  hasContent: hasText(effectiveAnswers.operatingEffectiveness) },
+    { key: 'testing-approach',         hasContent: hasText(effectiveAnswers.testingApproach) },
+    { key: 'changes-to-risk',          hasContent: hasText(effectiveAnswers.changesToRisk) },
+    { key: 'procedures',               hasContent: relevantTests.length > 0 || hasArr(effectiveAnswers.customTests) },
+    { key: 'audit-experts',            hasContent: hasRecord(effectiveAnswers.auditExperts as Record<string, string>) },
+    { key: 'management-expert',        hasContent: hasRecord(effectiveAnswers.managementExpert as Record<string, string>) },
+    { key: 'professional-skepticism',  hasContent: hasText(effectiveAnswers.professionalSkepticism) },
+    { key: 'challenges',               hasContent: hasArr(effectiveAnswers.challenges) },
+    { key: 'consultation',             hasContent: hasRecord(effectiveAnswers.consultation as Record<string, string>) },
+    { key: 'discussion-ri',            hasContent: hasText(effectiveAnswers.discussionRI) },
+    { key: 'discussion-eqr',           hasContent: hasText(effectiveAnswers.discussionEQR) },
+    { key: 'misstatements',            hasContent: hasArr(effectiveAnswers.misstatements) },
+    { key: 'other',                    hasContent: hasRecord(effectiveAnswers.other as Record<string, string>) },
+    { key: 'standback',                hasContent: hasText(effectiveAnswers.standback) },
+    { key: 'difficulties',             hasContent: hasText(effectiveAnswers.difficulties) },
+    { key: 'conclusion',               hasContent: true /* always pinned at top */ },
+  ];
+
+  // Freeze the order on risk-change so typing in a blank section
+  // doesn't promote it past sections already filled in. Re-runs when
+  // the user selects a different risk (or the panel remounts on tab
+  // entry). React-hooks lint is happy without listing the snapshot
+  // inputs because they're captured by closure at evaluation time.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const sectionOrder = useMemo(() => {
+    const rest = sectionDescriptors.filter(s => s.key !== 'conclusion');
+    return [
+      'conclusion',
+      ...rest.filter(s => s.hasContent).map(s => s.key),
+      ...rest.filter(s => !s.hasContent).map(s => s.key),
+    ];
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeRisk?.id]);
+
+  // Section content map — built each render so values stay live. The
+  // order is computed once in sectionOrder above; this map just
+  // looks up the node by key.
+  const sectionsByKey: Record<string, React.ReactNode> = {
+    'risk-description': (
+      <Section title="Risk description" defaultOpen>
+        <AutoTextarea value={effectiveAnswers.riskDescription || ''} onChange={v => updateAnswer('riskDescription', v)}
+          minRows={3} placeholder="Describe the significant risk..." />
+      </Section>
+    ),
+    'impacted-assertions': (
+      <Section title="Impacted assertions" hasContent={hasText(effectiveAnswers.impactedAssertions)}>
+        <AutoTextarea value={effectiveAnswers.impactedAssertions || ''} onChange={v => updateAnswer('impactedAssertions', v)} minRows={2} />
+      </Section>
+    ),
+    'estimates': (
+      <Section title="Significant estimates and judgements" hasContent={hasText(effectiveAnswers.estimates)}>
+        <AutoTextarea value={effectiveAnswers.estimates || ''} onChange={v => updateAnswer('estimates', v)} minRows={3} />
+      </Section>
+    ),
+    'control-deficiencies': (
+      <Section title="Significant deficiencies in design and implementation of controls addressing the significant risk" hasContent={hasText(effectiveAnswers.controlDeficiencies)}>
+        <AutoTextarea value={effectiveAnswers.controlDeficiencies || ''} onChange={v => updateAnswer('controlDeficiencies', v)} minRows={3} />
+      </Section>
+    ),
+    'operating-effectiveness': (
+      <Section title="Results of test of operating effectiveness of controls" hasContent={hasText(effectiveAnswers.operatingEffectiveness)}>
+        <AutoTextarea value={effectiveAnswers.operatingEffectiveness || ''} onChange={v => updateAnswer('operatingEffectiveness', v)} minRows={3} />
+      </Section>
+    ),
+    'testing-approach': (
+      <Section title="Testing approach" hasContent={hasText(effectiveAnswers.testingApproach)}>
+        <select value={effectiveAnswers.testingApproach || ''} onChange={e => updateAnswer('testingApproach', e.target.value as any)}
+          className="w-full text-xs border border-slate-200 rounded px-2 py-1.5">
+          <option value="">Select approach...</option>
+          <option value="substantive">Substantive</option>
+          <option value="controls">Controls</option>
+          <option value="defrayment">Defrayment</option>
+        </select>
+      </Section>
+    ),
+    'changes-to-risk': (
+      <Section title="Changes to Assessed Risk" hasContent={hasText(effectiveAnswers.changesToRisk)}>
+        <p className="text-[10px] text-slate-500 mb-1">Did audit team note any additional information that require reassessment of the identified significant risk?</p>
+        <AutoTextarea value={effectiveAnswers.changesToRisk || ''} onChange={v => updateAnswer('changesToRisk', v)} minRows={3} />
+      </Section>
+    ),
+    'procedures': (
+      <Section title="Procedures" hasContent={relevantTests.length > 0 || hasArr(effectiveAnswers.customTests)}>
+        <p className="text-[10px] text-slate-500 mb-2">Tests from the audit plan relating to this significant risk and their outcome</p>
+        <table className="w-full text-[10px] border border-slate-200 rounded overflow-hidden mb-2">
+          <thead><tr className="bg-slate-100">
+            <th className="px-2 py-1 text-left text-slate-500">Test</th>
+            <th className="px-2 py-1 text-left text-slate-500 w-24">Outcome</th>
+          </tr></thead>
+          <tbody>
+            {relevantTests.length === 0 ? (
+              <tr><td colSpan={2} className="px-2 py-2 text-slate-400 italic text-center">No tests allocated to this risk yet</td></tr>
+            ) : relevantTests.map(alloc => {
+              const conc = getTestConclusion(alloc.test.name, alloc.fsLine.name);
+              const dotClass = conc?.conclusion === 'green' ? 'bg-green-500' :
+                               conc?.conclusion === 'orange' ? 'bg-orange-500' :
+                               conc?.conclusion === 'red' ? 'bg-red-500' : 'bg-slate-300';
+              return (
+                <tr key={alloc.id} className="border-t border-slate-100">
+                  <td className="px-2 py-1.5">
+                    <a href={`#test-${alloc.testId}`} className="text-blue-600 hover:underline">{alloc.test.name}</a>
+                  </td>
+                  <td className="px-2 py-1.5">
+                    <div className="flex items-center gap-1.5">
+                      <span className={`w-2 h-2 rounded-full ${dotClass}`} />
+                      <span className="text-slate-600">
+                        {conc?.totalErrors != null ? `${conc.totalErrors} errors` : 'Not concluded'}
+                      </span>
+                    </div>
+                  </td>
+                </tr>
+              );
+            })}
+            {(effectiveAnswers.customTests || []).map((ct, idx) => (
+              <tr key={`custom-${idx}`} className="border-t border-slate-100 bg-amber-50/30">
+                <td className="px-2 py-1.5">
+                  <input type="text" value={ct.name} onChange={e => {
+                    const next = [...(effectiveAnswers.customTests || [])];
+                    next[idx] = { ...next[idx], name: e.target.value };
+                    updateAnswer('customTests', next);
+                  }} className="w-full text-[10px] border border-slate-200 rounded px-1 py-0.5" />
+                </td>
+                <td className="px-2 py-1.5">
+                  <div className="flex items-center gap-1">
+                    <input type="text" value={ct.outcome} onChange={e => {
+                      const next = [...(effectiveAnswers.customTests || [])];
+                      next[idx] = { ...next[idx], outcome: e.target.value };
+                      updateAnswer('customTests', next);
+                    }} className="flex-1 text-[10px] border border-slate-200 rounded px-1 py-0.5" placeholder="Outcome" />
+                    <button onClick={() => {
+                      updateAnswer('customTests', (effectiveAnswers.customTests || []).filter((_, i) => i !== idx));
+                    }} className="text-red-400 hover:text-red-600"><X className="h-3 w-3" /></button>
+                  </div>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+        <button onClick={() => updateAnswer('customTests', [...(effectiveAnswers.customTests || []), { name: '', outcome: '' }])}
+          className="text-[10px] px-2 py-1 bg-blue-50 text-blue-600 rounded hover:bg-blue-100">
+          <Plus className="h-3 w-3 inline mr-1" />Add custom test
+        </button>
+      </Section>
+    ),
+    'audit-experts': (
+      <Section title="Audit experts and specialists" hasContent={hasRecord(effectiveAnswers.auditExperts as Record<string, string>)}>
+        <table className="w-full text-[10px] border border-slate-200 rounded overflow-hidden">
+          <tbody>
+            {AUDIT_EXPERT_QUESTIONS.map((q, idx) => (
+              <tr key={idx} className="border-t border-slate-100">
+                <td className="px-2 py-1.5 text-slate-600 w-1/2 align-top">{q}</td>
+                <td className="px-2 py-1.5">
+                  <textarea value={effectiveAnswers.auditExperts?.[idx] || ''}
+                    onChange={e => updateAnswer('auditExperts', { ...(effectiveAnswers.auditExperts || {}), [idx]: e.target.value })}
+                    rows={2} className="w-full text-[10px] border border-slate-200 rounded px-1 py-0.5 resize-y" />
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </Section>
+    ),
+    'management-expert': (
+      <Section title="Management expert" hasContent={hasRecord(effectiveAnswers.managementExpert as Record<string, string>)}>
+        <table className="w-full text-[10px] border border-slate-200 rounded overflow-hidden">
+          <tbody>
+            {MANAGEMENT_EXPERT_QUESTIONS.map((q, idx) => (
+              <tr key={idx} className="border-t border-slate-100">
+                <td className="px-2 py-1.5 text-slate-600 w-1/2 align-top">{q}</td>
+                <td className="px-2 py-1.5">
+                  <textarea value={effectiveAnswers.managementExpert?.[idx] || ''}
+                    onChange={e => updateAnswer('managementExpert', { ...(effectiveAnswers.managementExpert || {}), [idx]: e.target.value })}
+                    rows={2} className="w-full text-[10px] border border-slate-200 rounded px-1 py-0.5 resize-y" />
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </Section>
+    ),
+    'professional-skepticism': (
+      <Section title="Professional skepticism" hasContent={hasText(effectiveAnswers.professionalSkepticism)}>
+        <p className="text-[10px] text-slate-500 mb-1">Explain how audit team has exercised professional skepticism in relation to the audit of significant risk</p>
+        <AutoTextarea value={effectiveAnswers.professionalSkepticism || ''} onChange={v => updateAnswer('professionalSkepticism', v)} minRows={4} />
+      </Section>
+    ),
+    'challenges': (
+      <Section title="Summary of challenges to management" hasContent={hasArr(effectiveAnswers.challenges)}>
+        <p className="text-[10px] text-slate-500 mb-2">Summarise the challenges made by audit team to management, management responses, and audit team’s conclusion</p>
+        <table className="w-full text-[10px] border border-slate-200 rounded overflow-hidden mb-2">
+          <thead><tr className="bg-slate-100">
+            <th className="px-2 py-1 text-left text-slate-500">Challenge by audit team</th>
+            <th className="px-2 py-1 text-left text-slate-500">Response from management</th>
+            <th className="px-2 py-1 text-left text-slate-500">Conclusion</th>
+            <th className="w-8"></th>
+          </tr></thead>
+          <tbody>
+            {(effectiveAnswers.challenges || []).length === 0 ? (
+              <tr><td colSpan={4} className="px-2 py-2 text-slate-400 italic text-center">No challenges recorded</td></tr>
+            ) : (effectiveAnswers.challenges || []).map((row, idx) => (
+              <tr key={idx} className="border-t border-slate-100">
+                <td className="px-2 py-1">
+                  <textarea value={row.challenge} onChange={e => {
+                    const next = [...(effectiveAnswers.challenges || [])];
+                    next[idx] = { ...next[idx], challenge: e.target.value };
+                    updateAnswer('challenges', next);
+                  }} rows={2} className="w-full text-[10px] border border-slate-200 rounded px-1 py-0.5 resize-y" />
+                </td>
+                <td className="px-2 py-1">
+                  <textarea value={row.response} onChange={e => {
+                    const next = [...(effectiveAnswers.challenges || [])];
+                    next[idx] = { ...next[idx], response: e.target.value };
+                    updateAnswer('challenges', next);
+                  }} rows={2} className="w-full text-[10px] border border-slate-200 rounded px-1 py-0.5 resize-y" />
+                </td>
+                <td className="px-2 py-1">
+                  <textarea value={row.conclusion} onChange={e => {
+                    const next = [...(effectiveAnswers.challenges || [])];
+                    next[idx] = { ...next[idx], conclusion: e.target.value };
+                    updateAnswer('challenges', next);
+                  }} rows={2} className="w-full text-[10px] border border-slate-200 rounded px-1 py-0.5 resize-y" />
+                </td>
+                <td className="px-1 text-center">
+                  <button onClick={() => updateAnswer('challenges', (effectiveAnswers.challenges || []).filter((_, i) => i !== idx))}
+                    className="text-red-400 hover:text-red-600"><X className="h-3 w-3" /></button>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+        <button onClick={() => updateAnswer('challenges', [...(effectiveAnswers.challenges || []), { challenge: '', response: '', conclusion: '' }])}
+          className="text-[10px] px-2 py-1 bg-blue-50 text-blue-600 rounded hover:bg-blue-100">
+          <Plus className="h-3 w-3 inline mr-1" />Add row
+        </button>
+      </Section>
+    ),
+    'consultation': (
+      <Section title="Consultation" hasContent={hasRecord(effectiveAnswers.consultation as Record<string, string>)}>
+        <p className="text-[10px] text-slate-500 mb-2">Did the audit team identify any difficult or contentious matters requiring consultation?</p>
+        <table className="w-full text-[10px] border border-slate-200 rounded overflow-hidden">
+          <tbody>
+            {CONSULTATION_QUESTIONS.map((q, idx) => (
+              <tr key={idx} className="border-t border-slate-100">
+                <td className="px-2 py-1.5 text-slate-600 w-1/2 align-top">{q}</td>
+                <td className="px-2 py-1.5">
+                  <textarea value={effectiveAnswers.consultation?.[idx] || ''}
+                    onChange={e => updateAnswer('consultation', { ...(effectiveAnswers.consultation || {}), [idx]: e.target.value })}
+                    rows={2} className="w-full text-[10px] border border-slate-200 rounded px-1 py-0.5 resize-y" />
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </Section>
+    ),
+    'discussion-ri': (
+      <Section title="Summary of discussion with Audit Partner / RI" hasContent={hasText(effectiveAnswers.discussionRI)}>
+        <p className="text-[10px] text-slate-500 mb-1">Summarise discussion with audit partner/RI including details of challenges raised and how they were addressed</p>
+        <AutoTextarea value={effectiveAnswers.discussionRI || ''} onChange={v => updateAnswer('discussionRI', v)} minRows={4} />
+      </Section>
+    ),
+    'discussion-eqr': (
+      <Section title="Summary of Discussion with EQR" hasContent={hasText(effectiveAnswers.discussionEQR)}>
+        <p className="text-[10px] text-slate-500 mb-1">Summarise discussion with EQR including challenges raised and how they were addressed</p>
+        <AutoTextarea value={effectiveAnswers.discussionEQR || ''} onChange={v => updateAnswer('discussionEQR', v)} minRows={4} />
+      </Section>
+    ),
+    'misstatements': (
+      <Section title="Misstatements" hasContent={hasArr(effectiveAnswers.misstatements)}>
+        <p className="text-[10px] text-slate-500 mb-2">List misstatements identified by the audit team with respect to the identified significant risk</p>
+        <table className="w-full text-[10px] border border-slate-200 rounded overflow-hidden mb-2">
+          <thead><tr className="bg-slate-100">
+            <th className="px-2 py-1 text-left text-slate-500">GL Code</th>
+            <th className="px-2 py-1 text-left text-slate-500">Description</th>
+            <th className="px-2 py-1 text-right text-slate-500">Dr</th>
+            <th className="px-2 py-1 text-right text-slate-500">Cr</th>
+            <th className="px-2 py-1 text-left text-slate-500">Status</th>
+            <th className="px-2 py-1 text-left text-slate-500">Type</th>
+            <th className="w-8"></th>
+          </tr></thead>
+          <tbody>
+            {(effectiveAnswers.misstatements || []).length === 0 ? (
+              <tr><td colSpan={7} className="px-2 py-2 text-slate-400 italic text-center">No misstatements recorded</td></tr>
+            ) : (effectiveAnswers.misstatements || []).map((row, idx) => (
+              <tr key={idx} className="border-t border-slate-100">
+                <td className="px-1 py-1">
+                  <input type="text" value={row.glCode} onChange={e => {
+                    const next = [...(effectiveAnswers.misstatements || [])];
+                    next[idx] = { ...next[idx], glCode: e.target.value };
+                    updateAnswer('misstatements', next);
+                  }} className="w-full text-[10px] border border-slate-200 rounded px-1 py-0.5" />
+                </td>
+                <td className="px-1 py-1">
+                  <input type="text" value={row.description} onChange={e => {
+                    const next = [...(effectiveAnswers.misstatements || [])];
+                    next[idx] = { ...next[idx], description: e.target.value };
+                    updateAnswer('misstatements', next);
+                  }} className="w-full text-[10px] border border-slate-200 rounded px-1 py-0.5" />
+                </td>
+                <td className="px-1 py-1">
+                  <input type="text" inputMode="decimal" value={row.dr} onChange={e => {
+                    const next = [...(effectiveAnswers.misstatements || [])];
+                    next[idx] = { ...next[idx], dr: e.target.value };
+                    updateAnswer('misstatements', next);
+                  }} className="w-20 text-right text-[10px] border border-slate-200 rounded px-1 py-0.5" />
+                </td>
+                <td className="px-1 py-1">
+                  <input type="text" inputMode="decimal" value={row.cr} onChange={e => {
+                    const next = [...(effectiveAnswers.misstatements || [])];
+                    next[idx] = { ...next[idx], cr: e.target.value };
+                    updateAnswer('misstatements', next);
+                  }} className="w-20 text-right text-[10px] border border-slate-200 rounded px-1 py-0.5" />
+                </td>
+                <td className="px-1 py-1">
+                  <select value={row.corrected} onChange={e => {
+                    const next = [...(effectiveAnswers.misstatements || [])];
+                    next[idx] = { ...next[idx], corrected: e.target.value };
+                    updateAnswer('misstatements', next);
+                  }} className="text-[10px] border border-slate-200 rounded px-1 py-0.5">
+                    <option value="">Select...</option>
+                    <option value="corrected">Corrected</option>
+                    <option value="uncorrected">Uncorrected</option>
+                  </select>
+                </td>
+                <td className="px-1 py-1">
+                  <select value={row.type} onChange={e => {
+                    const next = [...(effectiveAnswers.misstatements || [])];
+                    next[idx] = { ...next[idx], type: e.target.value };
+                    updateAnswer('misstatements', next);
+                  }} className="text-[10px] border border-slate-200 rounded px-1 py-0.5">
+                    <option value="">Select...</option>
+                    <option value="factual">Factual</option>
+                    <option value="judgemental">Judgemental</option>
+                    <option value="projected">Projected</option>
+                  </select>
+                </td>
+                <td className="px-1 text-center">
+                  <button onClick={() => updateAnswer('misstatements', (effectiveAnswers.misstatements || []).filter((_, i) => i !== idx))}
+                    className="text-red-400 hover:text-red-600"><X className="h-3 w-3" /></button>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+        <button onClick={() => updateAnswer('misstatements', [...(effectiveAnswers.misstatements || []), { glCode: '', description: '', dr: '', cr: '', corrected: '', type: '' }])}
+          className="text-[10px] px-2 py-1 bg-blue-50 text-blue-600 rounded hover:bg-blue-100">
+          <Plus className="h-3 w-3 inline mr-1" />Add row
+        </button>
+      </Section>
+    ),
+    'other': (
+      <Section title="Other" hasContent={hasRecord(effectiveAnswers.other as Record<string, string>)}>
+        <table className="w-full text-[10px] border border-slate-200 rounded overflow-hidden">
+          <tbody>
+            {OTHER_QUESTIONS.map((q, idx) => (
+              <tr key={idx} className="border-t border-slate-100">
+                <td className="px-2 py-1.5 text-slate-600 w-2/3 align-top">{q}</td>
+                <td className="px-2 py-1.5">
+                  <select value={effectiveAnswers.other?.[idx] || ''}
+                    onChange={e => updateAnswer('other', { ...(effectiveAnswers.other || {}), [idx]: e.target.value })}
+                    className="w-full text-[10px] border border-slate-200 rounded px-1 py-0.5">
+                    <option value="">Select...</option>
+                    <option value="yes">Yes</option>
+                    <option value="no">No</option>
+                  </select>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </Section>
+    ),
+    'standback': (
+      <Section title="Standback assessment" hasContent={hasText(effectiveAnswers.standback)}>
+        <p className="text-[10px] text-slate-500 mb-1">
+          Audit team is required to perform standback assessment to confirm that the procedures performed, audit evidence reviewed, and conclusions reached in response to identified significant risk is appropriate.
+        </p>
+        <AutoTextarea value={effectiveAnswers.standback || ''} onChange={v => updateAnswer('standback', v)} minRows={4} />
+      </Section>
+    ),
+    'difficulties': (
+      <Section title="Difficulties" hasContent={hasText(effectiveAnswers.difficulties)}>
+        <p className="text-[10px] text-slate-500 mb-1">Provide details of difficult circumstances (if any) that audit team faced to obtain sufficient appropriate evidence</p>
+        <AutoTextarea value={effectiveAnswers.difficulties || ''} onChange={v => updateAnswer('difficulties', v)} minRows={3} />
+      </Section>
+    ),
+    'conclusion': (
+      <Section title="Conclusion" defaultOpen>
+        <p className="text-[10px] text-slate-500 mb-1">
+          Audit team to confirm if all planned procedures have been performed, sufficient appropriate evidence is obtained and that there is no risk of material misstatement due to identified significant risk
+        </p>
+        <AutoTextarea value={effectiveAnswers.conclusion || ''} onChange={v => updateAnswer('conclusion', v)} minRows={4} />
+      </Section>
+    ),
+  };
 
   return (
     <div className="flex flex-col gap-3">
@@ -519,19 +909,11 @@ export function SignificantRiskPanel({ engagementId, userId, userName, teamMembe
             // newly-selected risk's data. Without this, the open/closed
             // state from the previous risk would carry over.
             <div key={activeRisk.id} className="space-y-2">
-              {/* Top-right action row — Plan Customiser button sits
-                  above the tests, paired with the Reviewer/RI sign-off
-                  dots. The customiser is always enabled (RI can pull
-                  more work into the plan at any time). */}
+              {/* Top-right sign-off row. The Plan Customiser button
+                  lives in the Completion tab strip (CompletionPanel)
+                  and dispatches `engagement:open-plan-customiser` here
+                  via the useEffect listener below. */}
               <div className="flex items-center justify-end gap-4">
-                <button
-                  onClick={openPlanCustomiser}
-                  className="inline-flex items-center gap-1.5 text-xs font-semibold px-3 py-1.5 rounded bg-indigo-600 text-white border border-indigo-700 hover:bg-indigo-700 shadow-sm whitespace-nowrap"
-                  title="Open Plan Customiser — RI can always add or trim work"
-                >
-                  <ClipboardList className="h-3.5 w-3.5" />
-                  Plan Customiser
-                </button>
                 <div className="flex items-center gap-3">
                   {visibleRoles.map(({ key, label }) => {
                     const so = activeRecord?.signOffs?.[key];
@@ -573,361 +955,9 @@ export function SignificantRiskPanel({ engagementId, userId, userName, teamMembe
                 {activeRisk.riskIdentified && <p className="text-[11px] text-slate-600">{activeRisk.riskIdentified}</p>}
               </div>
 
-          {/* Section 1: Risk Description */}
-          <Section title="Risk description" defaultOpen>
-            <AutoTextarea value={effectiveAnswers.riskDescription || ''} onChange={v => updateAnswer('riskDescription', v)}
-              minRows={3} placeholder="Describe the significant risk..." />
-          </Section>
-
-          {/* Section 2: Impacted Assertions */}
-          <Section title="Impacted assertions" hasContent={hasText(effectiveAnswers.impactedAssertions)}>
-            <AutoTextarea value={effectiveAnswers.impactedAssertions || ''} onChange={v => updateAnswer('impactedAssertions', v)} minRows={2} />
-          </Section>
-
-          {/* Section 3: Significant Estimates and Judgements */}
-          <Section title="Significant estimates and judgements" hasContent={hasText(effectiveAnswers.estimates)}>
-            <AutoTextarea value={effectiveAnswers.estimates || ''} onChange={v => updateAnswer('estimates', v)} minRows={3} />
-          </Section>
-
-          {/* Section 4: Control deficiencies */}
-          <Section title="Significant deficiencies in design and implementation of controls addressing the significant risk" hasContent={hasText(effectiveAnswers.controlDeficiencies)}>
-            <AutoTextarea value={effectiveAnswers.controlDeficiencies || ''} onChange={v => updateAnswer('controlDeficiencies', v)} minRows={3} />
-          </Section>
-
-          {/* Section 5: Operating effectiveness of controls */}
-          <Section title="Results of test of operating effectiveness of controls" hasContent={hasText(effectiveAnswers.operatingEffectiveness)}>
-            <AutoTextarea value={effectiveAnswers.operatingEffectiveness || ''} onChange={v => updateAnswer('operatingEffectiveness', v)} minRows={3} />
-          </Section>
-
-          {/* Section 6: Testing approach */}
-          <Section title="Testing approach" hasContent={hasText(effectiveAnswers.testingApproach)}>
-            <select value={effectiveAnswers.testingApproach || ''} onChange={e => updateAnswer('testingApproach', e.target.value as any)}
-              className="w-full text-xs border border-slate-200 rounded px-2 py-1.5">
-              <option value="">Select approach...</option>
-              <option value="substantive">Substantive</option>
-              <option value="controls">Controls</option>
-              <option value="defrayment">Defrayment</option>
-            </select>
-          </Section>
-
-          {/* Section 7: Changes to Assessed Risk */}
-          <Section title="Changes to Assessed Risk" hasContent={hasText(effectiveAnswers.changesToRisk)}>
-            <p className="text-[10px] text-slate-500 mb-1">Did audit team note any additional information that require reassessment of the identified significant risk?</p>
-            <AutoTextarea value={effectiveAnswers.changesToRisk || ''} onChange={v => updateAnswer('changesToRisk', v)} minRows={3} />
-          </Section>
-
-          {/* Section 8: Procedures */}
-          <Section title="Procedures" hasContent={relevantTests.length > 0 || hasArr(effectiveAnswers.customTests)}>
-            <p className="text-[10px] text-slate-500 mb-2">Tests from the audit plan relating to this significant risk and their outcome</p>
-            <table className="w-full text-[10px] border border-slate-200 rounded overflow-hidden mb-2">
-              <thead><tr className="bg-slate-100">
-                <th className="px-2 py-1 text-left text-slate-500">Test</th>
-                <th className="px-2 py-1 text-left text-slate-500 w-24">Outcome</th>
-              </tr></thead>
-              <tbody>
-                {relevantTests.length === 0 ? (
-                  <tr><td colSpan={2} className="px-2 py-2 text-slate-400 italic text-center">No tests allocated to this risk yet</td></tr>
-                ) : relevantTests.map(alloc => {
-                  const conc = getTestConclusion(alloc.test.name, alloc.fsLine.name);
-                  const dotClass = conc?.conclusion === 'green' ? 'bg-green-500' :
-                                   conc?.conclusion === 'orange' ? 'bg-orange-500' :
-                                   conc?.conclusion === 'red' ? 'bg-red-500' : 'bg-slate-300';
-                  return (
-                    <tr key={alloc.id} className="border-t border-slate-100">
-                      <td className="px-2 py-1.5">
-                        <a href={`#test-${alloc.testId}`} className="text-blue-600 hover:underline">{alloc.test.name}</a>
-                      </td>
-                      <td className="px-2 py-1.5">
-                        <div className="flex items-center gap-1.5">
-                          <span className={`w-2 h-2 rounded-full ${dotClass}`} />
-                          <span className="text-slate-600">
-                            {conc?.totalErrors != null ? `${conc.totalErrors} errors` : 'Not concluded'}
-                          </span>
-                        </div>
-                      </td>
-                    </tr>
-                  );
-                })}
-                {(effectiveAnswers.customTests || []).map((ct, idx) => (
-                  <tr key={`custom-${idx}`} className="border-t border-slate-100 bg-amber-50/30">
-                    <td className="px-2 py-1.5">
-                      <input type="text" value={ct.name} onChange={e => {
-                        const next = [...(effectiveAnswers.customTests || [])];
-                        next[idx] = { ...next[idx], name: e.target.value };
-                        updateAnswer('customTests', next);
-                      }} className="w-full text-[10px] border border-slate-200 rounded px-1 py-0.5" />
-                    </td>
-                    <td className="px-2 py-1.5">
-                      <div className="flex items-center gap-1">
-                        <input type="text" value={ct.outcome} onChange={e => {
-                          const next = [...(effectiveAnswers.customTests || [])];
-                          next[idx] = { ...next[idx], outcome: e.target.value };
-                          updateAnswer('customTests', next);
-                        }} className="flex-1 text-[10px] border border-slate-200 rounded px-1 py-0.5" placeholder="Outcome" />
-                        <button onClick={() => {
-                          updateAnswer('customTests', (effectiveAnswers.customTests || []).filter((_, i) => i !== idx));
-                        }} className="text-red-400 hover:text-red-600"><X className="h-3 w-3" /></button>
-                      </div>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-            <button onClick={() => updateAnswer('customTests', [...(effectiveAnswers.customTests || []), { name: '', outcome: '' }])}
-              className="text-[10px] px-2 py-1 bg-blue-50 text-blue-600 rounded hover:bg-blue-100">
-              <Plus className="h-3 w-3 inline mr-1" />Add custom test
-            </button>
-          </Section>
-
-          {/* Section 9: Audit experts and specialists */}
-          <Section title="Audit experts and specialists" hasContent={hasRecord(effectiveAnswers.auditExperts as Record<string, string>)}>
-            <table className="w-full text-[10px] border border-slate-200 rounded overflow-hidden">
-              <tbody>
-                {AUDIT_EXPERT_QUESTIONS.map((q, idx) => (
-                  <tr key={idx} className="border-t border-slate-100">
-                    <td className="px-2 py-1.5 text-slate-600 w-1/2 align-top">{q}</td>
-                    <td className="px-2 py-1.5">
-                      <textarea value={effectiveAnswers.auditExperts?.[idx] || ''}
-                        onChange={e => updateAnswer('auditExperts', { ...(effectiveAnswers.auditExperts || {}), [idx]: e.target.value })}
-                        rows={2} className="w-full text-[10px] border border-slate-200 rounded px-1 py-0.5 resize-y" />
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </Section>
-
-          {/* Section 10: Management expert */}
-          <Section title="Management expert" hasContent={hasRecord(effectiveAnswers.managementExpert as Record<string, string>)}>
-            <table className="w-full text-[10px] border border-slate-200 rounded overflow-hidden">
-              <tbody>
-                {MANAGEMENT_EXPERT_QUESTIONS.map((q, idx) => (
-                  <tr key={idx} className="border-t border-slate-100">
-                    <td className="px-2 py-1.5 text-slate-600 w-1/2 align-top">{q}</td>
-                    <td className="px-2 py-1.5">
-                      <textarea value={effectiveAnswers.managementExpert?.[idx] || ''}
-                        onChange={e => updateAnswer('managementExpert', { ...(effectiveAnswers.managementExpert || {}), [idx]: e.target.value })}
-                        rows={2} className="w-full text-[10px] border border-slate-200 rounded px-1 py-0.5 resize-y" />
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </Section>
-
-          {/* Section 11: Professional skepticism */}
-          <Section title="Professional skepticism" hasContent={hasText(effectiveAnswers.professionalSkepticism)}>
-            <p className="text-[10px] text-slate-500 mb-1">Explain how audit team has exercised professional skepticism in relation to the audit of significant risk</p>
-            <AutoTextarea value={effectiveAnswers.professionalSkepticism || ''} onChange={v => updateAnswer('professionalSkepticism', v)} minRows={4} />
-          </Section>
-
-          {/* Section 12: Summary of challenges to management */}
-          <Section title="Summary of challenges to management" hasContent={hasArr(effectiveAnswers.challenges)}>
-            <p className="text-[10px] text-slate-500 mb-2">Summarise the challenges made by audit team to management, management responses, and audit team\u2019s conclusion</p>
-            <table className="w-full text-[10px] border border-slate-200 rounded overflow-hidden mb-2">
-              <thead><tr className="bg-slate-100">
-                <th className="px-2 py-1 text-left text-slate-500">Challenge by audit team</th>
-                <th className="px-2 py-1 text-left text-slate-500">Response from management</th>
-                <th className="px-2 py-1 text-left text-slate-500">Conclusion</th>
-                <th className="w-8"></th>
-              </tr></thead>
-              <tbody>
-                {(effectiveAnswers.challenges || []).length === 0 ? (
-                  <tr><td colSpan={4} className="px-2 py-2 text-slate-400 italic text-center">No challenges recorded</td></tr>
-                ) : (effectiveAnswers.challenges || []).map((row, idx) => (
-                  <tr key={idx} className="border-t border-slate-100">
-                    <td className="px-2 py-1">
-                      <textarea value={row.challenge} onChange={e => {
-                        const next = [...(effectiveAnswers.challenges || [])];
-                        next[idx] = { ...next[idx], challenge: e.target.value };
-                        updateAnswer('challenges', next);
-                      }} rows={2} className="w-full text-[10px] border border-slate-200 rounded px-1 py-0.5 resize-y" />
-                    </td>
-                    <td className="px-2 py-1">
-                      <textarea value={row.response} onChange={e => {
-                        const next = [...(effectiveAnswers.challenges || [])];
-                        next[idx] = { ...next[idx], response: e.target.value };
-                        updateAnswer('challenges', next);
-                      }} rows={2} className="w-full text-[10px] border border-slate-200 rounded px-1 py-0.5 resize-y" />
-                    </td>
-                    <td className="px-2 py-1">
-                      <textarea value={row.conclusion} onChange={e => {
-                        const next = [...(effectiveAnswers.challenges || [])];
-                        next[idx] = { ...next[idx], conclusion: e.target.value };
-                        updateAnswer('challenges', next);
-                      }} rows={2} className="w-full text-[10px] border border-slate-200 rounded px-1 py-0.5 resize-y" />
-                    </td>
-                    <td className="px-1 text-center">
-                      <button onClick={() => updateAnswer('challenges', (effectiveAnswers.challenges || []).filter((_, i) => i !== idx))}
-                        className="text-red-400 hover:text-red-600"><X className="h-3 w-3" /></button>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-            <button onClick={() => updateAnswer('challenges', [...(effectiveAnswers.challenges || []), { challenge: '', response: '', conclusion: '' }])}
-              className="text-[10px] px-2 py-1 bg-blue-50 text-blue-600 rounded hover:bg-blue-100">
-              <Plus className="h-3 w-3 inline mr-1" />Add row
-            </button>
-          </Section>
-
-          {/* Section 13: Consultation */}
-          <Section title="Consultation" hasContent={hasRecord(effectiveAnswers.consultation as Record<string, string>)}>
-            <p className="text-[10px] text-slate-500 mb-2">Did the audit team identify any difficult or contentious matters requiring consultation?</p>
-            <table className="w-full text-[10px] border border-slate-200 rounded overflow-hidden">
-              <tbody>
-                {CONSULTATION_QUESTIONS.map((q, idx) => (
-                  <tr key={idx} className="border-t border-slate-100">
-                    <td className="px-2 py-1.5 text-slate-600 w-1/2 align-top">{q}</td>
-                    <td className="px-2 py-1.5">
-                      <textarea value={effectiveAnswers.consultation?.[idx] || ''}
-                        onChange={e => updateAnswer('consultation', { ...(effectiveAnswers.consultation || {}), [idx]: e.target.value })}
-                        rows={2} className="w-full text-[10px] border border-slate-200 rounded px-1 py-0.5 resize-y" />
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </Section>
-
-          {/* Section 14: Summary of discussion with Audit Partner / RI */}
-          <Section title="Summary of discussion with Audit Partner / RI" hasContent={hasText(effectiveAnswers.discussionRI)}>
-            <p className="text-[10px] text-slate-500 mb-1">Summarise discussion with audit partner/RI including details of challenges raised and how they were addressed</p>
-            <AutoTextarea value={effectiveAnswers.discussionRI || ''} onChange={v => updateAnswer('discussionRI', v)} minRows={4} />
-          </Section>
-
-          {/* Section 15: Summary of Discussion with EQR */}
-          <Section title="Summary of Discussion with EQR" hasContent={hasText(effectiveAnswers.discussionEQR)}>
-            <p className="text-[10px] text-slate-500 mb-1">Summarise discussion with EQR including challenges raised and how they were addressed</p>
-            <AutoTextarea value={effectiveAnswers.discussionEQR || ''} onChange={v => updateAnswer('discussionEQR', v)} minRows={4} />
-          </Section>
-
-          {/* Section 16: Misstatements */}
-          <Section title="Misstatements" hasContent={hasArr(effectiveAnswers.misstatements)}>
-            <p className="text-[10px] text-slate-500 mb-2">List misstatements identified by the audit team with respect to the identified significant risk</p>
-            <table className="w-full text-[10px] border border-slate-200 rounded overflow-hidden mb-2">
-              <thead><tr className="bg-slate-100">
-                <th className="px-2 py-1 text-left text-slate-500">GL Code</th>
-                <th className="px-2 py-1 text-left text-slate-500">Description</th>
-                <th className="px-2 py-1 text-right text-slate-500">Dr</th>
-                <th className="px-2 py-1 text-right text-slate-500">Cr</th>
-                <th className="px-2 py-1 text-left text-slate-500">Status</th>
-                <th className="px-2 py-1 text-left text-slate-500">Type</th>
-                <th className="w-8"></th>
-              </tr></thead>
-              <tbody>
-                {(effectiveAnswers.misstatements || []).length === 0 ? (
-                  <tr><td colSpan={7} className="px-2 py-2 text-slate-400 italic text-center">No misstatements recorded</td></tr>
-                ) : (effectiveAnswers.misstatements || []).map((row, idx) => (
-                  <tr key={idx} className="border-t border-slate-100">
-                    <td className="px-1 py-1">
-                      <input type="text" value={row.glCode} onChange={e => {
-                        const next = [...(effectiveAnswers.misstatements || [])];
-                        next[idx] = { ...next[idx], glCode: e.target.value };
-                        updateAnswer('misstatements', next);
-                      }} className="w-full text-[10px] border border-slate-200 rounded px-1 py-0.5" />
-                    </td>
-                    <td className="px-1 py-1">
-                      <input type="text" value={row.description} onChange={e => {
-                        const next = [...(effectiveAnswers.misstatements || [])];
-                        next[idx] = { ...next[idx], description: e.target.value };
-                        updateAnswer('misstatements', next);
-                      }} className="w-full text-[10px] border border-slate-200 rounded px-1 py-0.5" />
-                    </td>
-                    <td className="px-1 py-1">
-                      <input type="text" inputMode="decimal" value={row.dr} onChange={e => {
-                        const next = [...(effectiveAnswers.misstatements || [])];
-                        next[idx] = { ...next[idx], dr: e.target.value };
-                        updateAnswer('misstatements', next);
-                      }} className="w-20 text-right text-[10px] border border-slate-200 rounded px-1 py-0.5" />
-                    </td>
-                    <td className="px-1 py-1">
-                      <input type="text" inputMode="decimal" value={row.cr} onChange={e => {
-                        const next = [...(effectiveAnswers.misstatements || [])];
-                        next[idx] = { ...next[idx], cr: e.target.value };
-                        updateAnswer('misstatements', next);
-                      }} className="w-20 text-right text-[10px] border border-slate-200 rounded px-1 py-0.5" />
-                    </td>
-                    <td className="px-1 py-1">
-                      <select value={row.corrected} onChange={e => {
-                        const next = [...(effectiveAnswers.misstatements || [])];
-                        next[idx] = { ...next[idx], corrected: e.target.value };
-                        updateAnswer('misstatements', next);
-                      }} className="text-[10px] border border-slate-200 rounded px-1 py-0.5">
-                        <option value="">Select...</option>
-                        <option value="corrected">Corrected</option>
-                        <option value="uncorrected">Uncorrected</option>
-                      </select>
-                    </td>
-                    <td className="px-1 py-1">
-                      <select value={row.type} onChange={e => {
-                        const next = [...(effectiveAnswers.misstatements || [])];
-                        next[idx] = { ...next[idx], type: e.target.value };
-                        updateAnswer('misstatements', next);
-                      }} className="text-[10px] border border-slate-200 rounded px-1 py-0.5">
-                        <option value="">Select...</option>
-                        <option value="factual">Factual</option>
-                        <option value="judgemental">Judgemental</option>
-                        <option value="projected">Projected</option>
-                      </select>
-                    </td>
-                    <td className="px-1 text-center">
-                      <button onClick={() => updateAnswer('misstatements', (effectiveAnswers.misstatements || []).filter((_, i) => i !== idx))}
-                        className="text-red-400 hover:text-red-600"><X className="h-3 w-3" /></button>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-            <button onClick={() => updateAnswer('misstatements', [...(effectiveAnswers.misstatements || []), { glCode: '', description: '', dr: '', cr: '', corrected: '', type: '' }])}
-              className="text-[10px] px-2 py-1 bg-blue-50 text-blue-600 rounded hover:bg-blue-100">
-              <Plus className="h-3 w-3 inline mr-1" />Add row
-            </button>
-          </Section>
-
-          {/* Section 17: Other */}
-          <Section title="Other" hasContent={hasRecord(effectiveAnswers.other as Record<string, string>)}>
-            <table className="w-full text-[10px] border border-slate-200 rounded overflow-hidden">
-              <tbody>
-                {OTHER_QUESTIONS.map((q, idx) => (
-                  <tr key={idx} className="border-t border-slate-100">
-                    <td className="px-2 py-1.5 text-slate-600 w-2/3 align-top">{q}</td>
-                    <td className="px-2 py-1.5">
-                      <select value={effectiveAnswers.other?.[idx] || ''}
-                        onChange={e => updateAnswer('other', { ...(effectiveAnswers.other || {}), [idx]: e.target.value })}
-                        className="w-full text-[10px] border border-slate-200 rounded px-1 py-0.5">
-                        <option value="">Select...</option>
-                        <option value="yes">Yes</option>
-                        <option value="no">No</option>
-                      </select>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </Section>
-
-          {/* Section 18: Standback assessment */}
-          <Section title="Standback assessment" hasContent={hasText(effectiveAnswers.standback)}>
-            <p className="text-[10px] text-slate-500 mb-1">
-              Audit team is required to perform standback assessment to confirm that the procedures performed, audit evidence reviewed, and conclusions reached in response to identified significant risk is appropriate.
-            </p>
-            <AutoTextarea value={effectiveAnswers.standback || ''} onChange={v => updateAnswer('standback', v)} minRows={4} />
-          </Section>
-
-          {/* Section 19: Difficulties */}
-          <Section title="Difficulties" hasContent={hasText(effectiveAnswers.difficulties)}>
-            <p className="text-[10px] text-slate-500 mb-1">Provide details of difficult circumstances (if any) that audit team faced to obtain sufficient appropriate evidence</p>
-            <AutoTextarea value={effectiveAnswers.difficulties || ''} onChange={v => updateAnswer('difficulties', v)} minRows={3} />
-          </Section>
-
-          {/* Section 20: Conclusion */}
-          <Section title="Conclusion" defaultOpen>
-            <p className="text-[10px] text-slate-500 mb-1">
-              Audit team to confirm if all planned procedures have been performed, sufficient appropriate evidence is obtained and that there is no risk of material misstatement due to identified significant risk
-            </p>
-            <AutoTextarea value={effectiveAnswers.conclusion || ''} onChange={v => updateAnswer('conclusion', v)} minRows={4} />
-          </Section>
+          {sectionOrder.map(key => (
+            <Fragment key={key}>{sectionsByKey[key]}</Fragment>
+          ))}
             </div>
           )}
         </div>

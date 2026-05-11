@@ -1333,10 +1333,22 @@ export function EngagementTabs({ engagement, auditType, clientName, periodEndDat
         />
       )}
       {openPanel === 'management' && (
-        <ManagementPointPanel engagementId={engagement.id} pointType="management" title="Management Letter Points" onClose={() => { setOpenPanel(null); void refreshMgtCounts(); }} />
+        <ManagementPointPanel
+          engagementId={engagement.id}
+          pointType="management"
+          title="Management Letter Points"
+          userRole={teamMembers.find(m => m.userId === currentUserId)?.role}
+          onClose={() => { setOpenPanel(null); void refreshMgtCounts(); }}
+        />
       )}
       {openPanel === 'representation' && (
-        <ManagementPointPanel engagementId={engagement.id} pointType="representation" title="Representation Letter Points" onClose={() => { setOpenPanel(null); void refreshRepCounts(); }} />
+        <ManagementPointPanel
+          engagementId={engagement.id}
+          pointType="representation"
+          title="Representation Letter Points"
+          userRole={teamMembers.find(m => m.userId === currentUserId)?.role}
+          onClose={() => { setOpenPanel(null); void refreshRepCounts(); }}
+        />
       )}
       {openPanel === 'ri_matter' && (
         <RIMattersPanel
@@ -1538,7 +1550,7 @@ export function EngagementTabs({ engagement, auditType, clientName, periodEndDat
                     </Fragment>
                   );
                 })}
-                {(['Going Concern', 'Management Override', 'SRMM Memos', 'Subsequent Events', 'Taxation', 'Tax Technical', 'Permanent', 'Disclosure'] as const).map(other => (
+                {(['Going Concern', 'Management Override', 'Subsequent Events', 'Taxation', 'Tax Technical', 'Permanent', 'Disclosure'] as const).map(other => (
                   <button
                     key={other}
                     onClick={() => {
