@@ -133,6 +133,41 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ eng
           if (text.length > 10) {
             extractedParts.push(`--- ${file.name} ---\n${text}`);
           }
+        } else if (
+          mime.includes('spreadsheet')
+          || mime.includes('excel')
+          || mime.includes('sheet')
+          || file.name?.toLowerCase().endsWith('.xlsx')
+          || file.name?.toLowerCase().endsWith('.xls')
+          || file.name?.toLowerCase().endsWith('.xlsm')
+        ) {
+          // Excel — read every sheet as CSV-flavoured text so the AI
+          // sees the data row-by-row in a flat form. Matches the
+          // pattern in lib/assurance-doc-processor.ts.
+          try {
+            // eslint-disable-next-line @typescript-eslint/no-require-imports
+            const XLSX = require('xlsx');
+            const wb = XLSX.read(buffer, { type: 'buffer' });
+            const sheetsText = wb.SheetNames
+              .map((name: string) => {
+                const sheet = wb.Sheets[name];
+                const csv = XLSX.utils.sheet_to_csv(sheet);
+                return csv && csv.trim().length > 0
+                  ? `=== Sheet: ${name} ===\n${csv}`
+                  : '';
+              })
+              .filter((s: string) => s.length > 0)
+              .join('\n\n');
+            if (sheetsText.trim().length > 10) {
+              console.log('[walkthrough-flowchart] Extracted', sheetsText.length, 'chars from XLSX:', file.name);
+              extractedParts.push(`--- ${file.name} ---\n${sheetsText}`);
+            } else {
+              extractionErrors.push(`${file.name}: XLSX had no extractable content`);
+            }
+          } catch (xlsErr: any) {
+            console.error('[walkthrough-flowchart] XLSX parse failed for', file.name, xlsErr.message);
+            extractionErrors.push(`${file.name}: failed to read XLSX — ${xlsErr.message}`);
+          }
         } else if (mime.includes('word') || mime.includes('docx') || file.name?.toLowerCase().endsWith('.docx') || file.name?.toLowerCase().endsWith('.doc')) {
           // DOCX files are ZIP archives — extract word/document.xml and pull text from <w:t> tags
           try {
