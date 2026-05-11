@@ -2,7 +2,8 @@
 
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { useSession } from 'next-auth/react';
-import { ChevronDown, ChevronUp, AlertTriangle, Loader2, Plus, X } from 'lucide-react';
+import { ChevronDown, ChevronUp, AlertTriangle, Loader2, Plus, X, ClipboardList } from 'lucide-react';
+import { PlanCustomiserModal } from './PlanCustomiserModal';
 
 interface RMMRow {
   id: string;
@@ -16,9 +17,12 @@ interface RMMRow {
 interface TestAllocation {
   id: string;
   testId: string;
+  fsLineId?: string;
   fsLine: { id: string; name: string };
-  test: { id: string; name: string; significantRisk: boolean };
+  test: { id: string; name: string; significantRisk: boolean; description?: string | null; testTypeCode?: string; assertions?: string[] | null; framework?: string };
 }
+
+interface FsLineSummary { id: string; name: string }
 
 interface TestConclusion {
   executionId?: string;
@@ -197,6 +201,12 @@ export function SignificantRiskPanel({ engagementId, userId, userName, teamMembe
   const [activeRiskId, setActiveRiskId] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const saveTimer = useRef<NodeJS.Timeout | null>(null);
+  // Plan Customiser — scoped to the active risk's FS Line so the auditor
+  // can add custom tests / mark tests N/A without leaving the panel.
+  const [fsLines, setFsLines] = useState<FsLineSummary[]>([]);
+  const [planCustomiserOpen, setPlanCustomiserOpen] = useState(false);
+  const [planCustomiserAllocated, setPlanCustomiserAllocated] = useState<any[]>([]);
+  const [planCustomiserContext, setPlanCustomiserContext] = useState<{ fsLineId: string; fsLineName: string } | null>(null);
 
   const loadAll = useCallback(async () => {
     try {
@@ -205,12 +215,13 @@ export function SignificantRiskPanel({ engagementId, userId, userName, teamMembe
       // this completion-stage panel. It's optional — if the API
       // doesn't return memos (e.g. older engagements) the panel
       // still works as before.
-      const [rmmRes, sigRes, allocRes, concRes, srmmRes] = await Promise.all([
+      const [rmmRes, sigRes, allocRes, concRes, srmmRes, fsRes] = await Promise.all([
         fetch(`/api/engagements/${engagementId}/rmm`),
         fetch(`/api/engagements/${engagementId}/significant-risk`),
         fetch(`/api/engagements/${engagementId}/test-allocations`),
         fetch(`/api/engagements/${engagementId}/test-conclusions`),
         fetch(`/api/engagements/${engagementId}/srmm`),
+        fetch(`/api/firm/fs-lines`),
       ]);
 
       if (rmmRes.ok) {
@@ -245,6 +256,11 @@ export function SignificantRiskPanel({ engagementId, userId, userName, teamMembe
           if (m.rmmRowId && m.memo && typeof m.memo === 'object') byId[m.rmmRowId] = m.memo;
         }
         setSrmmByRisk(byId);
+      }
+
+      if (fsRes.ok) {
+        const data = await fsRes.json();
+        setFsLines(Array.isArray(data?.fsLines) ? data.fsLines : []);
       }
     } catch (err) {
       console.error('[SignificantRisk] load failed:', err);
@@ -385,82 +401,162 @@ export function SignificantRiskPanel({ engagementId, userId, userName, teamMembe
     );
   };
 
+  // Resolve an FS Line id from the active risk's lineItem so the
+  // Plan Customiser modal can scope to the right line. Mirrors
+  // AuditPlanPanel's fallback chain (exact → ci → synthetic).
+  function resolveFsLine(name: string | undefined): { id: string; name: string } {
+    const fallback = name || 'Significant Risk';
+    if (!name) return { id: `__synthetic__${fallback}`, name: fallback };
+    const lower = name.toLowerCase().trim();
+    let fl = fsLines.find(f => f.name === name);
+    if (!fl) fl = fsLines.find(f => f.name.toLowerCase().trim() === lower);
+    if (fl) return { id: fl.id, name: fl.name };
+    return { id: `__synthetic__${name}`, name };
+  }
+
+  async function openPlanCustomiser() {
+    if (!activeRisk) return;
+    const ctx = resolveFsLine(activeRisk.lineItem);
+    setPlanCustomiserContext({ fsLineId: ctx.id, fsLineName: ctx.name });
+    try {
+      const res = await fetch(`/api/engagements/${engagementId}/test-allocations`);
+      if (res.ok) {
+        const data = await res.json();
+        const allocated = (data.allocations || data.rows || [])
+          .filter((a: any) => (a.fsLineId === ctx.id || a.fsLine?.id === ctx.id) && a.test)
+          .map((a: any) => ({
+            id: a.test.id,
+            name: a.test.name,
+            description: a.test.description,
+            testTypeCode: a.test.testTypeCode,
+            assertions: a.test.assertions,
+            framework: a.test.framework,
+          }));
+        setPlanCustomiserAllocated(allocated);
+      } else {
+        setPlanCustomiserAllocated([]);
+      }
+    } catch {
+      setPlanCustomiserAllocated([]);
+    }
+    setPlanCustomiserOpen(true);
+  }
+
+  const visibleRoles = teamMembers?.some(m => m.role === 'EQR') ? SIGN_OFF_ROLES_WITH_EQR : SIGN_OFF_ROLES_BASE;
+
   return (
-    <div>
-      {/* Sub-tab bar for each significant risk */}
-      <div className="flex items-center gap-1 bg-slate-100 rounded-lg p-0.5 mb-4 overflow-x-auto">
-        {rmmRows.map(risk => {
-          const record = records[risk.id];
-          const isActive = activeRiskId === risk.id;
-          const visibleRoles = teamMembers?.some(m => m.role === 'EQR') ? SIGN_OFF_ROLES_WITH_EQR : SIGN_OFF_ROLES_BASE;
-          return (
-            <button key={risk.id} onClick={() => setActiveRiskId(risk.id)}
-              className={`flex items-center gap-2 px-3 py-1.5 text-xs font-medium rounded-md transition-colors whitespace-nowrap ${
-                isActive ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-700'
-              }`}>
-              <span>{risk.lineItem || 'Unnamed Risk'}</span>
-              <div className="flex items-center gap-0.5">
-                {visibleRoles.map(({ key }) => (
-                  <span key={key} className={`w-2 h-2 rounded-full ${
-                    record?.signOffs?.[key] ? 'bg-green-500' : 'border border-slate-300'
-                  }`} />
-                ))}
-              </div>
-            </button>
-          );
-        })}
+    <div className="flex flex-col gap-3">
+      {/* Plan Customiser action bar — pinned to the top so the auditor
+          can scope custom tests / N/A overrides for the active risk's
+          FS Line without leaving the panel. */}
+      <div className="flex items-center justify-between gap-3 px-3 py-2 bg-indigo-50 border border-indigo-200 rounded">
+        <div className="text-xs text-slate-700">
+          <span className="text-[10px] uppercase tracking-wide text-indigo-700 font-semibold">Audit Plan for:</span>{' '}
+          <span className="font-semibold">{activeRisk?.lineItem || 'Select a significant risk'}</span>
+        </div>
+        <button
+          onClick={openPlanCustomiser}
+          disabled={!activeRisk}
+          className="inline-flex items-center gap-1.5 text-xs font-semibold px-3 py-1.5 rounded bg-indigo-600 text-white border border-indigo-700 hover:bg-indigo-700 shadow-sm whitespace-nowrap disabled:opacity-50 disabled:cursor-not-allowed"
+          title="Open Plan Customiser for this significant risk's FS Line"
+        >
+          <ClipboardList className="h-3.5 w-3.5" />
+          Plan Customiser
+        </button>
       </div>
 
-      {saving && <div className="text-[10px] text-blue-500 mb-2 animate-pulse">Saving...</div>}
+      {saving && <div className="text-[10px] text-blue-500 animate-pulse">Saving...</div>}
 
-      {activeRisk && (
-        // key=activeRiskId remounts the whole section list when the
-        // user switches between significant-risk tabs, so each Section
-        // re-evaluates its hasContent / defaultOpen logic for the
-        // newly-selected risk's data. Without this, the open/closed
-        // state from the previous risk would carry over.
-        <div key={activeRisk.id} className="space-y-2">
-          {/* Risk header */}
-          <div className="border border-red-200 bg-red-50/30 rounded-lg p-3 flex items-center justify-between">
-            <div>
-              <div className="flex items-center gap-2 mb-1">
-                <AlertTriangle className="h-4 w-4 text-red-500" />
-                <span className="text-xs font-semibold text-slate-800">{activeRisk.lineItem}</span>
-                <span className="text-[9px] px-1.5 py-0.5 rounded bg-red-100 text-red-700">{activeRisk.overallRisk || activeRisk.finalRiskAssessment}</span>
-              </div>
-              {activeRisk.riskIdentified && <p className="text-[11px] text-slate-600">{activeRisk.riskIdentified}</p>}
-            </div>
-            {/* Sign-off dots — EQR shown only when an EQR is on the team */}
-            <div className="flex items-center gap-3">
-              {(teamMembers?.some(m => m.role === 'EQR') ? SIGN_OFF_ROLES_WITH_EQR : SIGN_OFF_ROLES_BASE).map(({ key, label }) => {
-                const so = activeRecord?.signOffs?.[key];
-                const hasSigned = !!so?.timestamp;
-                const canSign = canSignSigRisk(key, session?.user?.id || userId, teamMembers);
-                return (
-                  <div key={key} className="flex flex-col items-center gap-0.5">
-                    <span className="text-[9px] text-slate-500">{label}</span>
-                    <button onClick={() => canSign && handleSignOff(activeRisk.id, key)}
-                      disabled={!canSign && !hasSigned}
-                      className={`w-5 h-5 rounded-full border-2 transition-all ${
-                        hasSigned
-                          ? 'bg-green-500 border-green-500'
-                          : canSign
-                            ? 'bg-white border-slate-300 hover:border-blue-400 cursor-pointer'
-                            : 'bg-white border-slate-200 cursor-not-allowed opacity-50'
-                      }`}
-                      title={
-                        hasSigned ? `${so.userName} — ${new Date(so.timestamp).toLocaleString()}` :
-                        canSign ? `Sign off as ${label}` :
-                        key === 'ri' ? 'Only the RI can sign here' :
-                        key === 'eqr' ? 'Only the EQR can sign here' :
-                        `Only ${label}s can sign here`
-                      }
+      <div className="flex gap-4 min-h-[500px]">
+        {/* Left sidebar — clickable significant-risk selector with the
+            Reviewer/RI sign-off dots inline so progress is visible at
+            a glance without switching tabs. */}
+        <div className="w-56 flex-shrink-0 border-r border-slate-200 pr-3 space-y-1">
+          <p className="text-[10px] font-semibold text-slate-400 uppercase tracking-wide mb-2">Significant Risks ({rmmRows.length})</p>
+          {rmmRows.map(risk => {
+            const record = records[risk.id];
+            const isActive = activeRiskId === risk.id;
+            const reviewerSigned = !!record?.signOffs?.reviewer?.timestamp;
+            const riSigned = !!record?.signOffs?.ri?.timestamp;
+            return (
+              <button
+                key={risk.id}
+                onClick={() => setActiveRiskId(risk.id)}
+                className={`w-full text-left px-2.5 py-2 rounded-lg text-xs transition-colors ${
+                  isActive ? 'bg-blue-50 text-blue-700 border border-blue-200' : 'text-slate-600 hover:bg-slate-50'
+                }`}
+              >
+                <div className="flex items-center justify-between gap-2">
+                  <span className="font-medium truncate">{risk.lineItem || 'Unnamed Risk'}</span>
+                  <span className="flex items-center gap-1 flex-shrink-0">
+                    <span
+                      className={`w-2 h-2 rounded-full ${reviewerSigned ? 'bg-green-500' : 'border border-slate-300'}`}
+                      title={`Reviewer: ${reviewerSigned ? 'Signed' : 'Pending'}`}
                     />
-                  </div>
-                );
-              })}
-            </div>
-          </div>
+                    <span
+                      className={`w-2 h-2 rounded-full ${riSigned ? 'bg-green-500' : 'border border-slate-300'}`}
+                      title={`RI: ${riSigned ? 'Signed' : 'Pending'}`}
+                    />
+                  </span>
+                </div>
+              </button>
+            );
+          })}
+        </div>
+
+        {/* Right pane — risk detail + sign-off bar at top right */}
+        <div className="flex-1 min-w-0">
+          {activeRisk && (
+            // key=activeRiskId remounts the whole section list when the
+            // user switches between significant-risk tabs, so each Section
+            // re-evaluates its hasContent / defaultOpen logic for the
+            // newly-selected risk's data. Without this, the open/closed
+            // state from the previous risk would carry over.
+            <div key={activeRisk.id} className="space-y-2">
+              {/* Sign-off bar — top right of the right pane. The
+                  Reviewer/RI dots here drive the left-sidebar dots
+                  via shared signOffs state. */}
+              <div className="flex justify-end">
+                <div className="flex items-center gap-3">
+                  {visibleRoles.map(({ key, label }) => {
+                    const so = activeRecord?.signOffs?.[key];
+                    const hasSigned = !!so?.timestamp;
+                    const canSign = canSignSigRisk(key, session?.user?.id || userId, teamMembers);
+                    return (
+                      <div key={key} className="flex flex-col items-center gap-0.5">
+                        <span className="text-[9px] text-slate-500">{label}</span>
+                        <button onClick={() => canSign && handleSignOff(activeRisk.id, key)}
+                          disabled={!canSign && !hasSigned}
+                          className={`w-5 h-5 rounded-full border-2 transition-all ${
+                            hasSigned
+                              ? 'bg-green-500 border-green-500'
+                              : canSign
+                                ? 'bg-white border-slate-300 hover:border-blue-400 cursor-pointer'
+                                : 'bg-white border-slate-200 cursor-not-allowed opacity-50'
+                          }`}
+                          title={
+                            hasSigned ? `${so.userName} — ${new Date(so.timestamp).toLocaleString()}` :
+                            canSign ? `Sign off as ${label}` :
+                            key === 'ri' ? 'Only the RI can sign here' :
+                            key === 'eqr' ? 'Only the EQR can sign here' :
+                            `Only ${label}s can sign here`
+                          }
+                        />
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {/* Risk header */}
+              <div className="border border-red-200 bg-red-50/30 rounded-lg p-3">
+                <div className="flex items-center gap-2 mb-1">
+                  <AlertTriangle className="h-4 w-4 text-red-500" />
+                  <span className="text-xs font-semibold text-slate-800">{activeRisk.lineItem}</span>
+                  <span className="text-[9px] px-1.5 py-0.5 rounded bg-red-100 text-red-700">{activeRisk.overallRisk || activeRisk.finalRiskAssessment}</span>
+                </div>
+                {activeRisk.riskIdentified && <p className="text-[11px] text-slate-600">{activeRisk.riskIdentified}</p>}
+              </div>
 
           {/* Section 1: Risk Description */}
           <Section title="Risk description" defaultOpen>
@@ -817,7 +913,20 @@ export function SignificantRiskPanel({ engagementId, userId, userName, teamMembe
             </p>
             <AutoTextarea value={effectiveAnswers.conclusion || ''} onChange={v => updateAnswer('conclusion', v)} minRows={4} />
           </Section>
+            </div>
+          )}
         </div>
+      </div>
+
+      {/* Plan Customiser modal — engagement-level test trimming + custom tests */}
+      {planCustomiserOpen && planCustomiserContext && (
+        <PlanCustomiserModal
+          engagementId={engagementId}
+          fsLineId={planCustomiserContext.fsLineId}
+          fsLineName={planCustomiserContext.fsLineName}
+          allocatedTests={planCustomiserAllocated}
+          onClose={() => { setPlanCustomiserOpen(false); setPlanCustomiserContext(null); }}
+        />
       )}
     </div>
   );

@@ -2048,6 +2048,21 @@ model AuditEngagement {
   //   }
   importOptions Json? @map("import_options")
 
+  // Audit-type change request — set when an audit-team member tries
+  // to switch this engagement's auditType (e.g. Substantive →
+  // Controls Based) and the engagement already has a different
+  // auditType. While these fields are populated, the engagement is
+  // BLOCKED from being opened (the chooser surfaces a banner and
+  // the AuditEngagementPage refuses to render content). The RI
+  // approves or denies via an email link carrying
+  // pendingChangeApprovalToken. On approval, auditType is overwritten
+  // with pendingAuditTypeChange and the request fields are cleared.
+  pendingAuditTypeChange   String?   @map("pending_audit_type_change")
+  pendingChangeRequestedById String? @map("pending_change_requested_by_id")
+  pendingChangeRequestedAt DateTime? @map("pending_change_requested_at")
+  pendingChangeApprovalToken String? @unique @map("pending_change_approval_token")
+  pendingChangeApprovedAt  DateTime? @map("pending_change_approved_at")
+
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
 

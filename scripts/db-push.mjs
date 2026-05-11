@@ -190,6 +190,36 @@ async function applySchemaSafetyNet() {
         ON audit_rmm_rows(merged_group_id)
     `));
 
+    // 6. AuditEngagement.pendingAuditTypeChange + companions — added
+    //    by the tile-change RI-approval flow. Every Prisma read on
+    //    audit_engagements selects these implicitly, so missing them
+    //    breaks Independence submit, the engagement loader, etc.
+    results.push(await safetyNetStep(prisma, 'audit_engagements.pending_audit_type_change column', `
+      ALTER TABLE audit_engagements
+        ADD COLUMN IF NOT EXISTS pending_audit_type_change text
+    `));
+    results.push(await safetyNetStep(prisma, 'audit_engagements.pending_change_requested_by_id column', `
+      ALTER TABLE audit_engagements
+        ADD COLUMN IF NOT EXISTS pending_change_requested_by_id text
+    `));
+    results.push(await safetyNetStep(prisma, 'audit_engagements.pending_change_requested_at column', `
+      ALTER TABLE audit_engagements
+        ADD COLUMN IF NOT EXISTS pending_change_requested_at timestamptz
+    `));
+    results.push(await safetyNetStep(prisma, 'audit_engagements.pending_change_approval_token column', `
+      ALTER TABLE audit_engagements
+        ADD COLUMN IF NOT EXISTS pending_change_approval_token text
+    `));
+    results.push(await safetyNetStep(prisma, 'audit_engagements.pending_change_approval_token unique idx', `
+      CREATE UNIQUE INDEX IF NOT EXISTS audit_engagements_pending_change_approval_token_key
+        ON audit_engagements(pending_change_approval_token)
+        WHERE pending_change_approval_token IS NOT NULL
+    `));
+    results.push(await safetyNetStep(prisma, 'audit_engagements.pending_change_approved_at column', `
+      ALTER TABLE audit_engagements
+        ADD COLUMN IF NOT EXISTS pending_change_approved_at timestamptz
+    `));
+
     const ok = results.filter(r => r.ok).length;
     const failed = results.filter(r => !r.ok);
     if (failed.length === 0) {
