@@ -1258,12 +1258,54 @@ export function EngagementTabs({ engagement, auditType, clientName, periodEndDat
             without specialists keep the action bar clean. */}
         <SpecialistRequestsPanel engagementId={engagement.id} />
         <div className="flex-1" />
-        {/* Back-to-last-Completion shortcut. The full phase toggle
-            (Planning / Fieldwork / Completion) now lives in the left
-            navigation of every phase — see phaseToggleEl above. We
-            keep this single button in the action bar because it
-            carries label context the toggle can't (the specific
-            sub-tab the user was last on). */}
+        {/* Top-right phase toggle — mirrors the one in the left
+            sidebar but lives where the user already looks for global
+            actions. Renders the TWO non-current phases as quick-jump
+            buttons; the current phase is implicit (it's the view
+            you're already on) so its own button is hidden. */}
+        {!isPreStart && (
+          <div className="flex items-center gap-1.5">
+            {!inPlanning && (
+              <button
+                onClick={goPlanning}
+                data-howto-id="eng.action.go-planning"
+                className="inline-flex items-center gap-1 px-2.5 py-1 text-[10px] font-medium bg-slate-50 text-slate-700 border border-slate-200 rounded hover:bg-slate-100 transition-colors"
+                title="Return to Planning"
+              >
+                ← Planning
+              </button>
+            )}
+            {!inFieldwork && (
+              <button
+                onClick={goFieldwork}
+                data-howto-id="eng.action.go-fieldwork"
+                className="inline-flex items-center gap-1 px-2.5 py-1 text-[10px] font-medium bg-blue-50 text-blue-700 border border-blue-200 rounded hover:bg-blue-100 transition-colors"
+                title="Open Fieldwork (Audit Plan)"
+              >
+                Fieldwork →
+              </button>
+            )}
+            {!inCompletion && (
+              <button
+                onClick={goCompletion}
+                disabled={!planCreated}
+                data-howto-id="eng.action.go-completion"
+                className={`inline-flex items-center gap-1 px-2.5 py-1 text-[10px] font-medium rounded transition-colors ${
+                  !planCreated
+                    ? 'bg-slate-100 text-slate-400 cursor-default border border-slate-200'
+                    : 'bg-green-50 text-green-700 border border-green-200 hover:bg-green-100'
+                }`}
+                title={!planCreated ? 'Open Fieldwork first to unlock Completion' : 'Open Completion'}
+              >
+                Completion →
+              </button>
+            )}
+          </div>
+        )}
+        {/* Back-to-last-Completion shortcut. Still useful even with
+            the phase toggle above because it carries label context
+            the toggle can't (the specific sub-tab the user was last
+            on). */}
         {!isPreStart && lastCompletionTab && !showCompletion && (
           <button
             onClick={() => {
@@ -1461,11 +1503,16 @@ export function EngagementTabs({ engagement, auditType, clientName, periodEndDat
                         {levelsForStmt.length > 0 && (
                           <button
                             onClick={() => toggleSidebarStatement(stmt)}
-                            className="px-1.5 text-blue-400 hover:text-blue-600 hover:bg-blue-50"
+                            // Larger click target — sidebar chevron used to be
+                            // px-1.5 with a 12×12 icon, which left only ~10
+                            // pixels of horizontal hit area and frequently
+                            // missed on narrow sidebars. Now px-3 + 16×16 icon
+                            // for a comfortable ~36-pixel touch target.
+                            className="px-3 flex items-center justify-center text-blue-500 hover:text-blue-700 hover:bg-blue-50 border-l border-slate-100"
                             title={isExpanded ? 'Hide FS levels' : `Show ${levelsForStmt.length} FS level(s)`}
                             aria-label={isExpanded ? 'Collapse' : 'Expand'}
                           >
-                            <svg className={`h-3 w-3 transition-transform ${isExpanded ? 'rotate-90' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                            <svg className={`h-4 w-4 transition-transform ${isExpanded ? 'rotate-90' : ''}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
                               <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
                             </svg>
                           </button>
