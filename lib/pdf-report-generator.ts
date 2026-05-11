@@ -13,7 +13,7 @@
  * caller (the generate route) uploads to Azure blob and writes the
  * AuditPdfReport row.
  */
-import { PDFDocument, StandardFonts, rgb, type PDFFont, type PDFPage } from 'pdf-lib';
+import { PDFDocument, StandardFonts, rgb, PDFName, PDFArray, type PDFFont, type PDFPage, type PDFRef } from 'pdf-lib';
 import { prisma } from '@/lib/db';
 import { buildTemplateContext, type TemplateContext } from '@/lib/template-context';
 
@@ -564,29 +564,96 @@ export async function generatePdfReport(engagementId: string, opts: { generatedB
     x: MARGIN_X, y: 60, size: 9, font, color: COLOUR_SLATE,
   });
 
-  // Table of contents
+  // Table of contents — header only at this point. We render the
+  // entries themselves AFTER the body has been laid out so each entry
+  // can carry its real page number plus a clickable link annotation
+  // pointing at the section's first page.
   const toc = pdf.addPage([PAGE_W, PAGE_H]);
   toc.drawText('Contents', { x: MARGIN_X, y: PAGE_H - MARGIN_Y, size: 22, font: bold, color: COLOUR_NAVY });
-  let tocY = PAGE_H - MARGIN_Y - 36;
-  for (const [i, s] of sections.entries()) {
-    toc.drawText(safe(`${i + 1}.  ${s.title}`), { x: MARGIN_X, y: tocY, size: 12, font, color: COLOUR_NAVY });
-    tocY -= 18;
-  }
+  toc.drawText('2', { x: PAGE_W - MARGIN_X, y: 30, size: 9, font, color: COLOUR_SLATE });
 
-  // Body
+  // Body — track each section's start page (number + index into the
+  // doc's page tree) so we can build the TOC link annotations after
+  // the body is done.
   const ctx: RenderCtx = {
     pdf, page: pdf.addPage([PAGE_W, PAGE_H]), cursorY: PAGE_H - MARGIN_Y, font, bold, pageNumber: 3,
   };
   // First content page footer
   ctx.page.drawText(String(ctx.pageNumber), { x: PAGE_W - MARGIN_X, y: 30, size: 9, font, color: COLOUR_SLATE });
 
+  interface SectionMark { title: string; pageNumber: number; pageIndex: number; }
+  const sectionMarks: SectionMark[] = [];
+
   for (const [i, s] of sections.entries()) {
     if (i > 0) newPage(ctx); // each section starts on a fresh page
+    sectionMarks.push({
+      title: s.title,
+      pageNumber: ctx.pageNumber,
+      // pdf-lib appends pages to the doc tree in order, so the page
+      // INDEX in pdf.getPages() is `ctx.pageNumber - 1` (cover=0,
+      // toc=1, body starts at 2). Capture it now so we can resolve a
+      // PDFRef once everything's been added.
+      pageIndex: ctx.pageNumber - 1,
+    });
     drawHeading(ctx, `${i + 1}. ${s.title}`, 18);
     ctx.cursorY -= 6;
     if (s.body) drawParagraph(ctx, s.body);
     if (s.rows && s.rows.length > 0) drawKeyValueRows(ctx, s.rows);
     if (s.table) drawTable(ctx, s.table);
+  }
+
+  // Fill in the TOC entries now that we know each section's true
+  // page number + page ref. Each entry gets:
+  //   • the section title in blue (visual cue that it's interactive)
+  //   • a right-aligned page number
+  //   • a /Link annotation covering the row, jumping to the section's
+  //     first page (XYZ destination at top-of-page)
+  //
+  // Page refs come from the doc's /Pages /Kids array — pdf-lib doesn't
+  // expose `page.ref` publicly but the Kids array holds one ref per
+  // page in addPage() order.
+  const pageKids = (pdf.catalog.Pages() as any).get(PDFName.of('Kids')) as PDFArray;
+  function pageRefAt(index: number): PDFRef {
+    return pageKids.get(index) as PDFRef;
+  }
+  const tocAnnotRefs: PDFRef[] = [];
+  let tocY = PAGE_H - MARGIN_Y - 36;
+  const tocEntryHeight = 18;
+  const tocFontSize = 12;
+  for (const [i, mark] of sectionMarks.entries()) {
+    const label = `${i + 1}.  ${mark.title}`;
+    const pageLabel = String(mark.pageNumber);
+    const pageLabelW = font.widthOfTextAtSize(pageLabel, tocFontSize);
+
+    // Entry title — drawn in blue to telegraph "I'm a link".
+    toc.drawText(safe(label), {
+      x: MARGIN_X, y: tocY,
+      size: tocFontSize, font, color: COLOUR_BLUE,
+    });
+    // Right-aligned page number in slate so it doesn't compete with
+    // the title visually.
+    toc.drawText(pageLabel, {
+      x: PAGE_W - MARGIN_X - pageLabelW, y: tocY,
+      size: tocFontSize, font, color: COLOUR_SLATE,
+    });
+
+    // Link annotation — full-width clickable strip over the entry.
+    // Border [0,0,0] suppresses pdf-lib's default rectangle outline.
+    // Dest [pageRef, 'XYZ', left, top, zoom-null] jumps to top-left
+    // of the destination page at the viewer's current zoom.
+    const annot = pdf.context.obj({
+      Type: 'Annot',
+      Subtype: 'Link',
+      Rect: [MARGIN_X - 4, tocY - 3, PAGE_W - MARGIN_X + 4, tocY + tocFontSize + 3],
+      Border: [0, 0, 0],
+      Dest: [pageRefAt(mark.pageIndex), 'XYZ', null, PAGE_H, null],
+    });
+    tocAnnotRefs.push(pdf.context.register(annot));
+    tocY -= tocEntryHeight;
+  }
+  // Attach all the link annotations to the TOC page in one go.
+  if (tocAnnotRefs.length > 0) {
+    toc.node.set(PDFName.of('Annots'), pdf.context.obj(tocAnnotRefs));
   }
 
   const buffer = await pdf.save();

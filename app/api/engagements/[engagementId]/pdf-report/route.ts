@@ -70,6 +70,37 @@ export async function POST(_req: Request, ctx: Ctx) {
     return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
   }
 
+  // Domain-match gate — the audit file is sensitive client data so we
+  // only let team members at the SAME email domain as the engagement's
+  // Responsible Individual (or Partner) generate a snapshot. A
+  // methodology admin at a different firm — or worse, a guest user
+  // whose Entra account leaked into our DB — cannot mint a PDF copy.
+  //
+  // Super admins (Acumon staff) bypass this check intentionally: they
+  // need to generate snapshots for diagnostic purposes across firms,
+  // and their access is already gated by isSuperAdmin elsewhere.
+  if (!session.user.isSuperAdmin) {
+    const generatorEmail = (session.user.email || '').trim().toLowerCase();
+    const generatorDomain = generatorEmail.split('@')[1] || '';
+    const ri = await prisma.auditTeamMember.findFirst({
+      where: { engagementId, role: { in: ['RI', 'Partner'] } },
+      include: { user: { select: { email: true } } },
+    });
+    const riEmail = (ri?.user?.email || '').trim().toLowerCase();
+    const riDomain = riEmail.split('@')[1] || '';
+
+    if (!riDomain) {
+      return NextResponse.json({
+        error: 'Unauthorised — this engagement has no Responsible Individual or Partner assigned, so a PDF audit file cannot be generated yet.',
+      }, { status: 403 });
+    }
+    if (!generatorDomain || generatorDomain !== riDomain) {
+      return NextResponse.json({
+        error: `Unauthorised — only users at the same email domain as the engagement's Responsible Individual (${riDomain}) may generate the audit file PDF.`,
+      }, { status: 403 });
+    }
+  }
+
   // Build the PDF.
   let buffer: Uint8Array;
   let fileName: string;
