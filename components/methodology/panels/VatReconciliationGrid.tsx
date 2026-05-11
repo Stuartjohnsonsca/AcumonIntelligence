@@ -344,12 +344,62 @@ export function VatReconciliationGrid({
             )}
           </div>
           {data.vatReturnsRequest?.portalRequestId ? (
-            <span className="inline-flex items-center gap-1.5 text-[11px] text-emerald-700 bg-emerald-50 border border-emerald-200 rounded px-2 py-1 whitespace-nowrap">
-              <CheckCircle2 className="h-3 w-3" />
-              Requested {data.vatReturnsRequest.sentAt
-                ? new Date(data.vatReturnsRequest.sentAt).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })
-                : 'recently'}
-            </span>
+            <div className="inline-flex items-center gap-2">
+              <span className="inline-flex items-center gap-1.5 text-[11px] text-emerald-700 bg-emerald-50 border border-emerald-200 rounded px-2 py-1 whitespace-nowrap">
+                <CheckCircle2 className="h-3 w-3" />
+                Requested {data.vatReturnsRequest.sentAt
+                  ? new Date(data.vatReturnsRequest.sentAt).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })
+                  : 'recently'}
+              </span>
+              {/* Manual extract-from-portal recovery button. The
+                  commit-time auto-extract (added in 7392127) only
+                  fires when the auditor clicks "Commit" on the
+                  client's response in the firm-side ClientPortalTab.
+                  If commit hasn't happened yet, or the auto-extract
+                  silently failed, the figures don't land in the
+                  grid. This button re-runs extraction on demand and
+                  deletes the source PDFs from blob storage once
+                  figures are merged into periodRows. */}
+              {engagementId && (
+                <button
+                  type="button"
+                  disabled={requesting}
+                  onClick={async () => {
+                    if (requesting) return;
+                    setRequesting(true);
+                    setRequestError(null);
+                    try {
+                      const res = await fetch(`/api/engagements/${engagementId}/vat-reconciliation/extract-from-portal`, {
+                        method: 'POST',
+                      });
+                      const j = await res.json().catch(() => ({}));
+                      if (!res.ok) throw new Error(j?.error || `Extract failed (${res.status})`);
+                      if (Array.isArray(j.periodRows)) {
+                        // Patch the period rows in place. We keep
+                        // `vatReturnsRequest` set so the green
+                        // "Requested" badge remains as provenance —
+                        // the data is now in the grid and the source
+                        // PDFs are gone, but the audit trail of when
+                        // the request was sent is still useful.
+                        onPatch({ periodRows: j.periodRows });
+                      }
+                      if (typeof j.deletedUploadCount === 'number' && j.deletedUploadCount > 0) {
+                        console.log(`[vat-extract/portal] deleted ${j.deletedUploadCount} source upload(s)`);
+                      }
+                    } catch (err: any) {
+                      setRequestError(err?.message || 'Could not pull from portal uploads');
+                    } finally {
+                      setRequesting(false);
+                    }
+                  }}
+                  className="inline-flex items-center gap-1.5 text-[11px] px-3 py-1.5 bg-emerald-600 text-white rounded hover:bg-emerald-700 disabled:opacity-50 whitespace-nowrap"
+                  title="Extract figures from the client's uploaded VAT returns, populate the period rows, and delete the source PDFs."
+                >
+                  {requesting ? <Loader2 className="h-3 w-3 animate-spin" /> : <CheckCircle2 className="h-3 w-3" />}
+                  Pull from uploads
+                </button>
+              )}
+            </div>
           ) : (
             <button
               type="button"
