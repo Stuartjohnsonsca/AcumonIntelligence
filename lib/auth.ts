@@ -196,13 +196,37 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
     async signIn({ user, account, profile }) {
       if (account?.provider !== 'microsoft-entra-id') return true;
 
-      const email = (profile?.email || (user as any)?.email || '') as string;
-      if (!email) return false;
+      // Entra ID for work accounts often delivers the user's address
+      // in `preferred_username` or `upn` rather than `email`. We have
+      // to mirror the same fallback chain the jwt callback uses,
+      // otherwise this gate rejects before jwt is even reached and
+      // the user loops back to /login with no diagnostic surface.
+      const email = (profile?.email
+        || (profile as any)?.preferred_username
+        || (profile as any)?.upn
+        || (user as any)?.email
+        || '') as string;
 
       const entraObjId: string | null = (account as any)?.providerAccountId
         || (profile as any)?.sub
         || (profile as any)?.oid
         || null;
+
+      if (!email && !entraObjId) {
+        console.warn('[auth] Microsoft sign-in rejected — Entra returned neither an email/UPN nor an Object ID. profile keys:', profile ? Object.keys(profile) : 'undefined');
+        return false;
+      }
+      // Verbose log so we can see *what* Entra actually sent us. Goes
+      // to Vercel Functions / Runtime Logs; safe to surface in the
+      // operator's logs because the email/UPN of a sign-in attempt
+      // isn't a secret.
+      console.log('[auth] Microsoft sign-in attempt:', {
+        email,
+        entraObjId,
+        profileHasEmail: !!profile?.email,
+        profileHasPreferredUsername: !!(profile as any)?.preferred_username,
+        profileHasUpn: !!(profile as any)?.upn,
+      });
 
       // Mirror the three-strategy lookup the jwt callback uses so
       // sign-in succeeds for the same set of users that the jwt
