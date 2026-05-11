@@ -1188,34 +1188,6 @@ export function AuditPlanPanel({ engagementId, clientId, periodId, onClose, peri
         ))}
       </div>
 
-      {/* ─── "Other" tab content ─── */}
-      {activeOtherTab === 'Going Concern' && (
-        <div className="p-6 text-center">
-          <div className="inline-flex items-center gap-2 px-4 py-2 bg-purple-50 text-purple-700 rounded-lg text-sm font-medium">Going Concern</div>
-          <p className="text-xs text-slate-400 mt-3">Going Concern assessment workspace — coming soon.</p>
-        </div>
-      )}
-      {activeOtherTab === 'Management Override' && (
-        <JournalRiskPanel engagementId={engagementId} periodStartDate={periodStartDate} periodEndDate={periodEndDate} />
-      )}
-      {/* Taxation — embeds the same TaxationPanel that powers the
-          Completion sub-tab, so Tax on Profits (corporation tax) and
-          VAT Reconciliation are reachable directly from the Audit Plan
-          Other strip without leaving the Fieldwork view. */}
-      {activeOtherTab === 'Taxation' && (
-        <TaxationPanel
-          engagementId={engagementId}
-          periodStartDate={periodStartDate}
-          periodEndDate={periodEndDate}
-        />
-      )}
-      {activeOtherTab === 'Disclosure' && (
-        <div className="p-6 text-center">
-          <div className="inline-flex items-center gap-2 px-4 py-2 bg-purple-50 text-purple-700 rounded-lg text-sm font-medium">Disclosure</div>
-          <p className="text-xs text-slate-400 mt-3">Disclosure checklist and testing workspace — coming soon.</p>
-        </div>
-      )}
-
       {/* Level 2: FS Level sub-tabs */}
       {!activeOtherTab && levels.length > 0 && (
         <div className="flex flex-wrap gap-0.5 gap-y-0.5 bg-slate-100 rounded p-0.5">
@@ -1235,14 +1207,9 @@ export function AuditPlanPanel({ engagementId, clientId, periodId, onClose, peri
         Plan Customiser action bar — visible on every Audit Plan
         view (Statement / Level / Note AND the "Other" tabs:
         Going Concern, Management Override, Disclosure, etc.).
-        The auditor flagged that hiding the
-        button on Other tabs left them unable to add custom tests
-        or audit-tools to those sections. Scope name falls back:
-        Other tab > Level > Statement.
-
-        FS Line resolution uses a fallback chain:
-        exact → case-insensitive → alias → fsLevelMap → synthetic
-        pseudo-id keyed by the scope label.
+        Rendered BEFORE the Other-tab content blocks so it sits ABOVE
+        the embedded tools (Tax on Profits / VAT / Management Override
+        journal-risk panel) — previously it landed beneath them.
       */}
       {(activeOtherTab || activeLevel || activeStatement) && (
         <div className="flex items-center justify-between gap-3 px-3 py-2 bg-indigo-50 border border-indigo-200 rounded">
@@ -1311,6 +1278,35 @@ export function AuditPlanPanel({ engagementId, clientId, periodId, onClose, peri
             Plan Customiser
           </button>
           </div>
+        </div>
+      )}
+
+      {/* ─── "Other" tab content — rendered AFTER the Plan Customiser
+            bar so the bar sits above the embedded tool's UI. ─── */}
+      {activeOtherTab === 'Going Concern' && (
+        <div className="p-6 text-center">
+          <div className="inline-flex items-center gap-2 px-4 py-2 bg-purple-50 text-purple-700 rounded-lg text-sm font-medium">Going Concern</div>
+          <p className="text-xs text-slate-400 mt-3">Going Concern assessment workspace — coming soon.</p>
+        </div>
+      )}
+      {activeOtherTab === 'Management Override' && (
+        <JournalRiskPanel engagementId={engagementId} periodStartDate={periodStartDate} periodEndDate={periodEndDate} />
+      )}
+      {/* Taxation — embeds the same TaxationPanel that powers the
+          Completion sub-tab, so Tax on Profits (corporation tax) and
+          VAT Reconciliation are reachable directly from the Audit Plan
+          Other strip without leaving the Fieldwork view. */}
+      {activeOtherTab === 'Taxation' && (
+        <TaxationPanel
+          engagementId={engagementId}
+          periodStartDate={periodStartDate}
+          periodEndDate={periodEndDate}
+        />
+      )}
+      {activeOtherTab === 'Disclosure' && (
+        <div className="p-6 text-center">
+          <div className="inline-flex items-center gap-2 px-4 py-2 bg-purple-50 text-purple-700 rounded-lg text-sm font-medium">Disclosure</div>
+          <p className="text-xs text-slate-400 mt-3">Disclosure checklist and testing workspace — coming soon.</p>
         </div>
       )}
 

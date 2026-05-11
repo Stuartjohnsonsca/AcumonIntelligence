@@ -57,23 +57,122 @@ export function listJurisdictions(rates: FirmTaxOnProfitsRate[]): string[] {
 // ─── Permanent file question key ─────────────────────────────────────
 //
 // The Tax on Profits tool gates on this answer (Y/N). The seeded
-// question lives in the Permanent File "Taxation" section with a
-// stable id so the tool can locate it even after admins reorder.
+// question lives in the Permanent File "Taxation" section.
+//
+// IMPORTANT: the permanent file stores answers under the QUESTION'S
+// UUID (set by the schedule designer), NOT the slug we ship below. To
+// read the answer we must resolve slug → UUID via the template
+// definition and then look up the flat answer map. Same approach used
+// by readVatRegistration. The original implementation that read
+// `flat[TAX_ON_PROFITS_PERMANENT_QUESTION_ID]` only ever returned
+// 'unanswered' because that literal id is never the stored key.
 export const TAX_ON_PROFITS_PERMANENT_QUESTION_ID = 'pf_taxation_subject_to_tax_on_profits';
 export const TAX_ON_PROFITS_PERMANENT_QUESTION_LABEL = 'Is the entity subject to tax on its profits?';
+export const TAX_ON_PROFITS_TOOL_NAME = 'Tax on Profits';
+export const TAX_ON_PROFITS_PERMANENT_QUESTION_SLUG = 'is_the_entity_subject_to_tax_on_its_profits';
+
+const PERMANENT_FILE_TEMPLATE_TYPE = 'permanent_file_questions';
+
+function simpleSlugify(text: string): string {
+  return text
+    .toLowerCase()
+    .replace(/%/g, ' pct ')
+    .replace(/&/g, ' and ')
+    .replace(/[^a-z0-9]+/g, '_')
+    .replace(/^_+|_+$/g, '');
+}
 
 export type SubjectToTaxStatus = 'unanswered' | 'Y' | 'N';
 
 export async function readSubjectToTax(engagementId: string): Promise<SubjectToTaxStatus> {
   try {
-    const res = await fetch(`/api/engagements/${engagementId}/permanent-file`);
-    if (!res.ok) return 'unanswered';
-    const json = await res.json();
+    const [pfRes, tplRes, remapsRes] = await Promise.all([
+      fetch(`/api/engagements/${engagementId}/permanent-file`),
+      fetch(`/api/methodology-admin/templates?templateType=${PERMANENT_FILE_TEMPLATE_TYPE}&engagementId=${encodeURIComponent(engagementId)}`).catch(() => null),
+      fetch('/api/methodology-admin/tool-slug-remaps').catch(() => null),
+    ]);
+    if (!pfRes.ok) return 'unanswered';
+    const json = await pfRes.json();
+
+    // Tool-slug remap registry: admins can redirect this tool's read
+    // to a replacement question on the same template. Mirrors what
+    // readVatRegistration does.
+    const { parseRemaps, resolveRemap, flatKey } = await import('./tool-slug-remap');
+    let rawRemaps: unknown = [];
+    if (remapsRes && remapsRes.ok) {
+      try { rawRemaps = (await remapsRes.json())?.remaps; } catch { /* tolerant */ }
+    }
+    const remaps = parseRemaps(rawRemaps);
+
+    // Flatten section data into a single id-keyed map.
     const flat: Record<string, unknown> = {};
     for (const [, sectionData] of Object.entries(json.data || {})) {
       if (typeof sectionData === 'object' && sectionData) Object.assign(flat, sectionData);
     }
-    const raw = flat[TAX_ON_PROFITS_PERMANENT_QUESTION_ID];
+
+    // Build slug → questionId map from the template definition. The
+    // template `items` payload comes in two flavours — flat array or
+    // `{ questions, sectionMeta }` — readVatRegistration handles both
+    // and we do the same here.
+    const slugToId: Record<string, string> = {};
+    function addSlug(slug: string, id: string) {
+      const s = (slug || '').toLowerCase();
+      if (s && id && !(s in slugToId)) slugToId[s] = id;
+    }
+    if (tplRes && tplRes.ok) {
+      try {
+        const t = await tplRes.json();
+        const rawItems = t?.template?.items ?? t?.items;
+        let items: unknown[] = [];
+        if (Array.isArray(rawItems)) items = rawItems;
+        else if (rawItems && typeof rawItems === 'object' && Array.isArray((rawItems as { questions?: unknown[] }).questions)) {
+          items = (rawItems as { questions: unknown[] }).questions;
+        }
+        for (const raw of items) {
+          if (!raw || typeof raw !== 'object') continue;
+          const item = raw as { id?: unknown; questionText?: unknown; key?: unknown };
+          if (!item.id) continue;
+          const text = typeof item.questionText === 'string' ? item.questionText : '';
+          const explicit = typeof item.key === 'string' ? item.key.trim() : '';
+          if (text) addSlug(simpleSlugify(text), String(item.id));
+          if (explicit) addSlug(explicit, String(item.id));
+        }
+      } catch { /* tolerant */ }
+    }
+
+    // Resolve the canonical slug through the firm's remap registry.
+    function readAt(canonicalSlug: string, canonicalColumn?: number): unknown {
+      const r = resolveRemap(remaps, TAX_ON_PROFITS_TOOL_NAME, PERMANENT_FILE_TEMPLATE_TYPE, canonicalSlug, canonicalColumn);
+      const targetId = slugToId[(r.slug || '').toLowerCase()];
+      if (!targetId) return undefined;
+      return flat[flatKey(targetId, r.column)];
+    }
+
+    // 1. Canonical slug at col1 (the schedule ships this question as a
+    //    multi-column row with the Y/N in col1) AND as a plain row
+    //    (firms that rebuilt it as a single-column Y/N question).
+    let raw: unknown = readAt(TAX_ON_PROFITS_PERMANENT_QUESTION_SLUG, 1);
+    if (raw === undefined || raw === null || raw === '') {
+      raw = readAt(TAX_ON_PROFITS_PERMANENT_QUESTION_SLUG);
+    }
+
+    // 2. Tolerant scan — accept any question whose slug contains
+    //    'subject' + 'tax' + 'profit' (covers minor rewordings).
+    if (raw === undefined || raw === null || raw === '') {
+      for (const [slug, id] of Object.entries(slugToId)) {
+        if (slug.includes('subject') && slug.includes('tax') && slug.includes('profit')) {
+          raw = flat[flatKey(id, 1)] ?? flat[id];
+          if (raw === 'Y' || raw === 'N') break;
+        }
+      }
+    }
+
+    // 3. Legacy / first-attempt fallback — engagements where the
+    //    schedule designer set the explicit literal key.
+    if (raw === undefined || raw === null || raw === '') {
+      raw = flat[TAX_ON_PROFITS_PERMANENT_QUESTION_ID];
+    }
+
     if (raw === 'Y' || raw === 'N') return raw;
     return 'unanswered';
   } catch {
