@@ -86,6 +86,12 @@ interface SpecialistItem {
   // archived and the item moves into "report" mode (chat history
   // shown read-only).
   status: 'open' | 'completed';
+  // Completion metadata — set when completeChat fires. Drives the
+  // "Chat completed by X on Y" line in the item card + feeds into
+  // the sub-tab aggregate's last-action tooltip.
+  completedAt?: string;
+  completedByUserId?: string;
+  completedByUserName?: string;
   // When the item was created by a fired schedule action, these
   // tag the source so the UI can show a "fired automatically"
   // marker and the server can deduplicate re-fires.
@@ -119,6 +125,42 @@ const ITEM_KIND_ICON: Record<ItemKind, ReactNode> = {
 // ─── Aggregation helpers ───────────────────────────────────────────
 
 type AggregateState = 'all' | 'some' | 'none';
+
+/** Scan every item in a sub-tab for the most recent action of any
+ *  kind (creation, message, sign-off, completion) and return a
+ *  human-readable summary like "Completed by Stuart on 11 May 2026,
+ *  10:32". Used to populate the aggregate dot tooltips so reviewers
+ *  can see what last happened at a glance. */
+function describeLastAction(items: SpecialistItem[]): string {
+  if (items.length === 0) return 'No activity yet';
+  let bestTs = 0;
+  let bestLabel = '';
+  function bid(ts: string | undefined, label: string) {
+    if (!ts) return;
+    const t = new Date(ts).getTime();
+    if (Number.isFinite(t) && t > bestTs) {
+      bestTs = t;
+      bestLabel = label;
+    }
+  }
+  for (const it of items) {
+    bid(it.createdAt, `Created (${it.title || it.kind}) by ${it.createdByName}`);
+    if (it.completedAt) {
+      bid(it.completedAt, `Completed (${it.title || it.kind}) by ${it.completedByUserName || 'unknown'}`);
+    }
+    for (const m of it.messages) {
+      bid(m.createdAt, `Chat message (${it.title || 'chat'}) by ${m.userName}`);
+    }
+    for (const [role, so] of Object.entries(it.signOffs || {})) {
+      if (so?.timestamp) {
+        const roleLbl = role === 'preparer' ? 'Preparer' : role === 'reviewer' ? 'Reviewer' : role === 'ri' ? 'RI' : role;
+        bid(so.timestamp, `${roleLbl} signed off (${it.title || it.kind}) — ${so.userName || 'unknown'}`);
+      }
+    }
+  }
+  if (bestTs === 0) return 'No activity yet';
+  return `${bestLabel} on ${new Date(bestTs).toLocaleString('en-GB')}`;
+}
 
 function aggregateForRole(items: SpecialistItem[], roleKey: string): AggregateState {
   if (items.length === 0) return 'none';
@@ -488,14 +530,29 @@ export function SpecialistsTab({ engagementId, specialists, teamMembers, current
     const transcript = item.messages
       .map(m => `[${new Date(m.createdAt).toLocaleString('en-GB')}] ${m.userName}: ${m.message}`)
       .join('\n');
+    const completedAt = new Date().toISOString();
+    const completedByUserName = currentUserName || 'Unknown';
     const nextItems = items.slice();
     nextItems[idx] = {
       ...item,
       status: 'completed',
+      // Record who completed the chat + when, so the aggregate dot
+      // tooltip and the per-item completion line can both surface
+      // the action to reviewers. Persisted via applyState so the
+      // metadata survives a page reload.
+      completedAt,
+      completedByUserId: currentUserId,
+      completedByUserName,
       // Move chat history into the body so it reads as a report.
-      body: item.body
-        ? `${item.body}\n\n--- Chat transcript ---\n${transcript}`
-        : transcript,
+      // Append the completion stamp so the closure is visible in
+      // the archived transcript itself.
+      body: (() => {
+        const closure = `\n\n--- Chat completed by ${completedByUserName} on ${new Date(completedAt).toLocaleString('en-GB')} ---`;
+        const base = item.body
+          ? `${item.body}\n\n--- Chat transcript ---\n${transcript}`
+          : transcript;
+        return base + closure;
+      })(),
     };
     applyState({ ...state, [roleKey]: { items: nextItems } });
   }
@@ -571,7 +628,10 @@ export function SpecialistsTab({ engagementId, specialists, teamMembers, current
               {items.length > 0 && (
                 <span className="text-[10px] text-slate-400">({items.length})</span>
               )}
-              <span className="inline-flex items-center gap-0.5 ml-1" title={`Preparer: ${preparer} · Reviewer: ${reviewer} · RI: ${ri}`}>
+              <span
+                className="inline-flex items-center gap-0.5 ml-1"
+                title={`Preparer: ${preparer} · Reviewer: ${reviewer} · RI: ${ri}\nLast action: ${describeLastAction(items)}`}
+              >
                 {renderAggregateDot(preparer)}
                 {renderAggregateDot(reviewer)}
                 {renderAggregateDot(ri)}
@@ -617,8 +677,12 @@ export function SpecialistsTab({ engagementId, specialists, teamMembers, current
               const preparer = aggregateForRole(activeItems, 'preparer');
               const reviewer = aggregateForRole(activeItems, 'reviewer');
               const ri = aggregateForRole(activeItems, 'ri');
+              const lastAction = describeLastAction(activeItems);
               return (
-                <div className="inline-flex items-center gap-1.5 text-[10px] text-slate-500" title={`Preparer: ${preparer} · Reviewer: ${reviewer} · RI: ${ri}`}>
+                <div
+                  className="inline-flex items-center gap-1.5 text-[10px] text-slate-500"
+                  title={`Preparer: ${preparer} · Reviewer: ${reviewer} · RI: ${ri}\nLast action: ${lastAction}`}
+                >
                   <span className="flex items-center gap-0.5"><span className="text-slate-400">P</span> {renderAggregateDot(preparer)}</span>
                   <span className="flex items-center gap-0.5"><span className="text-slate-400">R</span> {renderAggregateDot(reviewer)}</span>
                   <span className="flex items-center gap-0.5"><span className="text-slate-400">RI</span> {renderAggregateDot(ri)}</span>
@@ -760,8 +824,16 @@ export function SpecialistsTab({ engagementId, specialists, teamMembers, current
                         />
                       )}
                       {item.kind === 'chat' && item.status === 'completed' && item.messages.length > 0 && (
-                        <div className="text-[10px] text-slate-400 italic">
-                          Chat completed — {item.messages.length} message{item.messages.length === 1 ? '' : 's'} archived into the report body above.
+                        <div className="text-[10px] text-slate-500 italic">
+                          Chat completed
+                          {item.completedByUserName && (
+                            <> by <span className="font-medium not-italic text-slate-700">{item.completedByUserName}</span></>
+                          )}
+                          {item.completedAt && (
+                            <> on <span className="not-italic">{new Date(item.completedAt).toLocaleString('en-GB')}</span></>
+                          )}
+                          {' — '}
+                          {item.messages.length} message{item.messages.length === 1 ? '' : 's'} archived into the report body above.
                         </div>
                       )}
                     </div>
