@@ -1,8 +1,27 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { signIn } from 'next-auth/react';
+
+// Friendly text for the NextAuth + my-account error codes we may
+// arrive on the page with via ?error=… or ?reason=… query string.
+// Without surfacing these, a failed Microsoft sign-in just bounces
+// the user back to a blank login screen with no explanation, which
+// reads as the page "going round in circles".
+const ERROR_MESSAGES: Record<string, string> = {
+  // NextAuth-native — signIn callback returned false (we reject when
+  // the Microsoft account isn't linked to a user row in our database).
+  AccessDenied: 'Your Microsoft account isn’t linked to an Acumon user yet. A Super Admin needs to pre-provision your account (matching email or Entra Object ID) before Microsoft sign-in will work.',
+  Verification: 'Your sign-in link has expired or already been used. Please try again.',
+  Configuration: 'Sign-in is mis-configured on the server. Please contact support — this is not something you can fix from here.',
+  OAuthCallback: 'Microsoft returned an error while completing the sign-in. Please try again.',
+  OAuthSignin: 'We couldn’t start the Microsoft sign-in flow. Please try again.',
+  // Custom — emitted by /my-account when the JWT carries
+  // twoFactorVerified=true but no matching user.id (msalPendingSetup
+  // edge case).
+  no_user: 'Microsoft authenticated you, but we couldn’t find a matching user row. A Super Admin needs to pre-provision your account.',
+};
 import Link from 'next/link';
 import { Eye, EyeOff, LogIn, Loader2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
@@ -22,6 +41,17 @@ export default function LoginForm() {
   const [loading, setLoading] = useState(false);
   const [msalLoading, setMsalLoading] = useState(false);
   const [error, setError] = useState('');
+
+  // Surface any error code carried in by NextAuth (?error=…) or by
+  // /my-account's defensive redirect (?error=no_user). Without this,
+  // the page just renders fresh and the user has no idea why their
+  // Microsoft sign-in didn't land them on the dashboard.
+  useEffect(() => {
+    const code = searchParams.get('error') || searchParams.get('reason');
+    if (!code) return;
+    const message = ERROR_MESSAGES[code] || `Sign in failed (${code}). Please try again or contact support.`;
+    setError(message);
+  }, [searchParams]);
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
