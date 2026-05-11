@@ -207,9 +207,18 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
         || (user as any)?.email
         || '') as string;
 
-      const entraObjId: string | null = (account as any)?.providerAccountId
+      // Object ID resolution order matters. NextAuth puts the OIDC
+      // `sub` claim into `account.providerAccountId` — but for
+      // Microsoft Entra `sub` is a per-app pairwise pseudonym, NOT
+      // the user's tenant-wide Object ID. The true Object ID lives
+      // on `profile.oid`. We prefer `oid` so persisted
+      // `entra_object_id` values match what an admin sees in the
+      // Entra admin centre and are portable across apps; we fall
+      // back to `sub` / `providerAccountId` only when `oid` isn't
+      // available (e.g. an old token shape).
+      const entraObjId: string | null = (profile as any)?.oid
+        || (account as any)?.providerAccountId
         || (profile as any)?.sub
-        || (profile as any)?.oid
         || null;
 
       if (!email && !entraObjId) {
@@ -309,9 +318,13 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
         //      edge-case we haven't seen.
         //
         // The first strategy to return a non-null result wins.
-        const entraObjId: string | null = (account as any)?.providerAccountId
+        // See the signIn callback for why `oid` is preferred over
+        // `providerAccountId` / `sub` — short version: Entra's `sub`
+        // is a per-app pairwise pseudonym, `oid` is the real
+        // tenant-wide Object ID.
+        const entraObjId: string | null = (profile as any)?.oid
+          || (account as any)?.providerAccountId
           || (profile as any)?.sub
-          || (profile as any)?.oid
           || null;
         type DbUser = Awaited<ReturnType<typeof prisma.user.findFirst>> & { firm?: any };
         let dbUser: DbUser | null = null;

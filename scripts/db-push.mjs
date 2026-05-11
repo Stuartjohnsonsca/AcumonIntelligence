@@ -84,12 +84,37 @@ async function killIdleBlockers() {
  * change shows the same drift symptom; never modify or remove existing
  * statements (that's what `prisma db push` is for).
  */
+/**
+ * Run one safety-net statement with its own try/catch + timing log.
+ * Each statement is independent so a transient failure on one (e.g.
+ * a lock timeout, a Postgres parser quirk) can't take out the rest —
+ * the previous "all in one try block" structure meant a single early
+ * failure left every later statement unrun, which is why
+ * methodology_tool_slug_remaps and methodology_industry_id were
+ * intermittently missing on production even though the script
+ * supposedly handled them.
+ */
+async function safetyNetStep(prisma, label, sql) {
+  const t0 = Date.now();
+  try {
+    await prisma.$executeRawUnsafe(sql);
+    console.error(`[db-push] ✓ ${label} (${Date.now() - t0}ms)`);
+    return { label, ok: true };
+  } catch (err) {
+    console.error(`[db-push] ✗ ${label} (${Date.now() - t0}ms): ${err?.message || err}`);
+    return { label, ok: false, error: err?.message || String(err) };
+  }
+}
+
 async function applySchemaSafetyNet() {
   const prisma = new PrismaClient();
+  const results = [];
   try {
+    console.error('[db-push] applying schema safety net…');
+
     // 1. AuditDocumentTabAllocation join table — added on commit
     //    1469f9d. Without it, every per-tab Documents fetch 500s.
-    await prisma.$executeRawUnsafe(`
+    results.push(await safetyNetStep(prisma, 'audit_document_tab_allocations table', `
       CREATE TABLE IF NOT EXISTS audit_document_tab_allocations (
         document_id      text        NOT NULL REFERENCES audit_documents(id) ON DELETE CASCADE,
         tab              text        NOT NULL,
@@ -97,30 +122,30 @@ async function applySchemaSafetyNet() {
         allocated_by_id  text        REFERENCES users(id) ON DELETE SET NULL,
         PRIMARY KEY (document_id, tab)
       )
-    `);
-    await prisma.$executeRawUnsafe(`
+    `));
+    results.push(await safetyNetStep(prisma, 'audit_document_tab_allocations.tab idx', `
       CREATE INDEX IF NOT EXISTS audit_document_tab_allocations_tab_idx
         ON audit_document_tab_allocations(tab)
-    `);
-    await prisma.$executeRawUnsafe(`
+    `));
+    results.push(await safetyNetStep(prisma, 'audit_document_tab_allocations.allocated_by_id idx', `
       CREATE INDEX IF NOT EXISTS audit_document_tab_allocations_allocated_by_idx
         ON audit_document_tab_allocations(allocated_by_id)
-    `);
+    `));
 
     // 2. AuditDocument.documentTypeAiSuggested column — added on
     //    commit ca3fc09. Selected by every AuditDocument.findMany.
-    await prisma.$executeRawUnsafe(`
+    results.push(await safetyNetStep(prisma, 'audit_documents.document_type_ai_suggested column', `
       ALTER TABLE audit_documents
         ADD COLUMN IF NOT EXISTS document_type_ai_suggested boolean NOT NULL DEFAULT false
-    `);
+    `));
 
     // 3. Firm.methodologyToolSlugRemaps — per-firm tool slug overrides
     //    surfaced after a Methodology Admin deletes / renames a
     //    tool-wired question. Empty array is a sensible default.
-    await prisma.$executeRawUnsafe(`
+    results.push(await safetyNetStep(prisma, 'firms.methodology_tool_slug_remaps column', `
       ALTER TABLE firms
         ADD COLUMN IF NOT EXISTS methodology_tool_slug_remaps jsonb NOT NULL DEFAULT '[]'::jsonb
-    `);
+    `));
 
     // 4. AuditEngagement.methodologyIndustryId — added on commit
     //    ab4865c (industry dropdown on the Opening tab). Without it,
@@ -128,15 +153,15 @@ async function applySchemaSafetyNet() {
     //    the implicit SELECT references methodology_industry_id;
     //    surfaces as 500s on Independence submit, the engagement
     //    loader, and anywhere the engagement is read with an include.
-    await prisma.$executeRawUnsafe(`
+    results.push(await safetyNetStep(prisma, 'audit_engagements.methodology_industry_id column', `
       ALTER TABLE audit_engagements
         ADD COLUMN IF NOT EXISTS methodology_industry_id text
-    `);
-    await prisma.$executeRawUnsafe(`
+    `));
+    results.push(await safetyNetStep(prisma, 'audit_engagements.methodology_industry_id idx', `
       CREATE INDEX IF NOT EXISTS audit_engagements_methodology_industry_id_idx
         ON audit_engagements(methodology_industry_id)
-    `);
-    await prisma.$executeRawUnsafe(`
+    `));
+    results.push(await safetyNetStep(prisma, 'audit_engagements.methodology_industry_id FK', `
       DO $$
       BEGIN
         IF NOT EXISTS (
@@ -150,9 +175,16 @@ async function applySchemaSafetyNet() {
             ON DELETE SET NULL;
         END IF;
       END $$
-    `);
+    `));
 
-    console.error('[db-push] safety-net SQL applied.');
+    const ok = results.filter(r => r.ok).length;
+    const failed = results.filter(r => !r.ok);
+    if (failed.length === 0) {
+      console.error(`[db-push] safety-net complete — ${ok}/${results.length} statements applied.`);
+    } else {
+      console.error(`[db-push] safety-net partially applied — ${ok}/${results.length} OK, ${failed.length} failed:`);
+      for (const f of failed) console.error(`[db-push]   ✗ ${f.label}: ${f.error}`);
+    }
   } finally {
     await prisma.$disconnect();
   }
