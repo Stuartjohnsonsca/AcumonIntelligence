@@ -26,7 +26,13 @@ const nextConfig = {
       {
         source: '/(.*)',
         headers: [
-          { key: 'X-Frame-Options', value: 'DENY' },
+          // SAMEORIGIN, not DENY: the PDF report viewer renders the
+          // generated PDF inside an iframe pointed at our own
+          // /api/engagements/.../pdf-report/.../view endpoint. DENY
+          // blocked even same-origin iframes, so the PDF modal showed
+          // "refused to connect". SAMEORIGIN still prevents third-party
+          // sites from framing the app for clickjacking attacks.
+          { key: 'X-Frame-Options', value: 'SAMEORIGIN' },
           { key: 'X-Content-Type-Options', value: 'nosniff' },
           { key: 'Referrer-Policy', value: 'strict-origin-when-cross-origin' },
         ],
