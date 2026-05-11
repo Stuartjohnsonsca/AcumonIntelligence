@@ -1405,14 +1405,18 @@ export function EngagementTabs({ engagement, auditType, clientName, periodEndDat
               the Balance Sheet section without going through the
               generic Audit Plan landing. */}
           <div className="w-32 flex-shrink-0 border-r border-slate-200 bg-slate-50 overflow-y-auto">
-            {/* Phase toggle — top of every left nav so the auditor can
-                always pivot to one of the OTHER two phases. */}
-            {phaseToggleEl}
-            {/* Planning / Fieldwork segmented toggle — filters the
-                completion sidebar's tab list to the relevant stage.
-                Distinct from the phase toggle above: this scopes the
-                tab list within Completion, the toggle navigates between
-                the three top-level phases. */}
+            {/* Planning / Fieldwork segmented toggle — changes the
+                LENS of the sidebar below: which phase's tabs +
+                shortcuts are listed. Picking a specific item below
+                navigates the main view; the toggle itself only
+                rearranges the sidebar.
+                The previous design also rendered `phaseToggleEl` at
+                the top here (navigate-immediately Planning/Fieldwork
+                buttons), but it conflicted with this lens control —
+                two near-identical toggles, one jumping the main view,
+                one only swapping the sidebar contents. Removed.
+                Cross-phase navigation now uses the top-right phase
+                buttons in the engagement action bar. */}
             <div className="flex border-b border-slate-200 bg-slate-50">
               {(['planning', 'fieldwork'] as const).map(stage => (
                 <button
