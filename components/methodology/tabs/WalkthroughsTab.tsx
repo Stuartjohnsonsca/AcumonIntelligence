@@ -1225,40 +1225,36 @@ function WalkthroughProcess({ engagementId, processKey, processLabel, userRole, 
         </button>
         {sectionOpen.flowchart && (
           <div className="p-3">
-            {/* Empty-state guidance — the flowchart can be generated
-                from three different inputs and previously it wasn't
-                obvious where each one lived. This panel surfaces all
-                three paths in one place and labels each button so
-                the auditor can pick deliberately, rather than
-                wondering which click will produce a flowchart. */}
+            {/* Generate-Flowchart action panel — the only place the
+                auditor needs to look to produce a flowchart. Two
+                clearly-labelled inputs: the typed narrative above,
+                and an Excel matrix. File uploads happen via the
+                standard per-tab Documents footer at the bottom of
+                the tab (same as every other tab), so this panel
+                doesn't carry an upload button — it would just
+                duplicate the footer. */}
             {(!status.flowchart || status.flowchart.length === 0) && (
               <div className="mb-3 bg-purple-50/60 border border-purple-200 rounded-lg p-3">
-                <p className="text-[11px] font-semibold text-purple-800 mb-1">No flowchart yet — generate one from:</p>
-                <ul className="text-[10px] text-purple-900/80 list-disc list-inside mb-2 space-y-0.5">
-                  <li>The <strong>Narrative</strong> typed above — click <em>Generate Flowchart from Description</em> in the action bar.</li>
-                  <li>One or more <strong>uploaded files</strong> — tick them in <em>Evidence &amp; Documents</em> and click <em>Analyse Selected &amp; Generate Flowchart</em>.</li>
-                  <li>An <strong>Excel matrix</strong> — click <em>Import from Excel</em> in <em>Evidence &amp; Documents</em>; the flowchart is generated automatically on import.</li>
-                </ul>
+                <p className="text-[11px] font-semibold text-purple-800 mb-1">Generate flowchart</p>
+                <p className="text-[10px] text-purple-900/80 mb-2">
+                  Either type a narrative above and click <em>Generate from Description</em>, or
+                  import an Excel walkthrough matrix below — the flowchart is built automatically.
+                  Documents attach via the footer at the bottom of this tab.
+                </p>
                 <div className="flex items-center gap-1.5 flex-wrap">
-                  {narrative.trim() && (
-                    <button
-                      onClick={generateFlowchart}
-                      disabled={generating}
-                      className="text-[10px] px-3 py-1.5 bg-purple-600 text-white rounded hover:bg-purple-700 disabled:opacity-50 inline-flex items-center gap-1"
-                    >
-                      {generating ? <Loader2 className="h-3 w-3 animate-spin" /> : <FileText className="h-3 w-3" />}
-                      Generate from Description
-                    </button>
-                  )}
                   <button
-                    onClick={() => { toggleSection('evidence'); setSectionOpen(p => ({ ...p, evidence: true })); }}
-                    className="text-[10px] px-3 py-1.5 bg-white border border-purple-300 text-purple-700 rounded hover:bg-purple-100 inline-flex items-center gap-1"
+                    onClick={generateFlowchart}
+                    disabled={generating || !narrative.trim()}
+                    className="text-[10px] px-3 py-1.5 bg-purple-600 text-white rounded hover:bg-purple-700 disabled:opacity-40 inline-flex items-center gap-1"
+                    title={narrative.trim() ? 'Build a flowchart from the typed narrative' : 'Type a narrative in the section above first'}
                   >
-                    <Upload className="h-3 w-3" /> Open Evidence &amp; Documents
+                    {generating ? <Loader2 className="h-3 w-3 animate-spin" /> : <FileText className="h-3 w-3" />}
+                    Generate from Description
                   </button>
                   <button
                     onClick={() => matrixRef.current?.openImport()}
                     className="text-[10px] px-3 py-1.5 bg-white border border-purple-300 text-purple-700 rounded hover:bg-purple-100 inline-flex items-center gap-1"
+                    title="Import narrative + controls from an Excel walkthrough matrix. Flowchart is generated automatically on import."
                   >
                     <FileSpreadsheet className="h-3 w-3" /> Import from Excel
                   </button>
@@ -1284,135 +1280,6 @@ function WalkthroughProcess({ engagementId, processKey, processLabel, userRole, 
               }}
               readOnly={stage === 'complete'}
             />
-          </div>
-        )}
-      </div>
-
-      {/* Evidence section */}
-      <div className="bg-white border border-slate-200 rounded-lg overflow-hidden">
-        <button onClick={() => toggleSection('evidence')} className="w-full flex items-center justify-between px-3 py-2 bg-slate-50 hover:bg-slate-100 transition-colors">
-          <div className="flex items-center gap-2">
-            {sectionOpen.evidence ? <ChevronDown className="h-3.5 w-3.5 text-slate-400" /> : <ChevronRight className="h-3.5 w-3.5 text-slate-400" />}
-            <span className="text-xs font-semibold text-slate-700">Evidence & Documents ({status.evidence?.length || 0})</span>
-          </div>
-        </button>
-        {sectionOpen.evidence && (
-          <div className="p-3 space-y-2">
-            <div className="flex items-center justify-between">
-              <p className="text-[10px] text-slate-400">Documents from portal walkthrough requests{showAllDocs ? ' and all other sources' : ''}.</p>
-              <button onClick={() => setShowAllDocs(prev => !prev)} className="text-[9px] px-2 py-0.5 rounded border border-slate-200 text-slate-500 hover:bg-slate-100">
-                {showAllDocs ? 'Walkthrough Only' : 'Show All Documents'}
-              </button>
-            </div>
-            <div className="flex gap-2 flex-wrap">
-              {/* Upload File — pushes the file to Azure Blob via the
-                  walkthrough/upload route so it lands in evidence with
-                  a storagePath, ready for the "Analyse Selected & Generate
-                  Flowchart" step below. Previously this only stored a
-                  local-only entry which couldn't be analysed. */}
-              <label className="text-[10px] px-2.5 py-1.5 bg-blue-50 text-blue-700 border border-blue-200 rounded hover:bg-blue-100 cursor-pointer inline-flex items-center gap-1">
-                <Upload className="h-3 w-3" /> Upload File
-                <input type="file" className="hidden" accept=".pdf,.jpg,.png,.doc,.docx,.xlsx,.zip" onChange={async (e) => {
-                  const file = await expandZipFile(e.target.files?.[0]);
-                  if (!file) return;
-                  const fd = new FormData();
-                  fd.append('file', file);
-                  fd.append('engagementId', engagementId);
-                  fd.append('stepId', `evidence-${processKey}`);
-                  try {
-                    const res = await fetch('/api/walkthrough/upload', { method: 'POST', body: fd });
-                    if (!res.ok) {
-                      const err = await res.json().catch(() => ({}));
-                      alert(`Upload failed: ${err.error || res.status}`);
-                      return;
-                    }
-                    const uploaded = await res.json();
-                    const ev = status.evidence || [];
-                    await saveStatus({
-                      evidence: [...ev, {
-                        id: uploaded.id || Date.now().toString(),
-                        name: uploaded.name || file.name,
-                        type: file.type,
-                        storagePath: uploaded.storagePath,
-                      }],
-                    });
-                  } catch (err: any) {
-                    alert(`Upload error: ${err?.message || 'unknown'}`);
-                  } finally {
-                    if (e.target) e.target.value = '';
-                  }
-                }} />
-              </label>
-              {/* Import from Excel — opens the matrix import modal.
-                  Lives alongside Upload File because both are ways to
-                  bring narrative/controls into the engagement. The
-                  Excel path also auto-generates a flowchart after
-                  import (see handleMatrixImported). */}
-              <button
-                type="button"
-                onClick={() => matrixRef.current?.openImport()}
-                className="text-[10px] px-2.5 py-1.5 bg-indigo-50 text-indigo-700 border border-indigo-200 rounded hover:bg-indigo-100 cursor-pointer inline-flex items-center gap-1"
-                title="Import narrative + controls from an Excel matrix. Generates a flowchart automatically."
-              >
-                <FileSpreadsheet className="h-3 w-3" /> Import from Excel
-              </button>
-            </div>
-            {(status.evidence || []).map(doc => (
-              <div key={doc.id} className="flex items-center gap-2 text-xs border rounded px-2 py-1">
-                {doc.storagePath && (
-                  <input type="checkbox" checked={selectedEvidence.has(doc.id)}
-                    onChange={() => setSelectedEvidence(prev => { const next = new Set(prev); next.has(doc.id) ? next.delete(doc.id) : next.add(doc.id); return next; })}
-                    className="w-3.5 h-3.5 rounded border-slate-300 text-purple-600 focus:ring-purple-500" />
-                )}
-                <FileText className="h-3.5 w-3.5 text-slate-400" />
-                <span className="text-slate-700 flex-1">{doc.name}</span>
-                {doc.storagePath ? (
-                  <>
-                    {(doc.annotations?.length || 0) > 0 && (
-                      <span className="text-[9px] bg-red-100 text-red-600 px-1.5 py-0.5 rounded" title={`${doc.annotations!.length} annotation(s)`}>
-                        {doc.annotations!.length}
-                      </span>
-                    )}
-                    <button onClick={() => setAnnotatingEvidenceId(doc.id)} className="text-red-500 hover:text-red-700" title="Annotate">
-                      <Edit3 className="h-3 w-3" />
-                    </button>
-                    <button onClick={async () => {
-                      try {
-                        const res = await fetch(`/api/portal/download?storagePath=${encodeURIComponent(doc.storagePath!)}`);
-                        if (res.ok) { const data = await res.json(); window.open(data.url, '_blank'); }
-                      } catch {}
-                    }} className="text-blue-500 hover:text-blue-700" title="Download"><Eye className="h-3 w-3" /></button>
-                  </>
-                ) : (
-                  <span className="text-slate-300 text-[9px] italic">local only</span>
-                )}
-                <button onClick={() => {
-                  // Evidence rows are inline within the per-process
-                  // status payload, so deleting really does remove
-                  // them. Confirm before stripping a file from the
-                  // walkthrough — especially since the file may have
-                  // come from a portal request and isn't trivially
-                  // re-uploaded.
-                  if (typeof window !== 'undefined' && !window.confirm(`Remove "${doc.name}" from this walkthrough?\n\nIf the file came from the client portal, you'll need to re-request it from the client to bring it back.`)) return;
-                  saveStatus({ evidence: (status.evidence || []).filter(d => d.id !== doc.id) });
-                  setSelectedEvidence(prev => { const next = new Set(prev); next.delete(doc.id); return next; });
-                }} className="text-red-400 hover:text-red-600"><X className="h-3 w-3" /></button>
-              </div>
-            ))}
-            {(status.evidence || []).some(e => e.storagePath) && (
-              <div className="flex items-center gap-2 mt-2">
-                <button onClick={() => {
-                  const allIds = (status.evidence || []).filter(e => e.storagePath).map(e => e.id);
-                  setSelectedEvidence(prev => prev.size === allIds.length ? new Set() : new Set(allIds));
-                }} className="text-[9px] text-slate-500 hover:text-slate-700 underline">
-                  {selectedEvidence.size === (status.evidence || []).filter(e => e.storagePath).length ? 'Deselect All' : 'Select All'}
-                </button>
-                <button onClick={analyseAndGenerate} disabled={analysing || selectedEvidence.size === 0} className="text-[10px] px-3 py-1.5 bg-purple-600 text-white rounded hover:bg-purple-700 disabled:opacity-50 inline-flex items-center gap-1">
-                  {analysing ? <Loader2 className="h-3 w-3 animate-spin" /> : <FileText className="h-3 w-3" />}
-                  {analysing ? 'Analysing...' : `Analyse ${selectedEvidence.size > 0 ? selectedEvidence.size + ' ' : ''}Selected & Generate Flowchart`}
-                </button>
-              </div>
-            )}
           </div>
         )}
       </div>
