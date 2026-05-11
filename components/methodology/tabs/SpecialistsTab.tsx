@@ -126,6 +126,80 @@ const ITEM_KIND_ICON: Record<ItemKind, ReactNode> = {
 
 type AggregateState = 'all' | 'some' | 'none';
 
+// ─── Chat visual helpers ──────────────────────────────────────────
+// Drive the chat-bubble palette + initials avatars + day-divider
+// labels in ChatPanel below. Kept close to the chat code rather than
+// in a shared util because the role buckets are specialist-flow
+// specific (firm vs specialist vs neutral).
+
+interface ChatPalette {
+  align: 'left' | 'right';
+  avatarBg: string;
+  avatarText: string;
+  bubbleBg: string;
+  bubbleBorder: string;
+  nameText: string;
+}
+
+// Map a sender's role to a colour bucket. Firm-side roles align left
+// in blue (the convention here is "we sent it"); external specialists
+// align right in purple. Anything else (system / unknown) renders
+// neutrally to the left.
+function chatPaletteForRole(role: string | null | undefined): ChatPalette {
+  const r = (role || '').toLowerCase();
+  const FIRM = new Set(['preparer', 'reviewer', 'partner', 'ri', 'manager', 'eqr', 'staff', 'audit', 'firm', 'admin']);
+  const SPECIALIST = new Set(['specialist', 'expert', 'tax', 'tax_technical', 'ethics', 'ethics_partner', 'technical', 'mrlo', 'external']);
+  if (Array.from(FIRM).some(k => r.includes(k))) {
+    return {
+      align: 'left',
+      avatarBg: 'bg-blue-100',
+      avatarText: 'text-blue-700',
+      bubbleBg: 'bg-blue-50',
+      bubbleBorder: 'border-blue-200',
+      nameText: 'text-blue-900',
+    };
+  }
+  if (Array.from(SPECIALIST).some(k => r.includes(k))) {
+    return {
+      align: 'right',
+      avatarBg: 'bg-purple-100',
+      avatarText: 'text-purple-700',
+      bubbleBg: 'bg-purple-50',
+      bubbleBorder: 'border-purple-200',
+      nameText: 'text-purple-900',
+    };
+  }
+  return {
+    align: 'left',
+    avatarBg: 'bg-slate-200',
+    avatarText: 'text-slate-700',
+    bubbleBg: 'bg-white',
+    bubbleBorder: 'border-slate-200',
+    nameText: 'text-slate-800',
+  };
+}
+
+function chatInitials(name: string | null | undefined): string {
+  const cleaned = (name || '').trim();
+  if (!cleaned) return '?';
+  const parts = cleaned.split(/\s+/);
+  if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
+  return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
+}
+
+function formatChatDayLabel(iso: string | null | undefined): string {
+  if (!iso) return '';
+  const d = new Date(iso);
+  if (!Number.isFinite(d.getTime())) return '';
+  const today = new Date();
+  const yesterday = new Date(); yesterday.setDate(today.getDate() - 1);
+  const isSameDay = (a: Date, b: Date) =>
+    a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate();
+  if (isSameDay(d, today)) return 'Today';
+  if (isSameDay(d, yesterday)) return 'Yesterday';
+  return d.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
+}
+
 /** Scan every item in a sub-tab for the most recent action of any
  *  kind (creation, message, sign-off, completion) and return a
  *  human-readable summary like "Completed by Stuart on 11 May 2026,
@@ -930,46 +1004,86 @@ function ChatPanel({
 
   return (
     <div className="space-y-2">
-      <div className="space-y-1.5 max-h-[300px] overflow-auto border border-slate-200 rounded p-2 bg-white">
+      <div className="space-y-2 max-h-[400px] overflow-auto border border-slate-200 rounded-lg p-3 bg-slate-50">
         {messages.length === 0 ? (
-          <p className="text-[10px] text-slate-400 italic text-center py-2">No messages yet.</p>
-        ) : messages.map(m => (
-          <div key={m.id} className="text-xs">
-            <div className="flex items-baseline gap-1.5">
-              <span className="font-medium text-slate-700">{m.userName}</span>
-              <span className="text-[9px] text-slate-400">{m.role}</span>
-              <span className="text-[9px] text-slate-400 ml-auto">{new Date(m.createdAt).toLocaleString('en-GB')}</span>
-            </div>
-            {m.message && <p className="text-slate-700 whitespace-pre-wrap break-words ml-1 mt-0.5">{m.message}</p>}
-            {m.callLink && (
-              <a
-                href={m.callLink.url}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="ml-1 mt-1 inline-flex items-center gap-1 text-[11px] px-2 py-1 bg-emerald-50 text-emerald-700 border border-emerald-200 rounded hover:bg-emerald-100"
-              >
-                <Phone className="h-3 w-3" /> {m.callLink.label || 'Join call'}
-              </a>
-            )}
-            {m.attachments && m.attachments.length > 0 && (
-              <ul className="ml-1 mt-1 space-y-0.5">
-                {m.attachments.map(a => (
-                  <li key={a.id}>
+          <p className="text-[10px] text-slate-400 italic text-center py-6">No messages yet — type below to start the conversation.</p>
+        ) : messages.map((m, idx) => {
+          // Day divider — emit a small label whenever the day flips
+          // between consecutive messages. Helps long chats scan
+          // chronologically.
+          const dayLabel = formatChatDayLabel(m.createdAt);
+          const prevDayLabel = idx > 0 ? formatChatDayLabel(messages[idx - 1].createdAt) : null;
+          const showDayDivider = dayLabel && dayLabel !== prevDayLabel;
+          // Side / bubble palette is driven by the sender's role.
+          // Firm-side roles (preparer / reviewer / RI / partner /
+          // manager / EQR) align LEFT in blue; specialist / external
+          // roles align RIGHT in purple. Anything else falls back to
+          // neutral slate. Matches the audit-tool convention of
+          // "we sent" vs "they replied".
+          const palette = chatPaletteForRole(m.role);
+          const initials = chatInitials(m.userName);
+          return (
+            <div key={m.id}>
+              {showDayDivider && (
+                <div className="flex items-center gap-2 my-2 select-none">
+                  <div className="flex-1 h-px bg-slate-200" />
+                  <span className="text-[9px] uppercase tracking-wide text-slate-400 font-semibold">{dayLabel}</span>
+                  <div className="flex-1 h-px bg-slate-200" />
+                </div>
+              )}
+              <div className={`flex items-end gap-2 ${palette.align === 'right' ? 'flex-row-reverse' : 'flex-row'}`}>
+                {/* Avatar — coloured circle with initials. Cheaper than
+                    pulling a real photo + lets the eye distinguish
+                    speakers in a long chat. */}
+                <div
+                  className={`flex-shrink-0 w-7 h-7 rounded-full flex items-center justify-center text-[10px] font-semibold ${palette.avatarBg} ${palette.avatarText}`}
+                  title={`${m.userName} · ${m.role}`}
+                >
+                  {initials}
+                </div>
+                {/* Bubble — distinct background, role tag pinned above
+                    the body, timestamp pinned right. max-w keeps long
+                    paragraphs from filling the whole row so the
+                    left/right split stays visible. */}
+                <div className={`max-w-[78%] rounded-lg px-3 py-2 ${palette.bubbleBg} ${palette.bubbleBorder} border shadow-sm`}>
+                  <div className={`flex items-baseline gap-1.5 mb-0.5 ${palette.align === 'right' ? 'flex-row-reverse' : 'flex-row'}`}>
+                    <span className={`text-[11px] font-semibold ${palette.nameText}`}>{m.userName}</span>
+                    <span className="text-[9px] text-slate-500 uppercase tracking-wide">{m.role}</span>
+                    <span className="text-[9px] text-slate-400 ml-auto">{new Date(m.createdAt).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })}</span>
+                  </div>
+                  {m.message && <p className="text-xs text-slate-800 whitespace-pre-wrap break-words leading-relaxed">{m.message}</p>}
+                  {m.callLink && (
                     <a
-                      href={`/api/engagements/${engagementId}/specialists/attachments?blob=${encodeURIComponent(a.blobName || a.id)}&roleKey=${encodeURIComponent(roleKey)}`}
+                      href={m.callLink.url}
                       target="_blank"
                       rel="noopener noreferrer"
-                      className="inline-flex items-center gap-1 text-[11px] text-blue-600 hover:underline"
+                      className="mt-1.5 inline-flex items-center gap-1 text-[11px] px-2 py-1 bg-emerald-50 text-emerald-700 border border-emerald-200 rounded hover:bg-emerald-100"
                     >
-                      <Paperclip className="h-3 w-3" /> {a.name}
-                      {typeof a.size === 'number' && <span className="text-slate-400">({Math.round(a.size / 1024)} KB)</span>}
+                      <Phone className="h-3 w-3" /> {m.callLink.label || 'Join call'}
                     </a>
-                  </li>
-                ))}
-              </ul>
-            )}
-          </div>
-        ))}
+                  )}
+                  {m.attachments && m.attachments.length > 0 && (
+                    <ul className="mt-1.5 space-y-0.5">
+                      {m.attachments.map(a => (
+                        <li key={a.id}>
+                          <a
+                            href={`/api/engagements/${engagementId}/specialists/attachments?blob=${encodeURIComponent(a.blobName || a.id)}&roleKey=${encodeURIComponent(roleKey)}`}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="inline-flex items-center gap-1 text-[11px] text-blue-600 hover:underline"
+                          >
+                            <Paperclip className="h-3 w-3" /> {a.name}
+                            {typeof a.size === 'number' && <span className="text-slate-400">({Math.round(a.size / 1024)} KB)</span>}
+                          </a>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </div>
+              </div>
+            </div>
+          );
+        })}
       </div>
 
       {/* Pending attachments — files queued for the next send. */}
