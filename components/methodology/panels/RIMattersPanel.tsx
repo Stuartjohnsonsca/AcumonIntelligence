@@ -11,6 +11,7 @@ import type { LucideIcon } from 'lucide-react';
 import {
   encodeNavReference, decodeNavReference, getCurrentLocation, navigateTo,
 } from '@/lib/engagement-nav';
+import { PointAttachments, type Attachment } from './PointAttachments';
 
 /**
  * Generic audit-points panel — used for both RI Matters and Review
@@ -172,6 +173,16 @@ const COLOUR_STYLES: Record<string, { bg: string; border: string; text: string; 
   green: { bg: 'bg-green-50', border: 'border-green-300', text: 'text-green-800', dot: 'bg-green-500' },
   amber: { bg: 'bg-amber-50', border: 'border-amber-300', text: 'text-amber-800', dot: 'bg-amber-500' },
   red:   { bg: 'bg-red-50',   border: 'border-red-300',   text: 'text-red-800',   dot: 'bg-red-500' },
+};
+
+// Significance labels driving the tooltips on the colour dot + the
+// 3-button colour picker. Mirrors the same map in
+// ManagementPointPanel so the same colour means the same severity
+// regardless of which panel the reviewer is in.
+const COLOUR_LABELS: Record<string, string> = {
+  green: 'Minor',
+  amber: 'Medium',
+  red:   'Major',
 };
 const STATUS_STYLES: Record<string, string> = {
   new:    'bg-blue-100 text-blue-700 border-blue-200',
@@ -384,6 +395,23 @@ export function RIMattersPanel({ engagementId, userId, userRole, onClose, onActi
     } finally { setBusy(null); }
   }
 
+  // Persist a new attachments array against a matter. Server uses
+  // PATCH ?action=update for arbitrary content edits — attachments
+  // is the field we care about here. After save we refresh so the
+  // local matter list mirrors the server. Failures are silenced
+  // because the inner widget already surfaces upload errors; a
+  // network blip on the save itself is rare and resolved by retry.
+  async function saveAttachments(matter: Matter, attachments: Attachment[]) {
+    setBusy(matter.id);
+    try {
+      await fetch(`/api/engagements/${engagementId}/audit-points`, {
+        method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id: matter.id, action: 'update', attachments }),
+      });
+      await load();
+    } finally { setBusy(null); }
+  }
+
   function toggle(id: string) {
     setExpanded(s => {
       const next = new Set(s);
@@ -540,7 +568,10 @@ export function RIMattersPanel({ engagementId, userId, userRole, onClose, onActi
                     {isExpanded
                       ? <ChevronDown className="h-4 w-4 text-slate-400 flex-shrink-0 mt-0.5" />
                       : <ChevronRight className="h-4 w-4 text-slate-400 flex-shrink-0 mt-0.5" />}
-                    <span className={`flex-shrink-0 inline-block w-2.5 h-2.5 rounded-full mt-1.5 ${colourStyle?.dot || 'bg-slate-300'}`} />
+                    <span
+                      className={`flex-shrink-0 inline-block w-2.5 h-2.5 rounded-full mt-1.5 ${colourStyle?.dot || 'bg-slate-300'}`}
+                      title={matter.colour && COLOUR_LABELS[matter.colour] ? `Significance: ${COLOUR_LABELS[matter.colour]}` : 'No significance set'}
+                    />
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center gap-2 flex-wrap">
                         <span className="text-xs font-semibold text-slate-700">#{matter.chatNumber}</span>
@@ -627,7 +658,7 @@ export function RIMattersPanel({ engagementId, userId, userRole, onClose, onActi
                             key={c}
                             onClick={() => void setColour(matter, matter.colour === c ? null : c)}
                             disabled={busy === matter.id}
-                            title={c}
+                            title={COLOUR_LABELS[c]}
                             className={`w-5 h-5 rounded-full border-2 transition-all ${
                               matter.colour === c ? 'ring-2 ring-offset-1 ring-slate-500 scale-110' : 'hover:scale-105'
                             } ${COLOUR_STYLES[c].dot} ${COLOUR_STYLES[c].border}`}
@@ -704,6 +735,18 @@ export function RIMattersPanel({ engagementId, userId, userRole, onClose, onActi
                       {/* Full description (not truncated) */}
                       <div className="bg-white/60 border border-slate-100 rounded p-3 text-xs text-slate-800 whitespace-pre-wrap mb-3">
                         {matter.description}
+                      </div>
+
+                      {/* Links + file attachments — disabled once the
+                          matter is closed so the audit trail of what
+                          was attached at decision time stays intact. */}
+                      <div className="mb-3">
+                        <PointAttachments
+                          engagementId={engagementId}
+                          value={(matter.attachments as Attachment[] | null) ?? []}
+                          onChange={(next) => void saveAttachments(matter, next)}
+                          disabled={matter.status === 'closed' || busy === matter.id}
+                        />
                       </div>
 
                       {/* Chat thread */}

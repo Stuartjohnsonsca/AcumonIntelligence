@@ -9,6 +9,7 @@ import { Button } from '@/components/ui/button';
 import {
   encodeNavReference, decodeNavReference, getCurrentLocation, navigateTo,
 } from '@/lib/engagement-nav';
+import { PointAttachments, type Attachment } from './PointAttachments';
 
 /**
  * Management / Representation letter points panel.
@@ -61,6 +62,10 @@ interface PointData {
   closedById?: string | null;
   closedByName?: string | null;
   closedAt?: string | null;
+  // Links + file attachments — JSON array shaped {name,url,type?,size?}.
+  // Driven by the shared PointAttachments widget; persisted via the
+  // existing PATCH ?action=update handler on /audit-points.
+  attachments?: Array<{ name: string; url: string; type?: string; size?: number }> | null;
 }
 
 interface ActionLogEntry {
@@ -79,6 +84,48 @@ interface Props {
   onClose: () => void;
   /** Optional override — caller can preload the template list. */
   headingOptions?: string[];
+  /**
+   * The caller's role on this engagement team. Drives the client-side
+   * authority gate on Commit / Reject — a junior cannot override a
+   * commit/reject set by a more senior role. The server enforces the
+   * same rule and is the source of truth; this prop just keeps the
+   * UI honest (disabled buttons, explanatory tooltip) so a junior
+   * doesn't get into a click-and-watch-it-fail loop.
+   */
+  userRole?: string;
+}
+
+// Mirrors the server-side ROLE_RANK in
+// app/api/engagements/[engagementId]/audit-points/route.ts. Keep in
+// sync — these are the only ranks that drive the override gate.
+const ROLE_RANK: Record<string, number> = {
+  Junior: 0,
+  Manager: 1,
+  RI: 2,
+  Reviewer: 2,
+  Partner: 3,
+  EQR: 4,
+};
+
+// Pulls "Partner" out of "Jane Smith (Partner)" — the closedByName
+// stamp format the server writes on commit/reject. Returns null when
+// no role suffix is present (legacy data, pre-stamp); callers treat
+// null as "unknown rank, allow override" to match the server.
+function parseRoleFromStampedName(name: string | null | undefined): string | null {
+  if (!name) return null;
+  const match = name.match(/\(([^)]+)\)\s*$/);
+  return match ? match[1].trim() : null;
+}
+
+// Client-side mirror of the server's hasAuthorityToOverride. Used to
+// disable the Commit/Reject buttons before the user clicks. The
+// server is still the source of truth; this is just a UX guard.
+function canOverridePreviousDecision(callerRole: string | undefined, previousCloserName: string | null | undefined): boolean {
+  const previousRole = parseRoleFromStampedName(previousCloserName);
+  if (!previousRole) return true; // unknown previous role → permissive
+  const callerRank = ROLE_RANK[callerRole || ''] ?? 0;
+  const previousRank = ROLE_RANK[previousRole] ?? 0;
+  return callerRank >= previousRank;
 }
 
 const ACTION_LABELS: Record<string, string> = {
@@ -92,6 +139,17 @@ const COLOUR_DOTS: Record<string, { dot: string; ring: string; bg: string; borde
   green: { dot: 'bg-green-500', ring: 'ring-green-300', bg: 'bg-green-50',  border: 'border-green-300' },
   amber: { dot: 'bg-amber-500', ring: 'ring-amber-300', bg: 'bg-amber-50',  border: 'border-amber-300' },
   red:   { dot: 'bg-red-500',   ring: 'ring-red-300',   bg: 'bg-red-50',    border: 'border-red-300' },
+};
+
+// Significance labels driving the tooltips on the colour dot + the
+// 3-button colour picker. The traffic-light tones stay (green/amber/
+// red) because that's what the schema stores; the labels reframe
+// them in terms of point significance so reviewers see severity at
+// a hover, not just a colour name.
+const COLOUR_LABELS: Record<string, string> = {
+  green: 'Minor',
+  amber: 'Medium',
+  red:   'Major',
 };
 
 // Theme used for the floating window header. Management = orange,
@@ -131,7 +189,7 @@ function statusPillClasses(status: string): string {
   return 'bg-green-100 text-green-700 border-green-200';
 }
 
-export function ManagementPointPanel({ engagementId, pointType, title, onClose, headingOptions: initialHeadings = [] }: Props) {
+export function ManagementPointPanel({ engagementId, pointType, title, onClose, headingOptions: initialHeadings = [], userRole }: Props) {
   const theme = THEMES[pointType];
   const [points, setPoints] = useState<PointData[]>([]);
   const [loading, setLoading] = useState(true);
@@ -503,7 +561,10 @@ export function ManagementPointPanel({ engagementId, pointType, title, onClose, 
                       {isExpanded
                         ? <ChevronDown className="h-4 w-4 text-slate-400 flex-shrink-0 mt-0.5" />
                         : <ChevronRight className="h-4 w-4 text-slate-400 flex-shrink-0 mt-0.5" />}
-                      <span className={`flex-shrink-0 inline-block w-2.5 h-2.5 rounded-full mt-1.5 ${colourStyle?.dot || 'bg-slate-300'}`} />
+                      <span
+                        className={`flex-shrink-0 inline-block w-2.5 h-2.5 rounded-full mt-1.5 ${colourStyle?.dot || 'bg-slate-300'}`}
+                        title={p.colour && COLOUR_LABELS[p.colour] ? `Significance: ${COLOUR_LABELS[p.colour]}` : 'No significance set'}
+                      />
                       <div className="flex-1 min-w-0">
                         <div className="flex items-center gap-2 flex-wrap">
                           <span className="text-xs font-semibold text-slate-700">#{p.chatNumber}</span>
@@ -573,7 +634,7 @@ export function ManagementPointPanel({ engagementId, pointType, title, onClose, 
                                 key={c}
                                 onClick={() => void actOn(p.id, 'colour', { colour: p.colour === c ? '' : c })}
                                 disabled={busy === p.id}
-                                title={c}
+                                title={COLOUR_LABELS[c]}
                                 className={`w-5 h-5 rounded-full border-2 transition-all ${
                                   p.colour === c ? 'ring-2 ring-offset-1 ring-slate-500 scale-110' : 'hover:scale-105'
                                 } ${COLOUR_DOTS[c].dot} ${COLOUR_DOTS[c].border}`}
@@ -629,34 +690,80 @@ export function ManagementPointPanel({ engagementId, pointType, title, onClose, 
                           </div>
                         )}
 
-                        {/* Status footer — closed-by attribution + action buttons */}
-                        <div className="flex items-center justify-between gap-2 pt-2 border-t border-slate-100">
-                          <div className="text-[10px] text-slate-500 italic">
-                            {!isOpen && p.closedByName
-                              ? `${statusLabel(p.status)} by ${p.closedByName}${p.closedAt ? ` on ${formatDateTime(p.closedAt)}` : ''}`
-                              : ''}
-                          </div>
-                          <div className="flex items-center gap-1.5">
-                            <button
-                              onClick={() => void actOn(p.id, 'commit')}
-                              disabled={busy === p.id}
-                              className="text-[10px] px-2 py-1 bg-green-600 text-white rounded hover:bg-green-700 font-medium inline-flex items-center gap-1 disabled:opacity-50"
-                              title={isOpen ? 'Commit — appears in the client letter' : 'Override the current status (you must have ≥ authority of the previous decider)'}
-                            >
-                              {busy === p.id ? <Loader2 className="h-3 w-3 animate-spin" /> : <CheckCircle2 className="h-3 w-3" />}
-                              {statusLabel(p.status) === 'Committed' ? 'Already committed' : 'Commit'}
-                            </button>
-                            <button
-                              onClick={() => void actOn(p.id, 'reject')}
-                              disabled={busy === p.id}
-                              className="text-[10px] px-2 py-1 bg-red-100 text-red-700 border border-red-200 rounded hover:bg-red-200 font-medium inline-flex items-center gap-1 disabled:opacity-50"
-                              title={isOpen ? 'Reject — point will not appear in the client letter' : 'Override the current status (you must have ≥ authority of the previous decider)'}
-                            >
-                              {busy === p.id ? <Loader2 className="h-3 w-3 animate-spin" /> : <XCircle className="h-3 w-3" />}
-                              {statusLabel(p.status) === 'Rejected' ? 'Already rejected' : 'Reject'}
-                            </button>
-                          </div>
+                        {/* Links + file attachments — disabled once
+                            the point is committed/rejected so the
+                            audit trail of evidence at decision time
+                            stays intact. The authority gate on the
+                            buttons below still allows a senior to
+                            unlock. */}
+                        <div className="mb-3">
+                          <PointAttachments
+                            engagementId={engagementId}
+                            value={(p.attachments as Attachment[] | null) ?? []}
+                            onChange={(next) => void actOn(p.id, 'update', { attachments: next })}
+                            disabled={!isOpen || busy === p.id}
+                          />
                         </div>
+
+                        {/* Status footer — closed-by attribution + action buttons.
+                            Commit/Reject are gated by the same authority rule
+                            the server enforces: a more junior team member
+                            cannot overturn a commit/reject set by a more
+                            senior role. Open points can be committed/rejected
+                            by anyone on the engagement team. */}
+                        {(() => {
+                          const canOverride = canOverridePreviousDecision(userRole, p.closedByName);
+                          const lockedToCallerRank = !isOpen && !canOverride;
+                          const previousRole = parseRoleFromStampedName(p.closedByName);
+                          const lockedTooltip = `Locked — ${p.closedByName || 'a more senior reviewer'}${previousRole ? ` (${previousRole})` : ''} set this status. You need at least ${previousRole || 'their'} authority to change it.`;
+                          const isCommitted = statusLabel(p.status) === 'Committed';
+                          const isRejected = statusLabel(p.status) === 'Rejected';
+                          return (
+                            <div className="flex items-center justify-between gap-2 pt-2 border-t border-slate-100">
+                              <div className="text-[10px] text-slate-500 italic">
+                                {!isOpen && p.closedByName
+                                  ? `${statusLabel(p.status)} by ${p.closedByName}${p.closedAt ? ` on ${formatDateTime(p.closedAt)}` : ''}`
+                                  : ''}
+                              </div>
+                              <div className="flex items-center gap-1.5">
+                                <button
+                                  onClick={() => void actOn(p.id, 'commit')}
+                                  disabled={busy === p.id || lockedToCallerRank || isCommitted}
+                                  className="text-[10px] px-2 py-1 bg-green-600 text-white rounded hover:bg-green-700 font-medium inline-flex items-center gap-1 disabled:opacity-50 disabled:cursor-not-allowed"
+                                  title={
+                                    isCommitted
+                                      ? 'Already committed'
+                                      : lockedToCallerRank
+                                        ? lockedTooltip
+                                        : isOpen
+                                          ? 'Commit — appears in the client letter'
+                                          : 'Override the current status (you must have ≥ authority of the previous decider)'
+                                  }
+                                >
+                                  {busy === p.id ? <Loader2 className="h-3 w-3 animate-spin" /> : <CheckCircle2 className="h-3 w-3" />}
+                                  {isCommitted ? 'Already committed' : 'Commit'}
+                                </button>
+                                <button
+                                  onClick={() => void actOn(p.id, 'reject')}
+                                  disabled={busy === p.id || lockedToCallerRank || isRejected}
+                                  className="text-[10px] px-2 py-1 bg-red-100 text-red-700 border border-red-200 rounded hover:bg-red-200 font-medium inline-flex items-center gap-1 disabled:opacity-50 disabled:cursor-not-allowed"
+                                  title={
+                                    isRejected
+                                      ? 'Already rejected'
+                                      : lockedToCallerRank
+                                        ? lockedTooltip
+                                        : isOpen
+                                          ? 'Reject — point will not appear in the client letter'
+                                          : 'Override the current status (you must have ≥ authority of the previous decider)'
+                                  }
+                                >
+                                  {busy === p.id ? <Loader2 className="h-3 w-3 animate-spin" /> : <XCircle className="h-3 w-3" />}
+                                  {isRejected ? 'Already rejected' : 'Reject'}
+                                </button>
+                              </div>
+                            </div>
+                          );
+                        })()}
                       </div>
                     )}
                   </div>
