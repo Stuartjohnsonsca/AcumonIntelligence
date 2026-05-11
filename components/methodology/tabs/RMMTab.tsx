@@ -137,6 +137,26 @@ export function RMMTab({ engagementId, auditType, teamMembers = [], showCategory
   const { data: session } = useSession();
   const [rows, setRows] = useState<RMMRow[]>([]);
   const [loading, setLoading] = useState(true);
+
+  // Merge-mode state. When `mergeMode` is true, rows render an extra
+  // checkbox column; selecting ≥2 rows that share an fsLevel enables
+  // the "Merge selected" button. After a successful merge, the rows
+  // re-fetch and the anchor (first by sortOrder) renders as one
+  // grouped row showing the summed amount + comma-joined line items.
+  const [mergeMode, setMergeMode] = useState(false);
+  const [selectedForMerge, setSelectedForMerge] = useState<Set<string>>(new Set());
+  const [merging, setMerging] = useState(false);
+  function toggleMergeSelection(rowId: string) {
+    setSelectedForMerge(prev => {
+      const next = new Set(prev);
+      if (next.has(rowId)) next.delete(rowId); else next.add(rowId);
+      return next;
+    });
+  }
+  function exitMergeMode() {
+    setMergeMode(false);
+    setSelectedForMerge(new Set());
+  }
   // Scroll to the row referenced by any incoming ?scroll=rmm-<rowId>
   // URL param (written by the AI Populate deep-link chips on the
   // Completion panel). Re-runs when loading flips so it catches the
@@ -303,6 +323,50 @@ export function RMMTab({ engagementId, auditType, teamMembers = [], showCategory
   const irSaveTimer = useRef<NodeJS.Timeout | null>(null);
   // Assertions matrix from Firm Wide Assumptions (which assertions apply to BS / PNL etc.)
   const [assertionsTable, setAssertionsTable] = useState<{ rows: Array<{ key: string; [k: string]: any }> } | null>(null);
+
+  // Merge / unmerge — POST to the RMM API and re-fetch on success.
+  // The API validates the same-FS-Level rule + the ≥2 rows requirement.
+  async function doMerge() {
+    const ids = Array.from(selectedForMerge);
+    if (ids.length < 2) return;
+    setMerging(true);
+    try {
+      const res = await fetch(`/api/engagements/${engagementId}/rmm`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'merge', rowIds: ids }),
+      });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        alert(json?.error || 'Merge failed');
+        return;
+      }
+      exitMergeMode();
+      await loadData();
+    } finally {
+      setMerging(false);
+    }
+  }
+  async function doUnmerge(mergedGroupId: string) {
+    if (!mergedGroupId) return;
+    if (!confirm('Unmerge this group? Members revert to standalone rows; any group-level test history is recorded as a note on each row.')) return;
+    setMerging(true);
+    try {
+      const res = await fetch(`/api/engagements/${engagementId}/rmm`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'unmerge', mergedGroupId }),
+      });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        alert(json?.error || 'Unmerge failed');
+        return;
+      }
+      await loadData();
+    } finally {
+      setMerging(false);
+    }
+  }
 
   const loadData = useCallback(async () => {
     try {
@@ -677,6 +741,55 @@ export function RMMTab({ engagementId, auditType, teamMembers = [], showCategory
   // apply the light shading on each PAR row in the tbody.
   const parGroupStartIndex = useMemo(() => computedRows.findIndex(r => r.source === 'par'), [computedRows]);
 
+  // Merged-group aggregation. For every distinct mergedGroupId we
+  // record the anchor row (first by sortOrder), the full member list,
+  // and pre-computed display values (joined line items + summed
+  // amount). The render loop uses this to hide non-anchor members
+  // and decorate the anchor with the group summary.
+  interface MergedGroupInfo {
+    anchorId: string;
+    memberIds: Set<string>;
+    memberLineItems: string[];
+    summedAmount: number;
+  }
+  const mergedGroups = useMemo(() => {
+    const map = new Map<string, MergedGroupInfo>();
+    // Use `rows` (underlying state) so sortOrder is stable irrespective
+    // of the sortMode the user has picked for display.
+    const grouped = rows
+      .filter(r => r.mergedGroupId)
+      .slice()
+      .sort((a, b) => (a.sortOrder || 0) - (b.sortOrder || 0));
+    for (const r of grouped) {
+      const gid = r.mergedGroupId!;
+      const existing = map.get(gid);
+      if (existing) {
+        existing.memberIds.add(r.id);
+        existing.memberLineItems.push(r.lineItem || '(unnamed)');
+        existing.summedAmount += Number(r.amount) || 0;
+      } else {
+        map.set(gid, {
+          anchorId: r.id,
+          memberIds: new Set([r.id]),
+          memberLineItems: [r.lineItem || '(unnamed)'],
+          summedAmount: Number(r.amount) || 0,
+        });
+      }
+    }
+    return map;
+  }, [rows]);
+
+  // Filtered display list — hides non-anchor group members so the
+  // group renders as ONE row at the anchor's position.
+  const visibleRows = useMemo(() => {
+    if (mergedGroups.size === 0) return computedRows;
+    return computedRows.filter(r => {
+      if (!r.mergedGroupId) return true;
+      const group = mergedGroups.get(r.mergedGroupId);
+      return !group || group.anchorId === r.id;
+    });
+  }, [computedRows, mergedGroups]);
+
   // Get nature dropdown options for a given line item
   function getNatureOptions(lineItem: string): string[] | null {
     if (!lineItem) return null;
@@ -976,6 +1089,43 @@ export function RMMTab({ engagementId, auditType, teamMembers = [], showCategory
               <span title="Sort every row by absolute amount, highest first">Value</span>
             </label>
           </fieldset>
+          {/* Merge controls — when off, a single "Merge rows" toggle
+              enters selection mode. When on, a checkbox column appears
+              on each row; the "Merge N selected" button activates as
+              soon as ≥2 rows in the same FS Level are ticked. Cancel
+              exits selection mode without committing. */}
+          <div className="inline-flex items-center gap-1.5 border-l border-slate-200 pl-3 ml-2">
+            {!mergeMode ? (
+              <button
+                onClick={() => setMergeMode(true)}
+                className="text-xs px-3 py-1 bg-slate-100 text-slate-700 rounded hover:bg-slate-200"
+                title="Tick rows within the same FS Line to merge them into one grouped row"
+              >
+                Merge rows
+              </button>
+            ) : (
+              <>
+                <span className="text-[10px] text-slate-500">
+                  {selectedForMerge.size} selected
+                </span>
+                <button
+                  onClick={doMerge}
+                  disabled={merging || selectedForMerge.size < 2}
+                  className="text-xs px-3 py-1 bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50"
+                  title={selectedForMerge.size < 2 ? 'Select at least 2 rows' : 'Merge the selected rows into one group'}
+                >
+                  {merging ? 'Merging…' : `Merge ${selectedForMerge.size} rows`}
+                </button>
+                <button
+                  onClick={exitMergeMode}
+                  disabled={merging}
+                  className="text-xs px-2 py-1 text-slate-600 hover:text-slate-900 disabled:opacity-50"
+                >
+                  Cancel
+                </button>
+              </>
+            )}
+          </div>
           {/* Planning Letter actions — picks template, renders .docx,
               optionally emails Informed-Management portal contacts
               and uploads to the Client Portal Documents list. */}
@@ -1090,7 +1240,7 @@ export function RMMTab({ engagementId, auditType, teamMembers = [], showCategory
             </tr>
           </thead>
           <tbody>
-            {computedRows.map((row, displayIndex) => {
+            {visibleRows.map((row, displayIndex) => {
               // CRITICAL: `displayIndex` is the row's position in the
               // RENDERED table (i.e. in computedRows after sort).
               // updateRow / removeRow / signOffRow / etc. need to
@@ -1113,6 +1263,15 @@ export function RMMTab({ engagementId, auditType, teamMembers = [], showCategory
               const hasIRData = !!(row.complexityText || row.subjectivityText || row.changeText || row.uncertaintyText || row.susceptibilityText || row.inherentRiskLevel);
               const isPar = row.source === 'par';
               const isFirstPar = isPar && displayIndex === parGroupStartIndex;
+              // Merged-group decoration. When the current row is the
+              // anchor of a multi-member group we (a) suffix the line
+              // item with "+ N others", (b) substitute the summed
+              // amount for the row's own amount, and (c) surface an
+              // Unmerge button in the expanded view. Non-anchor
+              // members were filtered out by `visibleRows`, so anchor
+              // detection here is just "row has a group id".
+              const groupInfo = row.mergedGroupId ? mergedGroups.get(row.mergedGroupId) : undefined;
+              const isGroupAnchor = !!(groupInfo && groupInfo.anchorId === row.id && groupInfo.memberIds.size > 1);
 
               return (
                 <Fragment key={rowKey}>
@@ -1127,9 +1286,22 @@ export function RMMTab({ engagementId, auditType, teamMembers = [], showCategory
                     data-scroll-anchor={row.id ? `rmm-${row.id}` : undefined}
                     className={`border-b border-slate-100 hover:bg-slate-50/50 ${row.isMandatory ? 'bg-amber-50/20' : ''} ${isPar ? 'bg-indigo-50/40' : ''} ${outline}`}
                   >
-                    {/* Duplicate button */}
+                    {/* First cell — duplicate button by default; when
+                        merge mode is active, swap in a checkbox that
+                        ticks rows for merging. */}
                     <td className="px-1 py-1 align-top text-center">
-                      <button onClick={() => duplicateRow(i)} className="text-slate-300 hover:text-blue-500 text-[10px]" title="Duplicate row">⧉</button>
+                      {mergeMode ? (
+                        <input
+                          type="checkbox"
+                          checked={row.id ? selectedForMerge.has(row.id) : false}
+                          onChange={() => row.id && toggleMergeSelection(row.id)}
+                          disabled={!row.id}
+                          className="cursor-pointer"
+                          title={row.fsLevel ? `Merge selection — FS Level: ${row.fsLevel}` : 'Merge selection'}
+                        />
+                      ) : (
+                        <button onClick={() => duplicateRow(i)} className="text-slate-300 hover:text-blue-500 text-[10px]" title="Duplicate row">⧉</button>
+                      )}
                     </td>
                     {showCategory && (
                       <td className="px-2 py-1 align-top">
@@ -1151,6 +1323,18 @@ export function RMMTab({ engagementId, auditType, teamMembers = [], showCategory
                             aria-label="from PAR"
                             className="text-indigo-500 font-bold leading-none mt-0.5 cursor-help select-none"
                           >*</span>
+                        )}
+                        {/* Merged-group badge — small pill on the anchor
+                            row of a multi-member group so the auditor
+                            can see at a glance which rows are grouped.
+                            Hover shows the full member list. */}
+                        {isGroupAnchor && groupInfo && (
+                          <span
+                            title={`Grouped with: ${groupInfo.memberLineItems.slice(1).join(', ')}`}
+                            className="inline-flex items-center px-1 py-0 text-[9px] font-semibold rounded bg-blue-100 text-blue-700 border border-blue-200 leading-tight mt-0.5 cursor-help"
+                          >
+                            +{groupInfo.memberIds.size - 1} merged
+                          </span>
                         )}
                         <AutoTextarea value={row.lineItem} onChange={v => updateRow(i, 'lineItem', v)} readOnly={row.isMandatory}
                           className={`w-full border-0 bg-transparent text-xs focus:outline-none focus:ring-1 focus:ring-blue-300 rounded px-1 py-0.5 ${row.isMandatory ? 'font-medium' : ''}`} />
@@ -1190,7 +1374,12 @@ export function RMMTab({ engagementId, auditType, teamMembers = [], showCategory
                       // Mandatory rows keep their own slate-100 shade
                       // (takes precedence); untouched rows (no amount
                       // OR PM not configured) render as normal.
-                      const n = row.amount != null ? Number(row.amount) : NaN;
+                      // When the row is a group anchor we use the
+                      // group's summed amount instead of the anchor's
+                      // own amount — so the materiality shading and
+                      // the displayed figure reflect the whole group.
+                      const displayedAmount = isGroupAnchor && groupInfo ? groupInfo.summedAmount : row.amount;
+                      const n = displayedAmount != null ? Number(displayedAmount) : NaN;
                       const belowPm = Number.isFinite(n)
                         && performanceMateriality > 0
                         && Math.abs(n) < performanceMateriality;
@@ -1202,13 +1391,13 @@ export function RMMTab({ engagementId, auditType, teamMembers = [], showCategory
                           className={`px-2 py-1 align-top ${bgClass}`}
                           title={belowPm
                             ? `Below performance materiality (£${performanceMateriality.toLocaleString('en-GB', { minimumFractionDigits: 2 })})`
-                            : undefined}
+                            : isGroupAnchor ? `Sum of ${groupInfo!.memberIds.size} merged rows` : undefined}
                         >
                           {row.isMandatory ? (
                             <span className="text-xs text-slate-300 px-1">—</span>
                           ) : (
                             <span className="text-xs text-right block px-1 py-0.5 text-slate-700">
-                              {row.amount != null ? (() => { const nn = Number(row.amount); return isNaN(nn) ? '' : `£${Math.abs(nn).toLocaleString('en-GB', { minimumFractionDigits: 2 })}${nn < 0 ? ' Cr' : ' Dr'}`; })() : ''}
+                              {displayedAmount != null ? (() => { const nn = Number(displayedAmount); return isNaN(nn) ? '' : `£${Math.abs(nn).toLocaleString('en-GB', { minimumFractionDigits: 2 })}${nn < 0 ? ' Cr' : ' Dr'}`; })() : ''}
                             </span>
                           )}
                         </td>
@@ -1364,6 +1553,32 @@ export function RMMTab({ engagementId, auditType, teamMembers = [], showCategory
                         {/* Planning Letter category banner removed — the Sig.Risk dot column
                             already conveys this. rowCategory is still derived in state via
                             the auto-derive effect so the Planning Letter template still works. */}
+                        {/* Merged-group toolbar — shown only when this
+                            expanded row IS the anchor of a group. The
+                            full member list + the Unmerge button live
+                            here rather than on the collapsed row so the
+                            grid stays tidy. */}
+                        {isGroupAnchor && groupInfo && (
+                          <div className="mb-3 px-3 py-2 bg-blue-50 border border-blue-200 rounded flex items-center justify-between gap-3">
+                            <div className="text-xs">
+                              <div className="font-semibold text-blue-900">Merged group — {groupInfo.memberIds.size} rows</div>
+                              <div className="text-blue-700 mt-0.5">
+                                {groupInfo.memberLineItems.join(' · ')}
+                              </div>
+                              <div className="text-[10px] text-blue-600 mt-0.5">
+                                Risk assessment and tests apply to the group as a whole. Unmerging will record this in each row&apos;s notes.
+                              </div>
+                            </div>
+                            <button
+                              onClick={() => row.mergedGroupId && doUnmerge(row.mergedGroupId)}
+                              disabled={merging}
+                              className="text-xs px-3 py-1.5 bg-white border border-blue-300 text-blue-700 rounded hover:bg-blue-100 disabled:opacity-50 whitespace-nowrap"
+                              title="Split this group back into individual rows; a breadcrumb is written to each row's Notes."
+                            >
+                              {merging ? 'Working…' : 'Unmerge'}
+                            </button>
+                          </div>
+                        )}
                         <div className="grid grid-cols-5 gap-3">
                           {INHERENT_RISK_COMPONENTS.map(comp => {
                             const textKey = `${comp.key}Text` as keyof RMMRow;
