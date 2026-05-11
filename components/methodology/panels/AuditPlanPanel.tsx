@@ -1425,7 +1425,9 @@ export function AuditPlanPanel({ engagementId, clientId, periodId, onClose, peri
                 <th className="px-0.5 py-0 text-left font-semibold text-slate-600 whitespace-nowrap border-b border-slate-200" colSpan={2}>{dayBefore(periodStartDate) || 'PY'}</th>
                 <th className="px-0.5 py-0.5 text-left font-semibold text-slate-600" rowSpan={2}>Assertions</th>
                 <th className="px-0.5 py-0.5 text-left font-semibold text-slate-600" rowSpan={2}>Coverage</th>
-                <th className="px-0.5 py-0.5 text-left font-semibold text-slate-600" rowSpan={2}>Risk</th>
+                <th className="px-0.5 py-0.5 text-center font-semibold text-slate-600" rowSpan={2} title="Risk classification — red Significant Risk, orange Area of Focus, green Normal, hollow Immaterial">
+                  Risk <span className="inline-block w-3 h-3 text-[8px] rounded-full bg-slate-200 text-slate-500 leading-3 cursor-help" title="Red = Significant Risk · Orange = Area of Focus · Green = Normal · Hollow = Immaterial (below PM or not yet assessed)">?</span>
+                </th>
               </tr>
               <tr>
                 {/* Dr/Cr sub-headers — left-aligned to match the
@@ -1607,27 +1609,42 @@ export function AuditPlanPanel({ engagementId, clientId, periodId, onClose, peri
                           );
                         })()}
                       </td>
-                      <td className="px-0.5 py-px">
-                        {rmmMatch?.overallRisk && (
+                      {/* Risk classification — 4-tier dot matching the
+                          RMM tab's classification dot:
+                            red    = Significant Risk
+                            orange = Area of Focus
+                            green  = Normal
+                            hollow = Immaterial (AR / no-RMM-below-PM
+                                     / PM-not-set / row not yet assessed)
+                          AR — Analytical Review (below PM with no
+                          RMM) folds into Immaterial because the
+                          balance is below materiality and the row is
+                          effectively dropped from substantive scope. */}
+                      <td className="px-0.5 py-px text-center align-middle">
+                        {isSig ? (
                           <span
-                            className={`text-[9px] px-1.5 py-0.5 rounded font-semibold border shadow-sm ${
-                              isSig ? 'bg-red-600 text-white border-red-700' :
-                              isAoF ? 'bg-orange-500 text-white border-orange-600' :
-                              isAR ? 'bg-blue-600 text-white border-blue-700' :
-                              'bg-green-600 text-white border-green-700'
-                            }`}
+                            className="inline-block w-3 h-3 rounded-full bg-red-500 cursor-help"
+                            title="Significant Risk — High or Very High RMM. Tests drawn from: Significant Risk, Area of Focus, Normal, Mandatory. Analytical Review excluded."
+                          />
+                        ) : isAoF ? (
+                          <span
+                            className="inline-block w-3 h-3 rounded-full bg-orange-400 cursor-help"
+                            title="Area of Focus — Medium RMM. Tests drawn from: Area of Focus, Normal, Mandatory. Significant Risk and Analytical Review excluded."
+                          />
+                        ) : rowClassification === 'Normal' ? (
+                          <span
+                            className="inline-block w-3 h-3 rounded-full bg-green-500 cursor-help"
+                            title="Normal — Balance above Performance Materiality with no RMM. Tests drawn from: Normal, Mandatory only."
+                          />
+                        ) : (
+                          <span
+                            className="inline-block w-3 h-3 rounded-full border border-slate-400 bg-white cursor-help"
                             title={
-                              isSig
-                                ? 'Significant Risk — High or Very High RMM. Tests drawn from: Significant Risk, Area of Focus, Normal, Mandatory. Analytical Review excluded.'
-                                : isAoF
-                                  ? 'Area of Focus — Medium RMM. Tests drawn from: Area of Focus, Normal, Mandatory. Significant Risk and Analytical Review excluded.'
-                                  : isAR
-                                    ? 'Analytical Review — Balance at or below Performance Materiality with no RMM. Tests drawn from: Analytical Review, Mandatory only — no substantive testing.'
-                                    : 'Normal — Balance above Performance Materiality but no RMM. Tests drawn from: Normal, Mandatory only.'
+                              isAR
+                                ? 'Immaterial (Analytical Review) — Balance at or below Performance Materiality with no RMM. Tests drawn from: Analytical Review, Mandatory only — no substantive testing.'
+                                : 'Immaterial — no RMM and Performance Materiality not yet set, or row not yet classified.'
                             }
-                          >
-                            {isAR ? 'AR' : rowClassification}
-                          </span>
+                          />
                         )}
                       </td>
                     </tr>

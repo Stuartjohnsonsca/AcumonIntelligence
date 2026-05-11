@@ -64,6 +64,67 @@ export function WalkthroughsTab({ engagementId, userRole }: Props) {
   const [newSubProcessName, setNewSubProcessName] = useState('');
   const [allStatuses, setAllStatuses] = useState<Record<string, ProcessStatus>>({});
 
+  // ── Soft-delete + Undo for process / sub-process tab removal ───
+  // Per-process and per-sub-process content lives under its own
+  // permanent-file sectionKey (`walkthrough_<key>_status`) and is
+  // NOT deleted when the user removes a tab — only the entry in the
+  // walkthrough_processes list is updated. That makes the deletion
+  // genuinely reversible: re-adding the same key restores all the
+  // narrative / controls / flowchart / evidence / sign-offs.
+  //
+  // We surface that recoverability with a 15-second Undo banner at
+  // the top of the tab. After 15s the banner disappears but the
+  // server-side data is still there — the auditor can recover by
+  // re-adding the tab with the same name (which derives the same
+  // key), or by asking us to extend the window.
+  type RecentDeletion =
+    | { kind: 'process'; item: ProcessTab; previousIndex: number }
+    | { kind: 'subProcess'; parentKey: string; item: ProcessTab; previousIndex: number };
+  const [recentDeletion, setRecentDeletion] = useState<RecentDeletion | null>(null);
+  const recentDeletionTimer = useRef<NodeJS.Timeout | null>(null);
+  function flagRecentDeletion(snap: RecentDeletion) {
+    if (recentDeletionTimer.current) clearTimeout(recentDeletionTimer.current);
+    setRecentDeletion(snap);
+    recentDeletionTimer.current = setTimeout(() => {
+      setRecentDeletion(null);
+      recentDeletionTimer.current = null;
+    }, 15000);
+  }
+  function undoRecentDeletion() {
+    if (!recentDeletion) return;
+    if (recentDeletion.kind === 'process') {
+      const updated = [...processes];
+      updated.splice(recentDeletion.previousIndex, 0, recentDeletion.item);
+      setProcesses(updated);
+      setActiveTab(recentDeletion.item.key);
+      fetch(`/api/engagements/${engagementId}/permanent-file`, {
+        method: 'PUT', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ sectionKey: 'walkthrough_processes', data: { processes: updated } }),
+      }).catch(() => {});
+    } else {
+      const updated = processes.map(p => {
+        if (p.key !== recentDeletion.parentKey) return p;
+        const children = [...(p.children || [])];
+        children.splice(recentDeletion.previousIndex, 0, recentDeletion.item);
+        return { ...p, children };
+      });
+      setProcesses(updated);
+      setActiveSubProcess(recentDeletion.item.key);
+      fetch(`/api/engagements/${engagementId}/permanent-file`, {
+        method: 'PUT', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ sectionKey: 'walkthrough_processes', data: { processes: updated } }),
+      }).catch(() => {});
+    }
+    if (recentDeletionTimer.current) clearTimeout(recentDeletionTimer.current);
+    recentDeletionTimer.current = null;
+    setRecentDeletion(null);
+  }
+  // Cleanup pending timer on unmount so we don't fire setState
+  // after the component is gone.
+  useEffect(() => () => {
+    if (recentDeletionTimer.current) clearTimeout(recentDeletionTimer.current);
+  }, []);
+
   // Load custom processes and all statuses from permanent file
   useEffect(() => {
     fetch(`/api/engagements/${engagementId}/permanent-file?section=walkthrough_processes`)
@@ -235,6 +296,14 @@ export function WalkthroughsTab({ engagementId, userRole }: Props) {
 
   function removeProcess(key: string) {
     if (processes.length <= 1) return;
+    const previousIndex = processes.findIndex(p => p.key === key);
+    const item = processes[previousIndex];
+    if (!item) return;
+    // Strong confirmation — the ✗ on the tab corner is small and
+    // easy to mis-click. The wording explicitly tells the user
+    // what's being removed and that recovery is available.
+    const msg = `Delete the "${item.label}" process?\n\nIts narrative, controls, flowchart, evidence and sign-offs will be hidden from this view. The underlying data is preserved on the server — click Undo within 15 seconds, or re-add a process with the same name to restore it.`;
+    if (typeof window !== 'undefined' && !window.confirm(msg)) return;
     const updated = processes.filter(p => p.key !== key);
     setProcesses(updated);
     if (activeTab === key) { setActiveTab(updated[0].key); setActiveSubProcess(null); }
@@ -242,6 +311,7 @@ export function WalkthroughsTab({ engagementId, userRole }: Props) {
       method: 'PUT', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ sectionKey: 'walkthrough_processes', data: { processes: updated } }),
     }).catch(() => {});
+    flagRecentDeletion({ kind: 'process', item, previousIndex });
   }
 
   function addSubProcess() {
@@ -264,6 +334,13 @@ export function WalkthroughsTab({ engagementId, userRole }: Props) {
   }
 
   function removeSubProcess(parentKey: string, childKey: string) {
+    const parent = processes.find(p => p.key === parentKey);
+    if (!parent) return;
+    const previousIndex = (parent.children || []).findIndex(c => c.key === childKey);
+    const item = (parent.children || [])[previousIndex];
+    if (!item) return;
+    const msg = `Delete the "${item.label}" sub-process?\n\nIts narrative, controls, flowchart, evidence and sign-offs will be hidden from this view. The underlying data is preserved on the server — click Undo within 15 seconds, or re-add a sub-process with the same name to restore it.`;
+    if (typeof window !== 'undefined' && !window.confirm(msg)) return;
     const updated = processes.map(p =>
       p.key === parentKey ? { ...p, children: (p.children || []).filter(c => c.key !== childKey) } : p
     );
@@ -273,6 +350,7 @@ export function WalkthroughsTab({ engagementId, userRole }: Props) {
       method: 'PUT', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ sectionKey: 'walkthrough_processes', data: { processes: updated } }),
     }).catch(() => {});
+    flagRecentDeletion({ kind: 'subProcess', parentKey, item, previousIndex });
   }
 
   return (
@@ -298,6 +376,41 @@ export function WalkthroughsTab({ engagementId, userRole }: Props) {
           </button>
         </div>
       </div>
+
+      {/* Undo banner — visible for 15s after a process / sub-process
+          is removed. Server-side data is preserved (the per-process
+          status row isn't deleted), so Undo is a real recovery, not
+          just a UI restore. */}
+      {recentDeletion && (
+        <div className="flex items-center justify-between gap-3 px-3 py-2 bg-amber-50 border border-amber-200 rounded text-xs">
+          <div className="flex items-center gap-2 text-amber-800">
+            <AlertTriangle className="h-3.5 w-3.5 flex-shrink-0" />
+            <span>
+              Deleted {recentDeletion.kind === 'subProcess' ? 'sub-process' : 'process'}{' '}
+              <strong>&ldquo;{recentDeletion.item.label}&rdquo;</strong>. Data preserved — recover within 15 seconds.
+            </span>
+          </div>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={undoRecentDeletion}
+              className="px-3 py-1 bg-amber-600 text-white rounded hover:bg-amber-700 text-[10px] font-semibold inline-flex items-center gap-1"
+            >
+              Undo
+            </button>
+            <button
+              onClick={() => {
+                if (recentDeletionTimer.current) clearTimeout(recentDeletionTimer.current);
+                recentDeletionTimer.current = null;
+                setRecentDeletion(null);
+              }}
+              className="text-amber-700 hover:text-amber-900"
+              title="Dismiss"
+            >
+              <X className="h-3.5 w-3.5" />
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* Process tabs (top row) */}
       <div className="flex items-center gap-1 bg-slate-100 rounded-lg p-0.5">
@@ -738,7 +851,6 @@ function WalkthroughProcess({ engagementId, processKey, processLabel, userRole, 
   function toggleSection(key: string) { setSectionOpen(prev => ({ ...prev, [key]: !prev[key] })); }
 
   const matrixRef = useRef<WalkthroughMatrixSectionHandle>(null);
-  const uploadDocRef = useRef<HTMLInputElement>(null);
   const narrativeRef = useRef<HTMLTextAreaElement>(null);
 
   // Apply a highlight to whatever the auditor has selected inside
@@ -856,44 +968,6 @@ function WalkthroughProcess({ engagementId, processKey, processLabel, userRole, 
     void matrix; // matrix is already persisted inside WalkthroughMatrixSection
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [engagementId, processKey, narrative, controls, status.flowchart]);
-
-  // Upload a single process document (PDF/Word/etc.), store it as evidence, and
-  // generate the flowchart from it via the existing analyse pipeline.
-  async function uploadProcessDocument(file: File) {
-    if (status.flowchart && status.flowchart.length > 0) {
-      if (!window.confirm('This will replace the current flowchart. Continue?')) return;
-    }
-    const uploadForm = new FormData();
-    uploadForm.append('file', file);
-    uploadForm.append('engagementId', engagementId);
-    uploadForm.append('stepId', `process-doc-${processKey}`);
-    let uploaded: { id?: string; name?: string; storagePath?: string } = {};
-    try {
-      const upRes = await fetch('/api/walkthrough/upload', { method: 'POST', body: uploadForm });
-      if (!upRes.ok) {
-        const err = await upRes.json().catch(() => ({}));
-        alert(`Upload failed: ${err.error || upRes.status}`);
-        return;
-      }
-      uploaded = await upRes.json();
-    } catch (err: any) {
-      alert(`Upload error: ${err?.message || 'unknown'}`);
-      return;
-    }
-    if (!uploaded.storagePath) { alert('Upload did not return a storage path.'); return; }
-
-    // Add to evidence so the document shows up in the Evidence list.
-    const evidence = [...(status.evidence || []), { id: uploaded.id || Date.now().toString(), name: uploaded.name || file.name, type: file.type, storagePath: uploaded.storagePath }];
-    await saveStatus({ evidence });
-
-    // Generate flowchart from the uploaded document.
-    await generateFromNarrative({
-      narrative,
-      controls,
-      evidenceFiles: [{ storagePath: uploaded.storagePath, name: uploaded.name || file.name, mimeType: file.type }],
-      replaceExisting: true,
-    });
-  }
 
   const stage = status.stage || 'draft';
 
@@ -1125,7 +1199,17 @@ function WalkthroughProcess({ engagementId, processKey, processLabel, userRole, 
                       {ctrl.tested && <CheckCircle2 className="h-2.5 w-2.5 text-white" />}
                     </button>
                   </td>
-                  <td className="px-2 py-1"><button onClick={() => setControls(prev => prev.filter((_, j) => j !== i))} className="text-red-400 hover:text-red-600 text-xs">×</button></td>
+                  <td className="px-2 py-1"><button onClick={() => {
+                    // Inline controls aren't independently persisted —
+                    // deleting wipes the row's data. Confirm before
+                    // removing so an accidental click doesn't lose work.
+                    const label = ctrl.description?.trim();
+                    const msg = label
+                      ? `Remove this control?\n\n"${label}"`
+                      : 'Remove this empty control row?';
+                    if (typeof window !== 'undefined' && !window.confirm(msg)) return;
+                    setControls(prev => prev.filter((_, j) => j !== i));
+                  }} className="text-red-400 hover:text-red-600 text-xs">×</button></td>
                 </tr>
               ))}
             </tbody>
@@ -1141,6 +1225,46 @@ function WalkthroughProcess({ engagementId, processKey, processLabel, userRole, 
         </button>
         {sectionOpen.flowchart && (
           <div className="p-3">
+            {/* Empty-state guidance — the flowchart can be generated
+                from three different inputs and previously it wasn't
+                obvious where each one lived. This panel surfaces all
+                three paths in one place and labels each button so
+                the auditor can pick deliberately, rather than
+                wondering which click will produce a flowchart. */}
+            {(!status.flowchart || status.flowchart.length === 0) && (
+              <div className="mb-3 bg-purple-50/60 border border-purple-200 rounded-lg p-3">
+                <p className="text-[11px] font-semibold text-purple-800 mb-1">No flowchart yet — generate one from:</p>
+                <ul className="text-[10px] text-purple-900/80 list-disc list-inside mb-2 space-y-0.5">
+                  <li>The <strong>Narrative</strong> typed above — click <em>Generate Flowchart from Description</em> in the action bar.</li>
+                  <li>One or more <strong>uploaded files</strong> — tick them in <em>Evidence &amp; Documents</em> and click <em>Analyse Selected &amp; Generate Flowchart</em>.</li>
+                  <li>An <strong>Excel matrix</strong> — click <em>Import from Excel</em> in <em>Evidence &amp; Documents</em>; the flowchart is generated automatically on import.</li>
+                </ul>
+                <div className="flex items-center gap-1.5 flex-wrap">
+                  {narrative.trim() && (
+                    <button
+                      onClick={generateFlowchart}
+                      disabled={generating}
+                      className="text-[10px] px-3 py-1.5 bg-purple-600 text-white rounded hover:bg-purple-700 disabled:opacity-50 inline-flex items-center gap-1"
+                    >
+                      {generating ? <Loader2 className="h-3 w-3 animate-spin" /> : <FileText className="h-3 w-3" />}
+                      Generate from Description
+                    </button>
+                  )}
+                  <button
+                    onClick={() => { toggleSection('evidence'); setSectionOpen(p => ({ ...p, evidence: true })); }}
+                    className="text-[10px] px-3 py-1.5 bg-white border border-purple-300 text-purple-700 rounded hover:bg-purple-100 inline-flex items-center gap-1"
+                  >
+                    <Upload className="h-3 w-3" /> Open Evidence &amp; Documents
+                  </button>
+                  <button
+                    onClick={() => matrixRef.current?.openImport()}
+                    className="text-[10px] px-3 py-1.5 bg-white border border-purple-300 text-purple-700 rounded hover:bg-purple-100 inline-flex items-center gap-1"
+                  >
+                    <FileSpreadsheet className="h-3 w-3" /> Import from Excel
+                  </button>
+                </div>
+              </div>
+            )}
             <WalkthroughFlowEditor
               // Key only flips between "no chart yet" and "chart
               // exists" so a freshly-generated flowchart force-
@@ -1180,16 +1304,58 @@ function WalkthroughProcess({ engagementId, processKey, processLabel, userRole, 
                 {showAllDocs ? 'Walkthrough Only' : 'Show All Documents'}
               </button>
             </div>
-            <div className="flex gap-2">
+            <div className="flex gap-2 flex-wrap">
+              {/* Upload File — pushes the file to Azure Blob via the
+                  walkthrough/upload route so it lands in evidence with
+                  a storagePath, ready for the "Analyse Selected & Generate
+                  Flowchart" step below. Previously this only stored a
+                  local-only entry which couldn't be analysed. */}
               <label className="text-[10px] px-2.5 py-1.5 bg-blue-50 text-blue-700 border border-blue-200 rounded hover:bg-blue-100 cursor-pointer inline-flex items-center gap-1">
                 <Upload className="h-3 w-3" /> Upload File
                 <input type="file" className="hidden" accept=".pdf,.jpg,.png,.doc,.docx,.xlsx,.zip" onChange={async (e) => {
                   const file = await expandZipFile(e.target.files?.[0]);
                   if (!file) return;
-                  const ev = status.evidence || [];
-                  await saveStatus({ evidence: [...ev, { id: Date.now().toString(), name: file.name, type: file.type }] });
+                  const fd = new FormData();
+                  fd.append('file', file);
+                  fd.append('engagementId', engagementId);
+                  fd.append('stepId', `evidence-${processKey}`);
+                  try {
+                    const res = await fetch('/api/walkthrough/upload', { method: 'POST', body: fd });
+                    if (!res.ok) {
+                      const err = await res.json().catch(() => ({}));
+                      alert(`Upload failed: ${err.error || res.status}`);
+                      return;
+                    }
+                    const uploaded = await res.json();
+                    const ev = status.evidence || [];
+                    await saveStatus({
+                      evidence: [...ev, {
+                        id: uploaded.id || Date.now().toString(),
+                        name: uploaded.name || file.name,
+                        type: file.type,
+                        storagePath: uploaded.storagePath,
+                      }],
+                    });
+                  } catch (err: any) {
+                    alert(`Upload error: ${err?.message || 'unknown'}`);
+                  } finally {
+                    if (e.target) e.target.value = '';
+                  }
                 }} />
               </label>
+              {/* Import from Excel — opens the matrix import modal.
+                  Lives alongside Upload File because both are ways to
+                  bring narrative/controls into the engagement. The
+                  Excel path also auto-generates a flowchart after
+                  import (see handleMatrixImported). */}
+              <button
+                type="button"
+                onClick={() => matrixRef.current?.openImport()}
+                className="text-[10px] px-2.5 py-1.5 bg-indigo-50 text-indigo-700 border border-indigo-200 rounded hover:bg-indigo-100 cursor-pointer inline-flex items-center gap-1"
+                title="Import narrative + controls from an Excel matrix. Generates a flowchart automatically."
+              >
+                <FileSpreadsheet className="h-3 w-3" /> Import from Excel
+              </button>
             </div>
             {(status.evidence || []).map(doc => (
               <div key={doc.id} className="flex items-center gap-2 text-xs border rounded px-2 py-1">
@@ -1220,7 +1386,17 @@ function WalkthroughProcess({ engagementId, processKey, processLabel, userRole, 
                 ) : (
                   <span className="text-slate-300 text-[9px] italic">local only</span>
                 )}
-                <button onClick={() => { saveStatus({ evidence: (status.evidence || []).filter(d => d.id !== doc.id) }); setSelectedEvidence(prev => { const next = new Set(prev); next.delete(doc.id); return next; }); }} className="text-red-400 hover:text-red-600"><X className="h-3 w-3" /></button>
+                <button onClick={() => {
+                  // Evidence rows are inline within the per-process
+                  // status payload, so deleting really does remove
+                  // them. Confirm before stripping a file from the
+                  // walkthrough — especially since the file may have
+                  // come from a portal request and isn't trivially
+                  // re-uploaded.
+                  if (typeof window !== 'undefined' && !window.confirm(`Remove "${doc.name}" from this walkthrough?\n\nIf the file came from the client portal, you'll need to re-request it from the client to bring it back.`)) return;
+                  saveStatus({ evidence: (status.evidence || []).filter(d => d.id !== doc.id) });
+                  setSelectedEvidence(prev => { const next = new Set(prev); next.delete(doc.id); return next; });
+                }} className="text-red-400 hover:text-red-600"><X className="h-3 w-3" /></button>
               </div>
             ))}
             {(status.evidence || []).some(e => e.storagePath) && (
@@ -1241,40 +1417,6 @@ function WalkthroughProcess({ engagementId, processKey, processLabel, userRole, 
         )}
       </div>
 
-      {/* Bottom action strip — two ways to drive the flowchart */}
-      <div className="bg-gradient-to-br from-indigo-50 to-purple-50 border border-indigo-200 rounded-lg p-3">
-        <p className="text-[11px] font-semibold text-indigo-800 mb-2">Build the flowchart from an existing source</p>
-        <div className="flex items-center gap-2 flex-wrap">
-          <input
-            ref={uploadDocRef}
-            type="file"
-            accept=".pdf,.doc,.docx,.png,.jpg,.jpeg,.txt"
-            className="hidden"
-            onChange={async (e) => {
-              const file = e.target.files?.[0];
-              if (file) await uploadProcessDocument(file);
-              if (uploadDocRef.current) uploadDocRef.current.value = '';
-            }}
-          />
-          <button
-            onClick={() => uploadDocRef.current?.click()}
-            disabled={generating}
-            className="text-xs px-3 py-2 bg-white border border-indigo-300 text-indigo-700 rounded hover:bg-indigo-100 disabled:opacity-50 inline-flex items-center gap-1.5"
-          >
-            {generating ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Upload className="h-3.5 w-3.5" />}
-            Upload Process Document
-          </button>
-          <button
-            onClick={() => matrixRef.current?.openImport()}
-            disabled={generating}
-            className="text-xs px-3 py-2 bg-white border border-indigo-300 text-indigo-700 rounded hover:bg-indigo-100 disabled:opacity-50 inline-flex items-center gap-1.5"
-          >
-            <FileSpreadsheet className="h-3.5 w-3.5" />
-            Import from Excel
-          </button>
-          <span className="text-[10px] text-indigo-600/80 ml-1">Each option generates the flowchart automatically.</span>
-        </div>
-      </div>
 
       {/* Teams Meeting Modal */}
       {showTeamsModal && (
