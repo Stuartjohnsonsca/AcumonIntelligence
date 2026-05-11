@@ -13,6 +13,63 @@ const MODEL = 'meta-llama/Llama-3.3-70B-Instruct-Turbo';
 // Rough char-to-token ratio; keep well within 128k context
 const MAX_DOC_CHARS = 80_000;
 
+// Pull every <Text>…</Text> body out of a Visio page XML. Visio
+// stores shape labels in <Shape><Text>…</Text></Shape> with sub-tags
+// (<cp/>, <pp/>) for formatting that we strip. Order is document-order,
+// which is shape-creation-order, which is "close enough" to flow order
+// for an LLM to reconstruct the process.
+function extractVisioPageText(xml: string): string {
+  const out: string[] = [];
+  const textBlockRe = /<Text\b[^>]*>([\s\S]*?)<\/Text>/g;
+  let m: RegExpExecArray | null;
+  while ((m = textBlockRe.exec(xml)) !== null) {
+    const inner = m[1]
+      .replace(/<[^>]+>/g, ' ')
+      .replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>')
+      .replace(/&quot;/g, '"').replace(/&apos;/g, "'")
+      .replace(/\s+/g, ' ')
+      .trim();
+    if (inner.length > 0) out.push(inner);
+  }
+  return out.join('\n');
+}
+
+// Pull labels out of any XML-based diagram format we recognise. Yanks
+// value="…", name="…", label="…" attributes plus <name>…</name> /
+// <label>…</label> bodies. Covers draw.io (mxCell @value), BPMN
+// (@name on tasks/events/gateways), and most Lucidchart XML exports.
+function extractDiagramLabels(xml: string): string[] {
+  const out: string[] = [];
+  const seen = new Set<string>();
+  const push = (raw: string) => {
+    const v = raw
+      .replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>')
+      .replace(/&quot;/g, '"').replace(/&apos;/g, "'")
+      .replace(/<[^>]+>/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+    if (v.length === 0) return;
+    // Skip noise — single chars, pure-numeric ids, things that look
+    // like IDs rather than labels.
+    if (v.length < 2) return;
+    if (/^[a-z0-9_-]+$/i.test(v) && v.length < 8) return;
+    if (seen.has(v)) return;
+    seen.add(v);
+    out.push(v);
+  };
+  for (const attr of ['value', 'name', 'label']) {
+    const re = new RegExp(`\\b${attr}="([^"]+)"`, 'gi');
+    let m: RegExpExecArray | null;
+    while ((m = re.exec(xml)) !== null) push(m[1]);
+  }
+  for (const tag of ['name', 'label', 'documentation']) {
+    const re = new RegExp(`<(?:[^>]*:)?${tag}\\b[^>]*>([\\s\\S]*?)</(?:[^>]*:)?${tag}>`, 'gi');
+    let m: RegExpExecArray | null;
+    while ((m = re.exec(xml)) !== null) push(m[1]);
+  }
+  return out;
+}
+
 /**
  * POST /api/engagements/[engagementId]/walkthrough-flowchart
  * Takes process narrative + controls (and optionally evidence files) and generates a structured flowchart.
@@ -192,6 +249,74 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ eng
           } catch (zipErr: any) {
             console.error('[walkthrough-flowchart] DOCX unzip failed for', file.name, zipErr.message);
             extractionErrors.push(`${file.name}: failed to read DOCX — ${zipErr.message}`);
+          }
+        } else if (file.name?.toLowerCase().endsWith('.vsdx') || mime.includes('visio')) {
+          // Visio .vsdx — ZIP container, one XML per page under visio/pages/.
+          // We pull every text element so the AI sees shape labels in
+          // their connector order (good enough for the LLM to infer flow
+          // without us parsing the actual shape geometry).
+          try {
+            const zip = await JSZip.loadAsync(buffer);
+            const pageNames = Object.keys(zip.files)
+              .filter(k => /^visio\/pages\/page\d+\.xml$/i.test(k))
+              .sort();
+            const pageTexts: string[] = [];
+            for (const pageName of pageNames) {
+              const xml = await zip.file(pageName)?.async('string');
+              if (!xml) continue;
+              const text = extractVisioPageText(xml);
+              if (text) pageTexts.push(`[Page: ${pageName.split('/').pop()}]\n${text}`);
+            }
+            const joined = pageTexts.join('\n\n');
+            if (joined.length > 10) {
+              console.log('[walkthrough-flowchart] Extracted', joined.length, 'chars from VSDX:', file.name);
+              extractedParts.push(`--- ${file.name} (Visio) ---\n${joined}`);
+            } else {
+              extractionErrors.push(`${file.name}: Visio had no extractable text labels`);
+            }
+          } catch (vsdErr: any) {
+            console.error('[walkthrough-flowchart] VSDX unzip failed for', file.name, vsdErr.message);
+            extractionErrors.push(`${file.name}: failed to read Visio — ${vsdErr.message}`);
+          }
+        } else if (
+          file.name?.toLowerCase().endsWith('.drawio')
+          || file.name?.toLowerCase().endsWith('.xml')
+          || file.name?.toLowerCase().endsWith('.bpmn')
+        ) {
+          // draw.io / Lucidchart-XML / BPMN. All XML. draw.io stores
+          // shape labels in mxCell @value; BPMN uses @name on tasks/
+          // events; we conservatively yank every value=, name=, label=
+          // attribute and emit them in document order so the LLM gets a
+          // node-by-node list that follows the flow.
+          try {
+            const xml = buffer.toString('utf-8');
+            const labels = extractDiagramLabels(xml);
+            if (labels.length > 0) {
+              const text = labels.join('\n');
+              console.log('[walkthrough-flowchart] Extracted', text.length, 'chars from diagram XML:', file.name);
+              extractedParts.push(`--- ${file.name} (diagram XML) ---\n${text}`);
+            } else {
+              extractionErrors.push(`${file.name}: diagram XML had no shape labels`);
+            }
+          } catch (xmlErr: any) {
+            extractionErrors.push(`${file.name}: failed to read diagram XML — ${xmlErr.message}`);
+          }
+        } else if (
+          file.name?.toLowerCase().endsWith('.mmd')
+          || file.name?.toLowerCase().endsWith('.mermaid')
+          || file.name?.toLowerCase().endsWith('.puml')
+          || file.name?.toLowerCase().endsWith('.plantuml')
+          || file.name?.toLowerCase().endsWith('.dot')
+          || file.name?.toLowerCase().endsWith('.gv')
+        ) {
+          // Mermaid / PlantUML / Graphviz — plain text already. The LLM
+          // can read the DSL directly to follow the flow.
+          const text = buffer.toString('utf-8').trim();
+          if (text.length > 10) {
+            console.log('[walkthrough-flowchart] Extracted', text.length, 'chars from diagram DSL:', file.name);
+            extractedParts.push(`--- ${file.name} (diagram source) ---\n${text}`);
+          } else {
+            extractionErrors.push(`${file.name}: diagram source was empty`);
           }
         } else {
           extractionErrors.push(`${file.name}: unsupported file type (${mime})`);
