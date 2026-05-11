@@ -546,6 +546,13 @@ export function SpecialistsTab({ engagementId, specialists, teamMembers, current
         <div className="flex flex-wrap gap-1 flex-1">
         {subTabs.map(sub => {
           const items = getItemsFor(sub.roleKey);
+          // Sub-tab label dots — show ALL THREE roles (Preparer /
+          // Reviewer / RI) to match the dots rendered against each
+          // item inside the sub-tab. Previously only Reviewer + RI
+          // were shown, which was out-of-sync with the per-item
+          // SignOffDots and made it impossible to tell from the
+          // strip whether the preparer had signed anything off.
+          const preparer = aggregateForRole(items, 'preparer');
           const reviewer = aggregateForRole(items, 'reviewer');
           const ri = aggregateForRole(items, 'ri');
           const isActive = sub.roleKey === activeRole.roleKey;
@@ -564,7 +571,8 @@ export function SpecialistsTab({ engagementId, specialists, teamMembers, current
               {items.length > 0 && (
                 <span className="text-[10px] text-slate-400">({items.length})</span>
               )}
-              <span className="inline-flex items-center gap-0.5 ml-1" title={`Reviewer: ${reviewer} · RI: ${ri}`}>
+              <span className="inline-flex items-center gap-0.5 ml-1" title={`Preparer: ${preparer} · Reviewer: ${reviewer} · RI: ${ri}`}>
+                {renderAggregateDot(preparer)}
                 {renderAggregateDot(reviewer)}
                 {renderAggregateDot(ri)}
               </span>
@@ -598,12 +606,32 @@ export function SpecialistsTab({ engagementId, specialists, teamMembers, current
               <span className="ml-1">{activeItems.length} item{activeItems.length === 1 ? '' : 's'}</span>
             </p>
           </div>
-          <button
-            onClick={() => setShowNewItemFor(showNewItemFor === activeRole.roleKey ? null : activeRole.roleKey)}
-            className="text-xs px-3 py-1.5 bg-blue-50 text-blue-700 border border-blue-200 rounded hover:bg-blue-100 inline-flex items-center gap-1"
-          >
-            <Plus className="h-3 w-3" /> Add item
-          </button>
+          <div className="flex items-center gap-3">
+            {/* Sub-tab aggregate dots — same Preparer/Reviewer/RI
+                summary that's shown on the sub-tab label up top,
+                repeated here next to the Add item button so the
+                auditor sees the rollup status without having to
+                glance up at the label strip. Auto-rolls from the
+                per-item sign-offs; identical computation. */}
+            {(() => {
+              const preparer = aggregateForRole(activeItems, 'preparer');
+              const reviewer = aggregateForRole(activeItems, 'reviewer');
+              const ri = aggregateForRole(activeItems, 'ri');
+              return (
+                <div className="inline-flex items-center gap-1.5 text-[10px] text-slate-500" title={`Preparer: ${preparer} · Reviewer: ${reviewer} · RI: ${ri}`}>
+                  <span className="flex items-center gap-0.5"><span className="text-slate-400">P</span> {renderAggregateDot(preparer)}</span>
+                  <span className="flex items-center gap-0.5"><span className="text-slate-400">R</span> {renderAggregateDot(reviewer)}</span>
+                  <span className="flex items-center gap-0.5"><span className="text-slate-400">RI</span> {renderAggregateDot(ri)}</span>
+                </div>
+              );
+            })()}
+            <button
+              onClick={() => setShowNewItemFor(showNewItemFor === activeRole.roleKey ? null : activeRole.roleKey)}
+              className="text-xs px-3 py-1.5 bg-blue-50 text-blue-700 border border-blue-200 rounded hover:bg-blue-100 inline-flex items-center gap-1"
+            >
+              <Plus className="h-3 w-3" /> Add item
+            </button>
+          </div>
         </div>
 
         {/* Add-item form */}
