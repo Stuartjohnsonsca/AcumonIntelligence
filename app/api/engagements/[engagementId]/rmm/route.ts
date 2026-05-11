@@ -247,5 +247,79 @@ export async function POST(req: Request, { params }: { params: Promise<{ engagem
     return NextResponse.json({ success: true });
   }
 
+  // ── Merge / unmerge row groups ───────────────────────────────────
+  // merge:   body.rowIds — at least 2 ids that share the same fsLevel.
+  //          Validates same-fsLevel, mints a new groupId, sets it on
+  //          every member. Returns the new groupId.
+  // unmerge: body.mergedGroupId — clears the id on every member and
+  //          prepends a breadcrumb to each row's `notes` so any test
+  //          history performed against the group stays visible.
+  if (body.action === 'merge') {
+    const rowIds: string[] = Array.isArray(body.rowIds) ? body.rowIds.filter((x: unknown) => typeof x === 'string') : [];
+    if (rowIds.length < 2) {
+      return NextResponse.json({ error: 'Select at least two rows to merge.' }, { status: 400 });
+    }
+    const rows = await prisma.auditRMMRow.findMany({
+      where: { engagementId, id: { in: rowIds } },
+      select: { id: true, fsLevel: true, mergedGroupId: true, lineItem: true },
+    });
+    if (rows.length !== rowIds.length) {
+      return NextResponse.json({ error: 'Some selected rows were not found on this engagement.' }, { status: 400 });
+    }
+    // All members must share an fsLevel — cross-FS-Level grouping
+    // would break the Audit Plan's per-FS-line test selection.
+    const distinctLevels = new Set(rows.map(r => r.fsLevel || ''));
+    if (distinctLevels.size !== 1) {
+      return NextResponse.json({ error: 'Merge is only allowed within a single FS Line. Selected rows span multiple FS Lines.' }, { status: 400 });
+    }
+    // Already-merged rows are inherited into the new group — i.e.
+    // selecting an existing group anchor + a standalone row merges
+    // them into one larger group. Simpler than rejecting.
+    const mergedGroupId = crypto.randomUUID();
+    await prisma.auditRMMRow.updateMany({
+      where: { engagementId, id: { in: rowIds } },
+      data: { mergedGroupId },
+    });
+    // Pull in any rows already belonging to the same group as a
+    // selected member (so an "add to existing group" flow works
+    // without needing a separate endpoint).
+    const oldGroupIds = rows.map(r => r.mergedGroupId).filter((g): g is string => !!g && g !== mergedGroupId);
+    if (oldGroupIds.length > 0) {
+      await prisma.auditRMMRow.updateMany({
+        where: { engagementId, mergedGroupId: { in: oldGroupIds } },
+        data: { mergedGroupId },
+      });
+    }
+    return NextResponse.json({ success: true, mergedGroupId });
+  }
+
+  if (body.action === 'unmerge') {
+    const mergedGroupId: string = typeof body.mergedGroupId === 'string' ? body.mergedGroupId : '';
+    if (!mergedGroupId) {
+      return NextResponse.json({ error: 'mergedGroupId required' }, { status: 400 });
+    }
+    const members = await prisma.auditRMMRow.findMany({
+      where: { engagementId, mergedGroupId },
+      select: { id: true, lineItem: true, notes: true },
+    });
+    if (members.length === 0) {
+      return NextResponse.json({ error: 'Group not found.' }, { status: 404 });
+    }
+    const memberNames = members.map(m => m.lineItem || '(unnamed)').join(', ');
+    const breadcrumb = `[Previously grouped with: ${memberNames}]`;
+    // Each row gets the breadcrumb prepended unless it's already
+    // there (idempotent — same row could have been merged and
+    // unmerged multiple times).
+    await Promise.all(members.map(m => {
+      const note = (m.notes || '').trim();
+      const next = note.includes(breadcrumb) ? note : `${breadcrumb}\n${note}`.trim();
+      return prisma.auditRMMRow.update({
+        where: { id: m.id },
+        data: { mergedGroupId: null, notes: next },
+      });
+    }));
+    return NextResponse.json({ success: true, unmergedRowCount: members.length });
+  }
+
   return NextResponse.json({ error: 'Unknown action' }, { status: 400 });
 }

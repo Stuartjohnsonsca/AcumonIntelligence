@@ -177,6 +177,19 @@ async function applySchemaSafetyNet() {
       END $$
     `));
 
+    // 5. AuditRMMRow.mergedGroupId — RMM row grouping. Rows sharing
+    //    the same UUID render as one expandable group; null = standalone.
+    //    Added by the RMM merge / unmerge feature; every Prisma read
+    //    on audit_rmm_rows SELECTs it implicitly.
+    results.push(await safetyNetStep(prisma, 'audit_rmm_rows.merged_group_id column', `
+      ALTER TABLE audit_rmm_rows
+        ADD COLUMN IF NOT EXISTS merged_group_id text
+    `));
+    results.push(await safetyNetStep(prisma, 'audit_rmm_rows.merged_group_id idx', `
+      CREATE INDEX IF NOT EXISTS audit_rmm_rows_merged_group_id_idx
+        ON audit_rmm_rows(merged_group_id)
+    `));
+
     const ok = results.filter(r => r.ok).length;
     const failed = results.filter(r => !r.ok);
     if (failed.length === 0) {

@@ -58,6 +58,13 @@ interface RMMRow {
   // Send to RMM. Null for manually added / TB-imported rows. Drives
   // the bottom-of-list grouping + shading.
   source?: string | null;
+  // Merged-row group id — UUID shared by rows that have been merged
+  // into one group. Null = standalone row. The first row by
+  // sortOrder in the group is the "anchor" whose risk assessment is
+  // canonical; non-anchor members render only inside the anchor's
+  // grouped header. See lib/audit-plan/test-binding logic for how
+  // tests attach to the group's classification.
+  mergedGroupId?: string | null;
 }
 
 const RISK_LEVELS = ['Remote', 'Low', 'Medium', 'High', 'Very High'] as const;

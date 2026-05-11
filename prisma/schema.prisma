@@ -2736,10 +2736,20 @@ model AuditRMMRow {
   fsStatement         String? @map("fs_statement") // e.g. "Profit & Loss"
   fsLevel             String? @map("fs_level") // e.g. "Revenue"
   fsNote              String? @map("fs_note") // e.g. "Trade Debtors"
+  // Merged-row group id — UUID shared by every row in the same merged
+  // group. Null for standalone rows. The first row by sortOrder in
+  // the group is the "anchor" whose risk assessment + classification
+  // is canonical for the group; non-anchor members render only in
+  // the anchor row's grouped header (their lineItem is comma-joined
+  // and amount summed). Merging is restricted to rows that share
+  // the same fsLevel — cross-FS-Level merges are blocked at the API
+  // layer so a group never spans an FS-line boundary.
+  mergedGroupId       String? @map("merged_group_id")
 
   engagement AuditEngagement @relation(fields: [engagementId], references: [id], onDelete: Cascade)
 
   @@index([engagementId])
+  @@index([mergedGroupId])
   @@map("audit_rmm_rows")
 }
 
