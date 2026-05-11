@@ -251,14 +251,29 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
     },
 
     async jwt({ token, user, account, profile }) {
-      // Microsoft Entra ID sign-in — look up or create user in our DB
-      if (account?.provider === 'microsoft-entra-id' && profile?.email) {
+      // Microsoft Entra ID sign-in — look up or create user in our DB.
+      //
+      // Entra ID for organisational ("work") accounts often does NOT
+      // return `email` in the ID token — the address arrives as
+      // `preferred_username` or `upn` instead. The signIn callback
+      // above already tolerates this via `(user as any)?.email`, so
+      // we mirror the same fallback chain here. Without it the jwt
+      // callback's Microsoft branch was being skipped for work
+      // accounts, the token came back with no `twoFactorVerified`
+      // flag set, and /my-account bounced the user straight back to
+      // /login — surfacing as a sign-in loop.
+      const msEmail = (profile?.email
+        || (profile as any)?.preferred_username
+        || (profile as any)?.upn
+        || (user as any)?.email
+        || '') as string;
+      if (account?.provider === 'microsoft-entra-id' && msEmail) {
         // Store Microsoft access token for OBO flow (Dynamics CRM, Graph API)
         if (account.access_token) {
           token.msAccessToken = account.access_token;
         }
 
-        const email = profile.email as string;
+        const email = msEmail;
         // Three-strategy lookup, each isolated in its own try/catch
         // so one failed query can't take down the whole sign-in.
         //
@@ -311,7 +326,7 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
           token.error = 'AccountNotProvisioned';
           token.msalPendingSetup = true;
           token.email = email;
-          token.name = (profile.name as string) || email;
+          token.name = ((profile?.name as string | undefined) || email);
           token.twoFactorVerified = false; // explicit — no main-site access without a user row
           token.twoFactorPending = false;
           token.isSuperAdmin = false;
