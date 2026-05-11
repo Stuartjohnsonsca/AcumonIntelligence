@@ -180,6 +180,17 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ eng
     }
   }
 
+  // Extract-text-only mode — drives the auto-ingest on TabDocuments
+  // footer upload: the client wants the file's text content pulled
+  // into the active process's narrative without triggering a fresh
+  // AI flowchart call. Skip the rest of the pipeline and return.
+  if (body.action === 'extract_text') {
+    return NextResponse.json({
+      extractedNarrative: extractedNarrative || '',
+      extractionErrors,
+    });
+  }
+
   if (!documentText) {
     const reason = extractionErrors.length > 0
       ? `Could not extract text from the selected files:\n${extractionErrors.join('\n')}`

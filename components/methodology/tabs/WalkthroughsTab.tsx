@@ -621,6 +621,67 @@ function WalkthroughProcess({ engagementId, processKey, processLabel, userRole, 
       setTabDocsAnalysing(false);
     }
   }
+
+  // Auto-ingest text from any file the auditor uploads via the
+  // per-tab Documents footer at the bottom of the Walkthroughs tab.
+  // The footer dispatches `engagement:tab-document-uploaded` after
+  // each successful upload; we run the walkthrough-flowchart
+  // endpoint in extract-text-only mode against that document id and
+  // append the result to the ACTIVE process's narrative. A small
+  // ingest banner shows the auditor what just happened. Skips the
+  // flowchart AI call — the auditor reviews / edits the narrative
+  // and then deliberately triggers Generate from Description (or
+  // Generate from Uploaded Documents) when they're ready.
+  const [autoIngestNotice, setAutoIngestNotice] = useState<{ filename: string; charsAdded: number } | null>(null);
+  const autoIngestTimer = useRef<NodeJS.Timeout | null>(null);
+  useEffect(() => {
+    function onUpload(e: Event) {
+      const detail = (e as CustomEvent).detail as {
+        engagementId?: string; tab?: string; documentId?: string; documentName?: string;
+      } | undefined;
+      if (!detail || detail.engagementId !== engagementId || detail.tab !== 'walkthroughs' || !detail.documentId) return;
+      void (async () => {
+        try {
+          const res = await fetch(`/api/engagements/${engagementId}/walkthrough-flowchart`, {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              action: 'extract_text',
+              processKey, processLabel,
+              documentIds: [detail.documentId],
+            }),
+          });
+          if (!res.ok) return;
+          const data = await res.json();
+          const extracted: string = data?.extractedNarrative || '';
+          if (!extracted.trim()) return;
+          setNarrative(prev => prev
+            ? `${prev}\n\n--- Auto-ingested from ${detail.documentName || 'upload'} ---\n${extracted}`
+            : `--- Auto-ingested from ${detail.documentName || 'upload'} ---\n${extracted}`,
+          );
+          clearEditedField('narrative');
+          await save();
+          // Show a 10s banner confirming the ingest. Replaces any
+          // previous banner so a rapid burst of uploads doesn't
+          // pile up notifications.
+          if (autoIngestTimer.current) clearTimeout(autoIngestTimer.current);
+          setAutoIngestNotice({ filename: detail.documentName || 'upload', charsAdded: extracted.length });
+          autoIngestTimer.current = setTimeout(() => {
+            setAutoIngestNotice(null);
+            autoIngestTimer.current = null;
+          }, 10000);
+        } catch { /* silent — ingest is best-effort */ }
+      })();
+    }
+    window.addEventListener('engagement:tab-document-uploaded', onUpload);
+    return () => window.removeEventListener('engagement:tab-document-uploaded', onUpload);
+    // processKey re-binds the listener so a freshly-active process
+    // tab gets its narrative ingested into, not whichever one was
+    // mounted at parent-render time.
+  }, [engagementId, processKey, processLabel]);
+  useEffect(() => () => {
+    if (autoIngestTimer.current) clearTimeout(autoIngestTimer.current);
+  }, []);
+
   const [showTeamsModal, setShowTeamsModal] = useState(false);
   const [teamsMeetings, setTeamsMeetings] = useState<any[]>([]);
   const [teamsLoading, setTeamsLoading] = useState(false);
@@ -1165,6 +1226,30 @@ function WalkthroughProcess({ engagementId, processKey, processLabel, userRole, 
         {sectionOpen.narrative && (
           <div className="p-3 space-y-2">
             <p className="text-[10px] text-slate-400">Document the process from initiation to recording. Include key personnel, systems, documents, and transaction flow.</p>
+            {/* Auto-ingest confirmation — shown for 10s after the
+                tab footer reports a new upload. The text content of
+                the file is already appended to the narrative below;
+                this banner just confirms what happened so the
+                auditor knows where the new text came from. */}
+            {autoIngestNotice && (
+              <div className="flex items-center justify-between gap-3 px-2 py-1.5 bg-emerald-50 border border-emerald-200 rounded text-[11px] text-emerald-800">
+                <span>
+                  Ingested <strong>{autoIngestNotice.filename}</strong> into this process narrative
+                  {autoIngestNotice.charsAdded > 0 && <span className="text-emerald-700"> ({autoIngestNotice.charsAdded.toLocaleString()} characters)</span>}.
+                </span>
+                <button
+                  onClick={() => {
+                    if (autoIngestTimer.current) clearTimeout(autoIngestTimer.current);
+                    autoIngestTimer.current = null;
+                    setAutoIngestNotice(null);
+                  }}
+                  className="text-emerald-700 hover:text-emerald-900"
+                  title="Dismiss"
+                >
+                  <X className="h-3 w-3" />
+                </button>
+              </div>
+            )}
             {/* Highlight toolbar — captures whatever the auditor
                 has selected in the textarea and stores it as a
                 coloured passage for reviewer/RI to inspect at a

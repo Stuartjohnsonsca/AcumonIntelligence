@@ -174,6 +174,27 @@ export function TabDocumentsFooter({ engagementId, tab, tabLabel, clientName, pe
         setError(data?.error || `Upload failed (${res.status})`);
         return false;
       }
+      // Surface the new document id via a window CustomEvent so the
+      // host tab (e.g. WalkthroughsTab) can auto-ingest its text
+      // without the auditor having to click an extra button. The
+      // event is fire-and-forget; tabs that don't listen are
+      // unaffected. We try to parse the response for the id; a
+      // missing/malformed body just suppresses the event.
+      try {
+        const data = await res.clone().json().catch(() => ({}));
+        const docId: string | undefined = data?.document?.id;
+        if (docId) {
+          window.dispatchEvent(new CustomEvent('engagement:tab-document-uploaded', {
+            detail: {
+              engagementId,
+              tab,
+              documentId: docId,
+              documentName: data?.document?.documentName as string | undefined,
+              mimeType: data?.document?.mimeType as string | null | undefined,
+            },
+          }));
+        }
+      } catch { /* event-fire is best-effort */ }
       // Single-upload only resets the type select on success — the
       // user typically sets it once before picking the file.
       setPendingDocType('');
@@ -217,7 +238,29 @@ export function TabDocumentsFooter({ engagementId, tab, tabLabel, clientName, pe
         // otherwise let the server-side AI classifier pick each one.
         if (pendingDocType) fd.append('documentType', pendingDocType);
         const res = await fetch(`/api/engagements/${engagementId}/tab-documents`, { method: 'POST', body: fd });
-        if (!res.ok) failed++;
+        if (!res.ok) {
+          failed++;
+        } else {
+          // Same per-document upload event as the single-file path.
+          // Lets the host tab auto-ingest text per file as the zip
+          // unrolls. Failed members are skipped silently — the
+          // existing aggregate `failed` counter surfaces them.
+          try {
+            const data = await res.clone().json().catch(() => ({}));
+            const docId: string | undefined = data?.document?.id;
+            if (docId) {
+              window.dispatchEvent(new CustomEvent('engagement:tab-document-uploaded', {
+                detail: {
+                  engagementId,
+                  tab,
+                  documentId: docId,
+                  documentName: data?.document?.documentName as string | undefined,
+                  mimeType: data?.document?.mimeType as string | null | undefined,
+                },
+              }));
+            }
+          } catch { /* best effort */ }
+        }
       }
       if (failed > 0) setError(`${failed} of ${usable.length} files in the ZIP failed to upload.`);
       setPendingDocType('');
