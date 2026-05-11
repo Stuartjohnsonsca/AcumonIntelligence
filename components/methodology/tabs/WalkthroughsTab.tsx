@@ -553,6 +553,74 @@ function WalkthroughProcess({ engagementId, processKey, processLabel, userRole, 
   const [generating, setGenerating] = useState(false);
   const [analysing, setAnalysing] = useState(false);
   const [showAllDocs, setShowAllDocs] = useState(false);
+
+  // Inline picker for the "Generate from Uploaded Documents" button.
+  // Pulls AuditDocument rows tagged with `utilisedTab='walkthroughs'`
+  // (or allocated to the walkthroughs tab) via the standard
+  // tab-documents endpoint — the same data the per-tab Documents
+  // footer at the bottom of the tab shows. We pass the IDs back to
+  // the walkthrough-flowchart endpoint and let it resolve the blob
+  // paths server-side.
+  type TabDoc = { id: string; documentName: string; mimeType: string | null; hasContent: boolean };
+  const [showTabDocsPicker, setShowTabDocsPicker] = useState(false);
+  const [tabDocs, setTabDocs] = useState<TabDoc[]>([]);
+  const [tabDocsLoading, setTabDocsLoading] = useState(false);
+  const [tabDocsSelected, setTabDocsSelected] = useState<Set<string>>(new Set());
+  const [tabDocsAnalysing, setTabDocsAnalysing] = useState(false);
+
+  async function openTabDocsPicker() {
+    setShowTabDocsPicker(true);
+    setTabDocsLoading(true);
+    setTabDocsSelected(new Set());
+    try {
+      const res = await fetch(`/api/engagements/${engagementId}/tab-documents?tab=walkthroughs`);
+      if (res.ok) {
+        const data = await res.json();
+        setTabDocs(Array.isArray(data.documents) ? data.documents : []);
+      } else {
+        setTabDocs([]);
+      }
+    } catch {
+      setTabDocs([]);
+    } finally {
+      setTabDocsLoading(false);
+    }
+  }
+
+  async function analyseTabDocsAndGenerate() {
+    if (tabDocsSelected.size === 0) {
+      alert('Pick at least one uploaded document to analyse.');
+      return;
+    }
+    if (status.flowchart && status.flowchart.length > 0) {
+      if (!window.confirm('This will replace the current flowchart. Continue?')) return;
+    }
+    setTabDocsAnalysing(true);
+    try {
+      const res = await fetch(`/api/engagements/${engagementId}/walkthrough-flowchart`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          processKey, processLabel, narrative, controls,
+          documentIds: Array.from(tabDocsSelected),
+        }),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        alert(`Flowchart generation failed: ${err.error || res.status}`);
+        return;
+      }
+      const data = await res.json();
+      if (data.extractedNarrative) {
+        setNarrative(prev => prev ? `${prev}\n\n--- Extracted from documents ---\n${data.extractedNarrative}` : data.extractedNarrative);
+        clearEditedField('narrative');
+        await save();
+      }
+      await saveStatus({ stage: 'flowchart_generated', flowchart: data.steps || [] });
+      setShowTabDocsPicker(false);
+    } finally {
+      setTabDocsAnalysing(false);
+    }
+  }
   const [showTeamsModal, setShowTeamsModal] = useState(false);
   const [teamsMeetings, setTeamsMeetings] = useState<any[]>([]);
   const [teamsLoading, setTeamsLoading] = useState(false);
@@ -1226,20 +1294,20 @@ function WalkthroughProcess({ engagementId, processKey, processLabel, userRole, 
         {sectionOpen.flowchart && (
           <div className="p-3">
             {/* Generate-Flowchart action panel — the only place the
-                auditor needs to look to produce a flowchart. Two
-                clearly-labelled inputs: the typed narrative above,
-                and an Excel matrix. File uploads happen via the
-                standard per-tab Documents footer at the bottom of
-                the tab (same as every other tab), so this panel
-                doesn't carry an upload button — it would just
-                duplicate the footer. */}
+                auditor needs to look to produce a flowchart. Three
+                inputs that all feed the same generator: the typed
+                narrative above, an Excel matrix, or documents the
+                auditor has already attached to the tab via the
+                Documents footer at the bottom. File uploads
+                themselves happen via that footer (same as every
+                other tab), not here — this panel just consumes them. */}
             {(!status.flowchart || status.flowchart.length === 0) && (
               <div className="mb-3 bg-purple-50/60 border border-purple-200 rounded-lg p-3">
                 <p className="text-[11px] font-semibold text-purple-800 mb-1">Generate flowchart</p>
                 <p className="text-[10px] text-purple-900/80 mb-2">
-                  Either type a narrative above and click <em>Generate from Description</em>, or
-                  import an Excel walkthrough matrix below — the flowchart is built automatically.
-                  Documents attach via the footer at the bottom of this tab.
+                  Three inputs all build a flowchart automatically: the typed narrative above,
+                  documents you've attached via the footer at the bottom of this tab,
+                  or an Excel walkthrough matrix.
                 </p>
                 <div className="flex items-center gap-1.5 flex-wrap">
                   <button
@@ -1252,6 +1320,14 @@ function WalkthroughProcess({ engagementId, processKey, processLabel, userRole, 
                     Generate from Description
                   </button>
                   <button
+                    onClick={openTabDocsPicker}
+                    disabled={tabDocsAnalysing}
+                    className="text-[10px] px-3 py-1.5 bg-white border border-purple-300 text-purple-700 rounded hover:bg-purple-100 inline-flex items-center gap-1 disabled:opacity-50"
+                    title="Pick from the documents you've attached to this tab and generate a flowchart from them."
+                  >
+                    <Upload className="h-3 w-3" /> Generate from Uploaded Documents
+                  </button>
+                  <button
                     onClick={() => matrixRef.current?.openImport()}
                     className="text-[10px] px-3 py-1.5 bg-white border border-purple-300 text-purple-700 rounded hover:bg-purple-100 inline-flex items-center gap-1"
                     title="Import narrative + controls from an Excel walkthrough matrix. Flowchart is generated automatically on import."
@@ -1259,6 +1335,79 @@ function WalkthroughProcess({ engagementId, processKey, processLabel, userRole, 
                     <FileSpreadsheet className="h-3 w-3" /> Import from Excel
                   </button>
                 </div>
+
+                {/* Inline picker — appears under the CTA when the
+                    user clicks "Generate from Uploaded Documents".
+                    Pulled from the same tab-documents endpoint the
+                    footer uses, so the list is exactly what the
+                    auditor has attached to the Walkthroughs tab. */}
+                {showTabDocsPicker && (
+                  <div className="mt-2 border border-purple-300 rounded bg-white p-2 space-y-1">
+                    <div className="flex items-center justify-between">
+                      <span className="text-[10px] font-semibold text-purple-800">Select documents to analyse</span>
+                      <button onClick={() => setShowTabDocsPicker(false)} className="text-slate-400 hover:text-slate-600" title="Cancel">
+                        <X className="h-3.5 w-3.5" />
+                      </button>
+                    </div>
+                    {tabDocsLoading ? (
+                      <div className="text-[10px] text-slate-400 italic flex items-center gap-1.5"><Loader2 className="h-3 w-3 animate-spin" /> Loading documents…</div>
+                    ) : tabDocs.length === 0 ? (
+                      <p className="text-[10px] text-slate-400 italic">
+                        No documents attached to this tab yet. Upload some via the footer at the bottom of the tab, then try again.
+                      </p>
+                    ) : (
+                      <>
+                        <div className="max-h-40 overflow-y-auto space-y-0.5">
+                          {tabDocs.map(d => {
+                            const checked = tabDocsSelected.has(d.id);
+                            const disabled = !d.hasContent;
+                            return (
+                              <label
+                                key={d.id}
+                                className={`flex items-center gap-2 text-[10px] px-1.5 py-1 rounded hover:bg-purple-50 ${disabled ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'}`}
+                                title={disabled ? 'File has no content available for extraction' : ''}
+                              >
+                                <input
+                                  type="checkbox"
+                                  checked={checked}
+                                  disabled={disabled}
+                                  onChange={() => setTabDocsSelected(prev => {
+                                    const next = new Set(prev);
+                                    if (next.has(d.id)) next.delete(d.id); else next.add(d.id);
+                                    return next;
+                                  })}
+                                  className="w-3.5 h-3.5 rounded border-slate-300 text-purple-600 focus:ring-purple-500"
+                                />
+                                <FileText className="h-3 w-3 text-slate-400 flex-shrink-0" />
+                                <span className="flex-1 text-slate-700 truncate">{d.documentName}</span>
+                                {d.mimeType && <span className="text-[9px] text-slate-400 flex-shrink-0">{d.mimeType.split('/').pop()}</span>}
+                              </label>
+                            );
+                          })}
+                        </div>
+                        <div className="flex items-center gap-2 pt-1.5 border-t border-purple-100">
+                          <button
+                            onClick={() => {
+                              const ids = tabDocs.filter(d => d.hasContent).map(d => d.id);
+                              setTabDocsSelected(prev => prev.size === ids.length ? new Set() : new Set(ids));
+                            }}
+                            className="text-[9px] text-slate-500 hover:text-slate-700 underline"
+                          >
+                            {tabDocsSelected.size === tabDocs.filter(d => d.hasContent).length ? 'Deselect all' : 'Select all'}
+                          </button>
+                          <button
+                            onClick={analyseTabDocsAndGenerate}
+                            disabled={tabDocsAnalysing || tabDocsSelected.size === 0}
+                            className="ml-auto text-[10px] px-3 py-1 bg-purple-600 text-white rounded hover:bg-purple-700 disabled:opacity-50 inline-flex items-center gap-1"
+                          >
+                            {tabDocsAnalysing ? <Loader2 className="h-3 w-3 animate-spin" /> : <FileText className="h-3 w-3" />}
+                            {tabDocsAnalysing ? 'Analysing…' : `Analyse ${tabDocsSelected.size || ''} & Generate`}
+                          </button>
+                        </div>
+                      </>
+                    )}
+                  </div>
+                )}
               </div>
             )}
             <WalkthroughFlowEditor

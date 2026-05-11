@@ -5,6 +5,7 @@ import OpenAI from 'openai';
 import JSZip from 'jszip';
 import { downloadBlob } from '@/lib/azure-blob';
 import { processPdf } from '@/lib/pdf-to-images';
+import { prisma } from '@/lib/db';
 
 const apiKey = process.env.TOGETHER_API_KEY || process.env.TOGETHER_DOC_SUMMARY_KEY || '';
 const MODEL = 'meta-llama/Llama-3.3-70B-Instruct-Turbo';
@@ -48,20 +49,75 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ eng
     }
   }
 
-  const { processKey, processLabel, narrative, controls, evidenceFiles } = body;
+  const { processKey, processLabel, narrative, controls, evidenceFiles, documentIds } = body;
 
   let documentText = narrative?.trim() || '';
   let extractedNarrative = '';
   const extractionErrors: string[] = [];
 
-  // If evidence files provided, extract text from them
-  if (evidenceFiles && Array.isArray(evidenceFiles) && evidenceFiles.length > 0) {
+  // Resolve any `documentIds` (AuditDocument IDs, typically uploaded
+  // via the per-tab TabDocumentsFooter) into the same {storagePath,
+  // containerName, name, mimeType} shape the existing extractor
+  // already understands. Keeps storage paths server-side and lets
+  // the walkthrough flowchart pipeline ingest files attached via the
+  // standard tab-documents flow without going via /api/walkthrough/upload.
+  type FilePtr = { storagePath: string; containerName?: string | null; name: string; mimeType?: string | null };
+  const resolvedFiles: FilePtr[] = [];
+
+  if (Array.isArray(evidenceFiles)) {
+    for (const f of evidenceFiles) {
+      if (f?.storagePath && f?.name) {
+        resolvedFiles.push({
+          storagePath: f.storagePath,
+          containerName: f.containerName ?? null,
+          name: f.name,
+          mimeType: f.mimeType ?? null,
+        });
+      }
+    }
+  }
+
+  if (Array.isArray(documentIds) && documentIds.length > 0) {
+    try {
+      const docs = await prisma.auditDocument.findMany({
+        where: { id: { in: documentIds }, engagementId },
+        select: {
+          id: true,
+          documentName: true,
+          storagePath: true,
+          containerName: true,
+          mimeType: true,
+        },
+      });
+      for (const d of docs) {
+        if (d.storagePath) {
+          resolvedFiles.push({
+            storagePath: d.storagePath,
+            containerName: d.containerName ?? 'audit-documents',
+            name: d.documentName,
+            mimeType: d.mimeType,
+          });
+        }
+      }
+      const missingContent = documentIds.length - resolvedFiles.length;
+      if (missingContent > 0 && docs.length < documentIds.length) {
+        extractionErrors.push(`${documentIds.length - docs.length} document id(s) not found on this engagement`);
+      }
+    } catch (err: any) {
+      extractionErrors.push(`Failed to resolve uploaded documents: ${err?.message || 'unknown error'}`);
+    }
+  }
+
+  // If any files resolved (either path-based or id-based), extract
+  // text from them.
+  if (resolvedFiles.length > 0) {
     const extractedParts: string[] = [];
 
-    for (const file of evidenceFiles) {
+    for (const file of resolvedFiles) {
       try {
-        console.log('[walkthrough-flowchart] Downloading:', file.name, file.storagePath);
-        const buffer = await downloadBlob(file.storagePath, 'upload-inbox');
+        const container = file.containerName || 'upload-inbox';
+        console.log('[walkthrough-flowchart] Downloading:', file.name, file.storagePath, 'from', container);
+        const buffer = await downloadBlob(file.storagePath, container);
         const mime = (file.mimeType || file.name || '').toLowerCase();
 
         if (mime.includes('pdf') || file.name?.toLowerCase().endsWith('.pdf')) {
