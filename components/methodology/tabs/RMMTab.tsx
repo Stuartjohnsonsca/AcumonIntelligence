@@ -1069,8 +1069,8 @@ export function RMMTab({ engagementId, auditType, teamMembers = [], showCategory
               <ResizableTh colKey="finalRisk" widths={columnWidths} onResizeStart={startColumnResize} align="center">Final Risk</ResizableTh>
               <ResizableTh colKey="controlRisk" widths={columnWidths} onResizeStart={startColumnResize} align="center">Control Risk</ResizableTh>
               <ResizableTh colKey="overall" widths={columnWidths} onResizeStart={startColumnResize} align="center">Overall</ResizableTh>
-              <ResizableTh colKey="sigRisk" widths={columnWidths} onResizeStart={startColumnResize} align="center" title="Significant Risk">
-                Sig.Risk <span className="inline-block w-3 h-3 text-[8px] rounded-full bg-slate-200 text-slate-500 leading-3 cursor-help">?</span>
+              <ResizableTh colKey="sigRisk" widths={columnWidths} onResizeStart={startColumnResize} align="center" title="Risk classification — red Significant Risk, orange Area of Focus, green Normal, hollow Immaterial">
+                Class <span className="inline-block w-3 h-3 text-[8px] rounded-full bg-slate-200 text-slate-500 leading-3 cursor-help" title="Red = Significant Risk · Orange = Area of Focus · Green = Normal · Hollow = Immaterial">?</span>
               </ResizableTh>
               <ResizableTh colKey="notes" widths={columnWidths} onResizeStart={startColumnResize} align="left">Notes</ResizableTh>
               <ResizableTh colKey="signOffs" widths={columnWidths} onResizeStart={startColumnResize} align="center">
@@ -1275,16 +1275,30 @@ export function RMMTab({ engagementId, auditType, teamMembers = [], showCategory
                         {row.overallRisk || '—'}
                       </span>
                     </td>
-                    {/* Risk Classification */}
+                    {/* Risk Classification — 4-tier dot:
+                          red    = Significant Risk (overallRisk High / Very High)
+                          orange = Area of Focus    (overallRisk Medium)
+                          green  = Normal           (overallRisk Low / Remote)
+                          hollow = Immaterial       (no overallRisk yet)
+                        Firm-defined riskClassificationTable still wins where
+                        present; the inline fallback only kicks in for tiers
+                        the firm hasn't customised. */}
                     <td className="px-1 py-1 text-center align-top">
                       {(() => {
-                        if (!row.overallRisk) return null;
-                        const classification = riskClassificationTable?.[row.overallRisk]
-                          || (row.overallRisk === 'High' || row.overallRisk === 'Very High' ? 'Significant Risk'
-                            : row.overallRisk === 'Medium' ? 'Area of Focus' : null);
+                        const overall = row.overallRisk || '';
+                        const fromTable = overall ? riskClassificationTable?.[overall] : null;
+                        const classification = fromTable
+                          || (overall === 'High' || overall === 'Very High' ? 'Significant Risk'
+                            : overall === 'Medium' ? 'Area of Focus'
+                            : overall === 'Low' || overall === 'Remote' ? 'Normal'
+                            : null);
                         if (classification === 'Significant Risk') return <span className="inline-block w-3 h-3 rounded-full bg-red-500 cursor-help" title="Significant Risk" />;
                         if (classification === 'Area of Focus') return <span className="inline-block w-3 h-3 rounded-full bg-orange-400 cursor-help" title="Area of Focus" />;
-                        return null;
+                        if (classification === 'Normal') return <span className="inline-block w-3 h-3 rounded-full bg-green-500 cursor-help" title="Normal" />;
+                        // Immaterial — hollow circle. Either the auditor hasn't
+                        // set an overall risk yet, or the firm's classification
+                        // table explicitly returned null/empty for this tier.
+                        return <span className="inline-block w-3 h-3 rounded-full border border-slate-400 bg-white cursor-help" title="Immaterial — overall risk not yet assessed" />;
                       })()}
                     </td>
                     {/* Notes — free text */}
