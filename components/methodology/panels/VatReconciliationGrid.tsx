@@ -437,9 +437,10 @@ export function VatReconciliationGrid({
                   client's response in the firm-side ClientPortalTab.
                   If commit hasn't happened yet, or the auto-extract
                   silently failed, the figures don't land in the
-                  grid. This button re-runs extraction on demand and
-                  deletes the source PDFs from blob storage once
-                  figures are merged into periodRows. */}
+                  grid. This button re-runs extraction on demand.
+                  Source PDFs are kept after extraction so the
+                  auditor can re-pull at any time — re-running
+                  overwrites the period rows in place. */}
               {engagementId && (
                 <button
                   type="button"
@@ -471,9 +472,6 @@ export function VatReconciliationGrid({
                       if (Array.isArray(j.report)) {
                         setExtractReport(j.report);
                       }
-                      if (typeof j.deletedUploadCount === 'number' && j.deletedUploadCount > 0) {
-                        console.log(`[vat-extract/portal] deleted ${j.deletedUploadCount} source upload(s)`);
-                      }
                     } catch (err: any) {
                       setRequestError(err?.message || 'Could not pull from portal uploads');
                     } finally {
@@ -481,7 +479,7 @@ export function VatReconciliationGrid({
                     }
                   }}
                   className="inline-flex items-center gap-1.5 text-[11px] px-3 py-1.5 bg-emerald-600 text-white rounded hover:bg-emerald-700 disabled:opacity-50 whitespace-nowrap"
-                  title="Extract figures from the client's uploaded VAT returns, populate the period rows, and delete the source PDFs."
+                  title="Extract figures from the client's uploaded VAT returns and populate the period rows. Source PDFs are kept so you can re-pull at any time — re-running overwrites the period values in place."
                 >
                   {requesting ? <Loader2 className="h-3 w-3 animate-spin" /> : <CheckCircle2 className="h-3 w-3" />}
                   Pull from uploads

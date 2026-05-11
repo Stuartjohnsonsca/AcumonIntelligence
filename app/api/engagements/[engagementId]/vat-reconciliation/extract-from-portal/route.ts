@@ -3,7 +3,6 @@ import { assertEngagementWriteAccess } from '@/lib/auth/engagement-auth';
 import { auth } from '@/lib/auth';
 import { prisma } from '@/lib/db';
 import { extractVatReturnsFromUploads, mergeExtractionsIntoPeriodRows } from '@/lib/vat-returns-extractor';
-import { deleteBlob } from '@/lib/azure-blob';
 import type { VatPeriodRow, VatRecData } from '@/lib/vat-reconciliation';
 
 /**
@@ -28,14 +27,15 @@ import type { VatPeriodRow, VatRecData } from '@/lib/vat-reconciliation';
  *      VAT-return prompt, and merge into the engagement's
  *      audit_vat_reconciliations.data.periodRows by closest
  *      periodEnding date.
- *   4. DELETE the uploaded files. The PDFs have done their job —
- *      figures are now in periodRows where the auditor will edit
- *      them going forward. Deleting (PortalUpload rows + Azure
- *      blobs) keeps storage clean and stops the same file being
- *      re-imported on a subsequent click. Failures here are
- *      non-fatal — extraction still completes; we just log.
  *
- * Response: { periodRows, report, deletedUploadCount }
+ * Source files are kept after extraction so the auditor can re-run
+ * the extract any time — re-running overwrites the periodRows in
+ * place via the merge step. We don't want to delete here because
+ * once gone the only way to re-process is to ask the client again
+ * for the same files, which is the friction this route is meant to
+ * remove.
+ *
+ * Response: { periodRows, report }
  */
 export async function POST(_req: NextRequest, { params }: { params: Promise<{ engagementId: string }> }) {
   const session = await auth();
@@ -79,8 +79,13 @@ export async function POST(_req: NextRequest, { params }: { params: Promise<{ en
     },
   });
   if (uploads.length === 0) {
+    // Pre-2026-05 engagements may have had their source files deleted
+    // by the now-removed auto-delete step. The friendlier wording
+    // separates "client hasn't uploaded anything" from the legacy
+    // "files were here but were consumed" case the auditor can't tell
+    // apart by looking at the grid alone.
     return NextResponse.json({
-      error: 'No files have been uploaded by the client yet. Once the client uploads their VAT returns via the portal, re-run this extract.',
+      error: 'No source VAT-return files are available for this engagement. Either the client hasn’t uploaded any yet, or the uploads were processed and removed on an earlier run. Send a fresh portal request if you need new files.',
     }, { status: 412 });
   }
 
@@ -126,29 +131,13 @@ export async function POST(_req: NextRequest, { params }: { params: Promise<{ en
     }, { status: 500 });
   }
 
-  // 6. Delete the source uploads. PDFs have served their purpose —
-  //    figures are in periodRows now. Non-fatal: any failed deletes
-  //    log but don't abort. Sequential to keep Azure throttling
-  //    predictable; uploads counts are tiny (~1-12 per engagement).
-  let deletedUploadCount = 0;
-  for (const u of uploads) {
-    try {
-      await deleteBlob(u.storagePath, u.containerName || 'upload-inbox');
-    } catch (err) {
-      console.warn(`[vat-extract/portal] blob delete failed for ${u.originalName}:`, err instanceof Error ? err.message : err);
-    }
-    try {
-      await prisma.portalUpload.delete({ where: { id: u.id } });
-      deletedUploadCount++;
-    } catch (err) {
-      console.warn(`[vat-extract/portal] PortalUpload row delete failed for ${u.originalName}:`, err instanceof Error ? err.message : err);
-    }
-  }
-
+  // Source uploads intentionally NOT deleted — see header comment.
+  // Re-running this route overwrites the periodRows via the merge
+  // above, so the auditor can re-extract any time without going
+  // back to the client.
   return NextResponse.json({
     periodRows: nextRows,
     report,
-    deletedUploadCount,
     sourceLabel: 'Portal',
   });
 }
