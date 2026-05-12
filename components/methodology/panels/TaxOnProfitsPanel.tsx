@@ -25,7 +25,7 @@
  */
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { AlertCircle, Loader2, Plus, X, Trash2, ClipboardCheck, FileQuestion, UserCheck, MessageSquare, CheckCircle2, Sparkles } from 'lucide-react';
+import { AlertCircle, Loader2, Plus, X, Trash2, ClipboardCheck, FileQuestion, UserCheck, MessageSquare, CheckCircle2, Sparkles, ChevronDown, ChevronRight } from 'lucide-react';
 import {
   EMPTY_TAX_ON_PROFITS,
   findRateForDate,
@@ -53,9 +53,11 @@ interface Props {
 interface TBRow {
   id: string;
   accountCode: string;
+  originalAccountCode: string | null;
   description: string;
   fsLevel: string | null;
   fsStatement: string | null;
+  category: string | null;
   currentYear: number | null;
 }
 
@@ -66,6 +68,62 @@ type Gate =
   | { kind: 'ready' };
 
 const ZERO_DECIMALS = (n: number) => Math.round(n * 100) / 100;
+
+// ── TB-derived helpers ────────────────────────────────────────────────
+// The PBT and Tax-charge inputs in the computation popup default-populate
+// from the engagement TB (TBCYvPY). PBT = sum of CY across rows whose
+// fsStatement is "Profit & Loss" with Tax Charge and Distribution
+// categories stripped out. Tax charge = sum of CY across rows whose
+// category is Tax Charge (falling back to description / fsLevel keyword
+// match so engagements without a categorised TB still pick something up).
+function isPLRow(r: TBRow): boolean {
+  if (r.fsStatement === 'Profit & Loss') return true;
+  // Tolerant fallback for engagements where fsStatement is set under
+  // a different label (e.g. 'P&L', 'Profit and Loss', 'Income Statement').
+  const s = (r.fsStatement || '').toLowerCase();
+  return s === 'p&l' || s === 'profit and loss' || s === 'income statement';
+}
+function isTaxChargeRow(r: TBRow): boolean {
+  if ((r.category || '').toLowerCase() === 'tax charge') return true;
+  const text = `${r.description || ''} ${r.fsLevel || ''}`.toLowerCase();
+  if (/\bcorporation tax\b/.test(text)) return true;
+  if (/\btax (on|charge)/.test(text) && /(profit|income)/.test(text)) return true;
+  return false;
+}
+function isDistributionRow(r: TBRow): boolean {
+  if ((r.category || '').toLowerCase() === 'distribution') return true;
+  const text = `${r.description || ''} ${r.fsLevel || ''}`.toLowerCase();
+  return /\bdividend|\bdistribution/.test(text);
+}
+function computeAutoPBT(rows: TBRow[]): number {
+  let t = 0;
+  for (const r of rows) {
+    if (!isPLRow(r)) continue;
+    if (isTaxChargeRow(r)) continue;
+    if (isDistributionRow(r)) continue;
+    t += r.currentYear || 0;
+  }
+  return ZERO_DECIMALS(t);
+}
+function computeAutoTaxCharge(rows: TBRow[]): number {
+  let t = 0;
+  for (const r of rows) {
+    if (!isPLRow(r)) continue;
+    if (!isTaxChargeRow(r)) continue;
+    t += r.currentYear || 0;
+  }
+  // Tax charge is conventionally presented as a positive expense in the
+  // computation pop-up regardless of which sign convention the TB uses.
+  return ZERO_DECIMALS(Math.abs(t));
+}
+// Display code for the TbCodePicker. When rows are merged, accountCode
+// is replaced with a "MERGED_<LEVEL>_<hash>" sentinel and the row keeps
+// its real code in originalAccountCode. The dropdown should always show
+// the real underlying code so the auditor isn't picking from a list of
+// identical "MERGED_REVENUE_xxxx" labels.
+function displayCodeFor(r: TBRow): string {
+  return r.originalAccountCode || r.accountCode;
+}
 
 export function TaxOnProfitsPanel({ engagementId, periodEndDate }: Props) {
   const [gate, setGate] = useState<Gate>({ kind: 'loading' });
@@ -563,8 +621,13 @@ function ComputationPopup({
   saving: boolean;
 }) {
   // Local working copy — auditors edit, then Save persists.
-  const [accountingProfit, setAccountingProfit] = useState<number>(data.accountingProfit || 0);
-  const [taxChargePerPL, setTaxChargePerPL] = useState<number>(data.taxChargePerPL || 0);
+  // PBT / tax-charge default to the TB-derived values (TBCYvPY) when
+  // the saved blob is empty, so the auditor sees a sensible starting
+  // point. They can override or click "Pull from TB" to re-sync.
+  const autoPBT = useMemo(() => computeAutoPBT(tbRows), [tbRows]);
+  const autoTaxCharge = useMemo(() => computeAutoTaxCharge(tbRows), [tbRows]);
+  const [accountingProfit, setAccountingProfit] = useState<number>(data.accountingProfit || autoPBT);
+  const [taxChargePerPL, setTaxChargePerPL] = useState<number>(data.taxChargePerPL || autoTaxCharge);
   const [adjustments, setAdjustments] = useState<TaxOnProfitsAdjustment[]>(data.adjustments);
   const [rateMode, setRateMode] = useState<'highest' | 'lowest'>(data.rateMode);
 
@@ -595,8 +658,10 @@ function ComputationPopup({
 
   // When a TB row is picked, snap the description + accountAmount and
   // pro-rata-split the amount across the selected jurisdictions.
+  // The picker passes the row's display code (originalAccountCode for
+  // merged rows, else accountCode) so the lookup must match either.
   function pickTbForRow(adjId: string, code: string) {
-    const tb = tbRows.find(r => r.accountCode === code);
+    const tb = tbRows.find(r => displayCodeFor(r) === code);
     if (!tb) return;
     const amount = tb.currentYear || 0;
     const newSplit: Record<string, number> = {};
@@ -608,7 +673,7 @@ function ComputationPopup({
     setAdjustments(prev => prev.map(a => a.id === adjId ? {
       ...a,
       description: tb.description,
-      accountCode: tb.accountCode,
+      accountCode: displayCodeFor(tb),
       accountAmount: amount,
       perJurisdiction: newSplit,
       perJurisdictionEdited: newEdited,
@@ -632,7 +697,10 @@ function ComputationPopup({
     setAdjustments(prev => prev.map(a => a.id === adjId ? { ...a, selectedForAudit: !a.selectedForAudit } : a));
   }
 
-  // Totals — sum each jurisdiction column + disallowable + grand total.
+  // Totals — sum each jurisdiction column; per-row Total = country
+  // sum LESS disallowable (the disallowable portion of an expense is
+  // the non-deductible piece, so it comes off the row total). The
+  // footer grand total mirrors the per-row formula so the column foots.
   const columnTotals = useMemo(() => {
     const t: Record<string, number> = {};
     for (const j of jurisdictionRates) t[j.jurisdiction] = 0;
@@ -641,7 +709,7 @@ function ComputationPopup({
       for (const j of jurisdictionRates) t[j.jurisdiction] += a.perJurisdiction[j.jurisdiction] || 0;
       disallowable += a.disallowable || 0;
     }
-    const grand = Object.values(t).reduce((s, v) => s + v, 0) + disallowable;
+    const grand = Object.values(t).reduce((s, v) => s + v, 0) - disallowable;
     return { perJurisdiction: t, disallowable, grand };
   }, [adjustments, jurisdictionRates]);
 
@@ -679,10 +747,24 @@ function ComputationPopup({
           <button onClick={onCancel} className="p-1 rounded hover:bg-slate-100 text-slate-500"><X className="h-4 w-4" /></button>
         </div>
 
-        {/* Inputs row */}
+        {/* Inputs row — PBT and Tax charge default-populate from the
+            engagement TB (P&L items excluding tax/distribution lines
+            for PBT; Tax Charge category rows for the tax-per-P&L cell).
+            "Pull from TB" re-syncs to the auto value if the auditor
+            wants to discard a manual override. */}
         <div className="grid grid-cols-3 gap-3">
           <div>
-            <label className="block text-[11px] font-medium text-slate-600 mb-1">Accounting profit (PBT) £</label>
+            <label className="flex items-center justify-between text-[11px] font-medium text-slate-600 mb-1">
+              <span>Accounting profit (PBT) £</span>
+              <button
+                type="button"
+                onClick={() => setAccountingProfit(autoPBT)}
+                className="text-[10px] font-medium px-1.5 py-0.5 rounded bg-slate-100 border border-slate-200 text-slate-600 hover:bg-slate-200"
+                title={`Pull from TB (TBCYvPY): £${autoPBT.toLocaleString('en-GB', { maximumFractionDigits: 2 })}`}
+              >
+                Pull from TB
+              </button>
+            </label>
             <input
               type="number"
               step="0.01"
@@ -690,9 +772,22 @@ function ComputationPopup({
               onChange={(e) => setAccountingProfit(Number(e.target.value) || 0)}
               className="w-full border border-slate-300 rounded px-2 py-1 text-sm text-right focus:outline-none focus:ring-2 focus:ring-blue-500"
             />
+            {autoPBT !== accountingProfit && (
+              <p className="mt-0.5 text-[10px] text-slate-500">TB-derived: £{autoPBT.toLocaleString('en-GB', { maximumFractionDigits: 2 })}</p>
+            )}
           </div>
           <div>
-            <label className="block text-[11px] font-medium text-slate-600 mb-1">Tax charge per P&amp;L £</label>
+            <label className="flex items-center justify-between text-[11px] font-medium text-slate-600 mb-1">
+              <span>Tax charge per P&amp;L £</span>
+              <button
+                type="button"
+                onClick={() => setTaxChargePerPL(autoTaxCharge)}
+                className="text-[10px] font-medium px-1.5 py-0.5 rounded bg-slate-100 border border-slate-200 text-slate-600 hover:bg-slate-200"
+                title={`Pull from TB (TBCYvPY): £${autoTaxCharge.toLocaleString('en-GB', { maximumFractionDigits: 2 })}`}
+              >
+                Pull from TB
+              </button>
+            </label>
             <input
               type="number"
               step="0.01"
@@ -700,6 +795,9 @@ function ComputationPopup({
               onChange={(e) => setTaxChargePerPL(Number(e.target.value) || 0)}
               className="w-full border border-slate-300 rounded px-2 py-1 text-sm text-right focus:outline-none focus:ring-2 focus:ring-blue-500"
             />
+            {autoTaxCharge !== taxChargePerPL && (
+              <p className="mt-0.5 text-[10px] text-slate-500">TB-derived: £{autoTaxCharge.toLocaleString('en-GB', { maximumFractionDigits: 2 })}</p>
+            )}
           </div>
           {jurisdictionsCount > 1 && (
             <div>
@@ -768,7 +866,7 @@ function ComputationPopup({
               {/* Tax adjustments rows */}
               {adjustments.map(adj => {
                 const rowSplitSum = jurisdictionRates.reduce((s, j) => s + (adj.perJurisdiction[j.jurisdiction] || 0), 0);
-                const rowTotal = rowSplitSum + adj.disallowable;
+                const rowTotal = rowSplitSum - adj.disallowable;
                 const splitMatchesAccount = adj.accountAmount === undefined || Math.abs(rowSplitSum - adj.accountAmount) < 0.01;
                 return (
                   <tr key={adj.id}>
@@ -935,11 +1033,19 @@ function TbCodePicker({
   const [query, setQuery] = useState(currentDescription || '');
   const [open, setOpen] = useState(false);
 
+  // Match + display by the row's "real" code (originalAccountCode for
+  // merged rows, else accountCode). Without this every merged row in a
+  // group shows up as "MERGED_REVENUE_xxxx", which is meaningless to
+  // the auditor — they want to see the underlying account codes (200,
+  // 201, etc.) and their original descriptions.
   const matches = useMemo(() => {
     if (!query.trim()) return tbRows.slice(0, 20);
     const q = query.toLowerCase();
     return tbRows
-      .filter(r => r.accountCode.toLowerCase().includes(q) || (r.description || '').toLowerCase().includes(q))
+      .filter(r =>
+        displayCodeFor(r).toLowerCase().includes(q) ||
+        (r.description || '').toLowerCase().includes(q),
+      )
       .slice(0, 30);
   }, [tbRows, query]);
 
@@ -956,17 +1062,20 @@ function TbCodePicker({
       />
       {open && matches.length > 0 && (
         <div className="absolute z-10 left-0 right-0 mt-1 bg-white border border-slate-200 rounded shadow-lg max-h-60 overflow-y-auto">
-          {matches.map(r => (
-            <button
-              key={r.id}
-              type="button"
-              onMouseDown={(e) => { e.preventDefault(); onPick(r.accountCode, r.description); setQuery(`${r.accountCode} — ${r.description}`); setOpen(false); }}
-              className="w-full text-left px-2 py-1 text-[11px] hover:bg-blue-50 border-b border-slate-100 last:border-0"
-            >
-              <div className="font-mono text-slate-700">{r.accountCode}</div>
-              <div className="text-slate-500 truncate">{r.description} · £{(r.currentYear ?? 0).toLocaleString('en-GB', { maximumFractionDigits: 2 })}</div>
-            </button>
-          ))}
+          {matches.map(r => {
+            const code = displayCodeFor(r);
+            return (
+              <button
+                key={r.id}
+                type="button"
+                onMouseDown={(e) => { e.preventDefault(); onPick(code, r.description); setQuery(`${code} — ${r.description}`); setOpen(false); }}
+                className="w-full text-left px-2 py-1 text-[11px] hover:bg-blue-50 border-b border-slate-100 last:border-0"
+              >
+                <div className="font-mono text-slate-700">{code}</div>
+                <div className="text-slate-500 truncate">{r.description} · £{(r.currentYear ?? 0).toLocaleString('en-GB', { maximumFractionDigits: 2 })}</div>
+              </button>
+            );
+          })}
         </div>
       )}
     </div>
@@ -981,6 +1090,12 @@ function AuditTestSummaryRows({
   adjustments: TaxOnProfitsAdjustment[];
   onOpen: (adj: TaxOnProfitsAdjustment) => void;
 }) {
+  // Track which row is currently expanded. Auditors / reviewers
+  // dropping into Completion → Taxation → Tax on Profits want to scan
+  // flagged adjustments quickly without launching the audit-test
+  // popup, so the chevron toggle reveals the test specifics inline.
+  const [expandedId, setExpandedId] = useState<string | null>(null);
+
   const flagged = adjustments.filter(a => a.selectedForAudit);
   if (flagged.length === 0) {
     return (
@@ -992,27 +1107,100 @@ function AuditTestSummaryRows({
   }
   return (
     <div className="border border-slate-200 rounded">
-      <div className="px-3 py-1.5 bg-slate-50 text-[10px] uppercase font-semibold text-slate-500">Audit testing — flagged adjustments</div>
-      <div className="divide-y divide-slate-100">
-        {flagged.map(a => (
-          <div key={a.id} className="px-3 py-2 flex items-center gap-3 text-xs">
-            <div className="flex-1">
-              <div className="font-medium text-slate-800">{a.description || '(no description)'}</div>
-              <div className="text-[10px] text-slate-500">
-                {a.auditTest?.testTypeName ? <>Test: <strong>{a.auditTest.testTypeName}</strong></> : <em>Test type not yet configured</em>}
-                {a.auditTest?.action && <> · Action: <strong>{labelForAction(a.auditTest.action)}</strong></>}
-                {a.auditTest?.evidenceStatus && <> · Status: <strong>{a.auditTest.evidenceStatus}</strong></>}
-              </div>
-            </div>
-            <button
-              onClick={() => onOpen(a)}
-              className="text-[10px] px-2 py-0.5 rounded bg-orange-100 text-orange-800 border border-orange-200 hover:bg-orange-200"
-            >
-              {a.auditTest?.action ? 'Review' : 'Configure'}
-            </button>
-          </div>
-        ))}
+      <div className="px-3 py-1.5 bg-slate-50 text-[10px] uppercase font-semibold text-slate-500 flex items-center justify-between">
+        <span>Audit testing — flagged adjustments</span>
+        {flagged.some(a => !!a.auditTest) && (
+          <button
+            type="button"
+            onClick={() => setExpandedId(expandedId ? null : '__all__')}
+            className="text-[10px] font-medium normal-case text-slate-500 hover:text-slate-800"
+            title="Expand or collapse every flagged adjustment"
+          >
+            {expandedId ? 'Collapse all' : 'Expand all'}
+          </button>
+        )}
       </div>
+      <div className="divide-y divide-slate-100">
+        {flagged.map(a => {
+          const isExpanded = expandedId === a.id || expandedId === '__all__';
+          const hasDetail = !!a.auditTest;
+          return (
+            <div key={a.id}>
+              <div className="px-3 py-2 flex items-center gap-3 text-xs">
+                <button
+                  type="button"
+                  onClick={() => setExpandedId(prev => prev === a.id ? null : a.id)}
+                  className="p-0.5 -ml-1 rounded hover:bg-slate-100 text-slate-500"
+                  title={isExpanded ? 'Collapse details' : 'Expand details'}
+                  aria-expanded={isExpanded}
+                  disabled={!hasDetail}
+                >
+                  {hasDetail ? (
+                    isExpanded ? <ChevronDown className="h-3.5 w-3.5" /> : <ChevronRight className="h-3.5 w-3.5" />
+                  ) : (
+                    <ChevronRight className="h-3.5 w-3.5 opacity-30" />
+                  )}
+                </button>
+                <div className="flex-1">
+                  <div className="font-medium text-slate-800">{a.description || '(no description)'}</div>
+                  <div className="text-[10px] text-slate-500">
+                    {a.auditTest?.testTypeName ? <>Test: <strong>{a.auditTest.testTypeName}</strong></> : <em>Test type not yet configured</em>}
+                    {a.auditTest?.action && <> · Action: <strong>{labelForAction(a.auditTest.action)}</strong></>}
+                    {a.auditTest?.evidenceStatus && <> · Status: <strong>{a.auditTest.evidenceStatus}</strong></>}
+                  </div>
+                </div>
+                <button
+                  onClick={() => onOpen(a)}
+                  className="text-[10px] px-2 py-0.5 rounded bg-orange-100 text-orange-800 border border-orange-200 hover:bg-orange-200"
+                >
+                  {a.auditTest?.action ? 'Review' : 'Configure'}
+                </button>
+              </div>
+              {isExpanded && hasDetail && (
+                <AuditTestExpandedDetail adj={a} />
+              )}
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+function AuditTestExpandedDetail({ adj }: { adj: TaxOnProfitsAdjustment }) {
+  const t = adj.auditTest;
+  if (!t) return null;
+  const fmt = (n?: number) => n === undefined ? '—' : `£${n.toLocaleString('en-GB', { maximumFractionDigits: 2 })}`;
+  return (
+    <div className="px-6 py-2 bg-slate-50/60 border-t border-slate-100 text-[11px] text-slate-700 space-y-1.5">
+      <div className="grid grid-cols-2 gap-x-4 gap-y-1">
+        <div><span className="text-slate-500">Account:</span> <strong>{adj.accountCode || '—'}</strong></div>
+        <div><span className="text-slate-500">TB amount:</span> <strong>{fmt(adj.accountAmount)}</strong></div>
+        <div><span className="text-slate-500">Disallowable:</span> <strong>{fmt(adj.disallowable)}</strong></div>
+        <div><span className="text-slate-500">Test type:</span> <strong>{t.testTypeName || '—'}</strong></div>
+        <div><span className="text-slate-500">Action:</span> <strong>{t.action ? labelForAction(t.action) : '—'}</strong></div>
+        {t.evidenceStatus && (
+          <div><span className="text-slate-500">Evidence status:</span> <strong>{t.evidenceStatus}</strong></div>
+        )}
+      </div>
+      {t.action === 'explanation' && t.explanation && (
+        <div>
+          <div className="text-slate-500 mb-0.5">Explanation</div>
+          <div className="px-2 py-1 bg-white border border-slate-200 rounded whitespace-pre-wrap">{t.explanation}</div>
+        </div>
+      )}
+      {t.action === 'evidence' && t.documentRequestId && (
+        <div className="text-slate-500">Document request: <span className="font-mono text-slate-700">{t.documentRequestId}</span></div>
+      )}
+      {t.action === 'specialist' && t.specialistChatId && (
+        <div className="text-slate-500">Specialist chat: <span className="font-mono text-slate-700">{t.specialistChatId}</span></div>
+      )}
+      {t.reviewComments && (
+        <div>
+          <div className="text-slate-500 mb-0.5">Reviewer comments</div>
+          <div className="px-2 py-1 bg-white border border-slate-200 rounded whitespace-pre-wrap">{t.reviewComments}</div>
+        </div>
+      )}
     </div>
   );
 }
