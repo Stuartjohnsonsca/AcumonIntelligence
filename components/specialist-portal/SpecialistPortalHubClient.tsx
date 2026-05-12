@@ -177,7 +177,7 @@ export function SpecialistPortalHubClient({ email, sig }: Props) {
   }, [scopedItems]);
 
   const filtered = useMemo(() => {
-    return scopedItems.filter(it => {
+    const list = scopedItems.filter(it => {
       if (statusFilter !== 'all' && it.status !== statusFilter) return false;
       if (initiatedFrom && it.initiatedAt && it.initiatedAt < initiatedFrom) return false;
       if (initiatedTo) {
@@ -191,6 +191,18 @@ export function SpecialistPortalHubClient({ email, sig }: Props) {
       }
       return true;
     });
+    // Sort: open items (awaiting your response) first, then responded
+    // (with audit team), then closed. Within each bucket, newest
+    // activity first so the most-recently-touched item is at the top.
+    const statusOrder: Record<HubItem['status'], number> = { unresponded: 0, responded: 1, closed: 2 };
+    list.sort((a, b) => {
+      const s = (statusOrder[a.status] ?? 99) - (statusOrder[b.status] ?? 99);
+      if (s !== 0) return s;
+      const aT = a.lastMessageAt || a.initiatedAt || '';
+      const bT = b.lastMessageAt || b.initiatedAt || '';
+      return bT.localeCompare(aT);
+    });
+    return list;
   }, [scopedItems, statusFilter, initiatedFrom, initiatedTo, lastFrom, lastTo]);
 
   async function send(it: HubItem) {

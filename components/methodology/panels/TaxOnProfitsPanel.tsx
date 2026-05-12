@@ -248,17 +248,31 @@ export function TaxOnProfitsPanel({ engagementId, periodEndDate }: Props) {
   // the firm-wide config at the engagement's period end. Falls back
   // to the first rate row for that jurisdiction if no date covers the
   // period end (admin oversight — the panel surfaces a warning).
+  // Defensively wrapped — legacy saved data has been seen to drop
+  // `jurisdictions` entirely, which crashed render with #310 cascades.
   const jurisdictionRates = useMemo(() => {
-    return data.jurisdictions.map(j => {
-      const exact = findRateForDate(firmRates, j.jurisdiction, periodEndIso);
-      if (exact) return { jurisdiction: j.jurisdiction, percent: j.percent, rate: exact.ratePercent, label: exact.label };
-      const fallback = firmRates.find(r => r.jurisdiction === j.jurisdiction);
-      return { jurisdiction: j.jurisdiction, percent: j.percent, rate: fallback?.ratePercent ?? 0, label: fallback?.label || '—' };
-    });
+    try {
+      const list = Array.isArray(data.jurisdictions) ? data.jurisdictions : [];
+      const rates = Array.isArray(firmRates) ? firmRates : [];
+      return list.map(j => {
+        const exact = findRateForDate(rates, j.jurisdiction, periodEndIso);
+        if (exact) return { jurisdiction: j.jurisdiction, percent: j.percent, rate: exact.ratePercent, label: exact.label };
+        const fallback = rates.find(r => r.jurisdiction === j.jurisdiction);
+        return { jurisdiction: j.jurisdiction, percent: j.percent, rate: fallback?.ratePercent ?? 0, label: fallback?.label || '—' };
+      });
+    } catch {
+      return [] as { jurisdiction: string; percent: number; rate: number; label: string }[];
+    }
   }, [data.jurisdictions, firmRates, periodEndIso]);
 
-  const minRate = useMemo(() => Math.min(...jurisdictionRates.map(r => r.rate)), [jurisdictionRates]);
-  const maxRate = useMemo(() => Math.max(...jurisdictionRates.map(r => r.rate)), [jurisdictionRates]);
+  const minRate = useMemo(() => {
+    if (!jurisdictionRates.length) return 0;
+    return Math.min(...jurisdictionRates.map(r => r.rate));
+  }, [jurisdictionRates]);
+  const maxRate = useMemo(() => {
+    if (!jurisdictionRates.length) return 0;
+    return Math.max(...jurisdictionRates.map(r => r.rate));
+  }, [jurisdictionRates]);
   const effectiveRate = data.rateMode === 'highest' ? maxRate : minRate;
 
   // ── Render ──────────────────────────────────────────────────────────
@@ -638,18 +652,35 @@ function ComputationPopup({
   // PBT / tax-charge default to the TB-derived values (TBCYvPY) when
   // the saved blob is empty, so the auditor sees a sensible starting
   // point. They can override or click "Pull from TB" to re-sync.
-  const autoPBT = useMemo(() => computeAutoPBT(tbRows), [tbRows]);
-  const autoTaxCharge = useMemo(() => computeAutoTaxCharge(tbRows), [tbRows]);
-  const [accountingProfit, setAccountingProfit] = useState<number>(data.accountingProfit || autoPBT);
-  const [taxChargePerPL, setTaxChargePerPL] = useState<number>(data.taxChargePerPL || autoTaxCharge);
-  const [adjustments, setAdjustments] = useState<TaxOnProfitsAdjustment[]>(data.adjustments);
-  const [rateMode, setRateMode] = useState<'highest' | 'lowest'>(data.rateMode);
+  //
+  // useMemo callbacks are wrapped in try/catch as a belt-and-brace:
+  // engagements with legacy / partially-imported TB rows have caused
+  // computation crashes in adjacent panels (see Loan Calculator
+  // hardening commits 3db317cb / 52375fa4). Same defensive pattern.
+  const autoPBT = useMemo(() => {
+    try { return computeAutoPBT(Array.isArray(tbRows) ? tbRows : []); } catch { return 0; }
+  }, [tbRows]);
+  const autoTaxCharge = useMemo(() => {
+    try { return computeAutoTaxCharge(Array.isArray(tbRows) ? tbRows : []); } catch { return 0; }
+  }, [tbRows]);
+  const [accountingProfit, setAccountingProfit] = useState<number>(
+    typeof data.accountingProfit === 'number' && data.accountingProfit !== 0 ? data.accountingProfit : autoPBT,
+  );
+  const [taxChargePerPL, setTaxChargePerPL] = useState<number>(
+    typeof data.taxChargePerPL === 'number' && data.taxChargePerPL !== 0 ? data.taxChargePerPL : autoTaxCharge,
+  );
+  const [adjustments, setAdjustments] = useState<TaxOnProfitsAdjustment[]>(
+    Array.isArray(data.adjustments) ? data.adjustments : [],
+  );
+  const [rateMode, setRateMode] = useState<'highest' | 'lowest'>(data.rateMode === 'lowest' ? 'lowest' : 'highest');
 
   // Tax-computation upload state — persisted independently of the
   // Save button so the file/AI extraction survives a Cancel. The
   // popup talks directly to the tax-on-profits PUT endpoint (shallow
   // merge) for uploads + activeUploadId.
-  const [uploadsLocal, setUploadsLocal] = useState<TaxComputationUpload[]>(data.uploads || []);
+  const [uploadsLocal, setUploadsLocal] = useState<TaxComputationUpload[]>(
+    Array.isArray(data.uploads) ? data.uploads : [],
+  );
   const [activeUploadId, setActiveUploadId] = useState<string | undefined>(data.activeUploadId);
   const [uploading, setUploading] = useState(false);
   const [uploadError, setUploadError] = useState<string | null>(null);
@@ -846,39 +877,64 @@ function ComputationPopup({
   // sum LESS disallowable (the disallowable portion of an expense is
   // the non-deductible piece, so it comes off the row total). The
   // footer grand total mirrors the per-row formula so the column foots.
+  //
+  // All three derived-totals useMemos are defensively try/catch wrapped
+  // because legacy saved adjustments occasionally lack perJurisdiction
+  // or have stale jurisdiction keys, which historically caused
+  // SignificantRisk-style React #310 cascades when the throw aborted
+  // a hook before later hooks ran.
   const columnTotals = useMemo(() => {
-    const t: Record<string, number> = {};
-    for (const j of jurisdictionRates) t[j.jurisdiction] = 0;
-    let disallowable = 0;
-    for (const a of adjustments) {
-      for (const j of jurisdictionRates) t[j.jurisdiction] += a.perJurisdiction[j.jurisdiction] || 0;
-      disallowable += a.disallowable || 0;
+    try {
+      const t: Record<string, number> = {};
+      const jrs = Array.isArray(jurisdictionRates) ? jurisdictionRates : [];
+      for (const j of jrs) t[j.jurisdiction] = 0;
+      let disallowable = 0;
+      const adjs = Array.isArray(adjustments) ? adjustments : [];
+      for (const a of adjs) {
+        const pj = (a && a.perJurisdiction && typeof a.perJurisdiction === 'object') ? a.perJurisdiction : {};
+        for (const j of jrs) t[j.jurisdiction] += Number(pj[j.jurisdiction]) || 0;
+        disallowable += Number(a?.disallowable) || 0;
+      }
+      const grand = Object.values(t).reduce((s, v) => s + v, 0) - disallowable;
+      return { perJurisdiction: t, disallowable, grand };
+    } catch {
+      return { perJurisdiction: {} as Record<string, number>, disallowable: 0, grand: 0 };
     }
-    const grand = Object.values(t).reduce((s, v) => s + v, 0) - disallowable;
-    return { perJurisdiction: t, disallowable, grand };
   }, [adjustments, jurisdictionRates]);
 
   // Expected tax = (accounting profit × rate × jurisdiction%) per
   // jurisdiction, summed. Shown per-jurisdiction in the rate row.
   const expectedTaxPerJurisdiction = useMemo(() => {
-    const r: Record<string, number> = {};
-    for (const j of jurisdictionRates) {
-      r[j.jurisdiction] = ZERO_DECIMALS(accountingProfit * (j.rate / 100) * (j.percent / 100));
+    try {
+      const r: Record<string, number> = {};
+      const jrs = Array.isArray(jurisdictionRates) ? jurisdictionRates : [];
+      for (const j of jrs) {
+        r[j.jurisdiction] = ZERO_DECIMALS((Number(accountingProfit) || 0) * ((Number(j.rate) || 0) / 100) * ((Number(j.percent) || 0) / 100));
+      }
+      return r;
+    } catch {
+      return {} as Record<string, number>;
     }
-    return r;
   }, [accountingProfit, jurisdictionRates]);
   const expectedTaxTotal = Object.values(expectedTaxPerJurisdiction).reduce((s, v) => s + v, 0);
 
   // Adjusted-profit tax — the sum of (jurisdiction-allocated profit ×
   // rate) plus any disallowable add-back at the effective rate.
   const adjustedProfitTax = useMemo(() => {
-    let t = 0;
-    for (const j of jurisdictionRates) {
-      const adjustedProfit = accountingProfit * (j.percent / 100) + (columnTotals.perJurisdiction[j.jurisdiction] || 0);
-      t += adjustedProfit * (j.rate / 100);
+    try {
+      let t = 0;
+      const jrs = Array.isArray(jurisdictionRates) ? jurisdictionRates : [];
+      const er = isFinite(effectiveRate) ? effectiveRate : 0;
+      for (const j of jrs) {
+        const adjustedProfit = (Number(accountingProfit) || 0) * ((Number(j.percent) || 0) / 100)
+          + (Number(columnTotals.perJurisdiction[j.jurisdiction]) || 0);
+        t += adjustedProfit * ((Number(j.rate) || 0) / 100);
+      }
+      t += (Number(columnTotals.disallowable) || 0) * (er / 100);
+      return ZERO_DECIMALS(t);
+    } catch {
+      return 0;
     }
-    t += columnTotals.disallowable * (effectiveRate / 100);
-    return ZERO_DECIMALS(t);
   }, [accountingProfit, jurisdictionRates, columnTotals, effectiveRate]);
 
   const variance = adjustedProfitTax - taxChargePerPL;
@@ -1438,13 +1494,14 @@ function AuditTestSummaryRows({
   adjustments: TaxOnProfitsAdjustment[];
   onOpen: (adj: TaxOnProfitsAdjustment) => void;
 }) {
-  // Track which row is currently expanded. Auditors / reviewers
-  // dropping into Completion → Taxation → Tax on Profits want to scan
-  // flagged adjustments quickly without launching the audit-test
-  // popup, so the chevron toggle reveals the test specifics inline.
-  const [expandedId, setExpandedId] = useState<string | null>(null);
+  // Track which row is currently expanded. Rows that already have
+  // auditTest data are expanded by default so the reviewer sees the
+  // action / explanation / evidence ref at a glance without clicking.
+  // '__none__' = collapse everything, '__all__' = expand everything,
+  // a specific id = expand only that row.
+  const [expandedId, setExpandedId] = useState<string>('__all__');
 
-  const flagged = adjustments.filter(a => a.selectedForAudit);
+  const flagged = (Array.isArray(adjustments) ? adjustments : []).filter(a => a?.selectedForAudit);
   if (flagged.length === 0) {
     return (
       <div className="px-3 py-3 bg-white border border-slate-200 rounded text-xs text-slate-500 italic">
@@ -1453,55 +1510,65 @@ function AuditTestSummaryRows({
       </div>
     );
   }
+  const allExpanded = expandedId === '__all__';
   return (
     <div className="border border-slate-200 rounded">
       <div className="px-3 py-1.5 bg-slate-50 text-[10px] uppercase font-semibold text-slate-500 flex items-center justify-between">
-        <span>Audit testing — flagged adjustments</span>
-        {flagged.some(a => !!a.auditTest) && (
-          <button
-            type="button"
-            onClick={() => setExpandedId(expandedId ? null : '__all__')}
-            className="text-[10px] font-medium normal-case text-slate-500 hover:text-slate-800"
-            title="Expand or collapse every flagged adjustment"
-          >
-            {expandedId ? 'Collapse all' : 'Expand all'}
-          </button>
-        )}
+        <span>Audit testing — flagged adjustments ({flagged.length})</span>
+        <button
+          type="button"
+          onClick={() => setExpandedId(allExpanded ? '__none__' : '__all__')}
+          className="text-[10px] font-medium normal-case text-slate-500 hover:text-slate-800"
+          title="Expand or collapse every flagged adjustment"
+        >
+          {allExpanded ? 'Collapse all' : 'Expand all'}
+        </button>
       </div>
       <div className="divide-y divide-slate-100">
         {flagged.map(a => {
-          const isExpanded = expandedId === a.id || expandedId === '__all__';
+          const isExpanded = expandedId === '__all__' || expandedId === a.id;
           const hasDetail = !!a.auditTest;
+          const action = a.auditTest?.action;
           return (
             <div key={a.id}>
               <div className="px-3 py-2 flex items-center gap-3 text-xs">
                 <button
                   type="button"
-                  onClick={() => setExpandedId(prev => prev === a.id ? null : a.id)}
+                  onClick={() => setExpandedId(prev => prev === a.id ? '__none__' : a.id)}
                   className="p-0.5 -ml-1 rounded hover:bg-slate-100 text-slate-500"
                   title={isExpanded ? 'Collapse details' : 'Expand details'}
                   aria-expanded={isExpanded}
-                  disabled={!hasDetail}
                 >
-                  {hasDetail ? (
-                    isExpanded ? <ChevronDown className="h-3.5 w-3.5" /> : <ChevronRight className="h-3.5 w-3.5" />
-                  ) : (
-                    <ChevronRight className="h-3.5 w-3.5 opacity-30" />
-                  )}
+                  {isExpanded ? <ChevronDown className="h-3.5 w-3.5" /> : <ChevronRight className="h-3.5 w-3.5" />}
                 </button>
-                <div className="flex-1">
-                  <div className="font-medium text-slate-800">{a.description || '(no description)'}</div>
-                  <div className="text-[10px] text-slate-500">
-                    {a.auditTest?.testTypeName ? <>Test: <strong>{a.auditTest.testTypeName}</strong></> : <em>Test type not yet configured</em>}
-                    {a.auditTest?.action && <> · Action: <strong>{labelForAction(a.auditTest.action)}</strong></>}
-                    {a.auditTest?.evidenceStatus && <> · Status: <strong>{a.auditTest.evidenceStatus}</strong></>}
+                <div className="flex-1 min-w-0">
+                  <div className="font-medium text-slate-800 truncate">{a.description || '(no description)'}</div>
+                  <div className="text-[10px] text-slate-500 mt-0.5 flex items-center gap-1.5 flex-wrap">
+                    {a.accountCode && <span className="font-mono text-slate-600">{a.accountCode}</span>}
+                    {typeof a.accountAmount === 'number' && <>· TB {fmtGBP(a.accountAmount)}</>}
+                    {a.disallowable !== 0 && <>· Disallowable {fmtGBP(a.disallowable)}</>}
                   </div>
                 </div>
+                {/* Action badge — colour-coded so reviewers see at a
+                    glance whether evidence is pending, a specialist is
+                    on it, or an explanation is the on-file. */}
+                {action ? (
+                  <span className={`text-[10px] px-2 py-0.5 rounded font-medium whitespace-nowrap ${actionBadgeClasses(action)}`}>
+                    {labelForAction(action)}
+                  </span>
+                ) : (
+                  <span className="text-[10px] px-2 py-0.5 rounded bg-slate-100 text-slate-500 italic whitespace-nowrap">No action set</span>
+                )}
+                {a.auditTest?.evidenceStatus && (
+                  <span className={`text-[10px] px-2 py-0.5 rounded font-medium whitespace-nowrap ${evidenceStatusClasses(a.auditTest.evidenceStatus)}`}>
+                    {a.auditTest.evidenceStatus}
+                  </span>
+                )}
                 <button
                   onClick={() => onOpen(a)}
-                  className="text-[10px] px-2 py-0.5 rounded bg-orange-100 text-orange-800 border border-orange-200 hover:bg-orange-200"
+                  className="text-[10px] px-2 py-0.5 rounded bg-orange-100 text-orange-800 border border-orange-200 hover:bg-orange-200 whitespace-nowrap"
                 >
-                  {a.auditTest?.action ? 'Review' : 'Configure'}
+                  {hasDetail ? 'Review' : 'Configure'}
                 </button>
               </div>
               {isExpanded && hasDetail && (
@@ -1513,6 +1580,20 @@ function AuditTestSummaryRows({
       </div>
     </div>
   );
+}
+
+function actionBadgeClasses(action: TaxOnProfitsAction): string {
+  if (action === 'explanation') return 'bg-blue-100 text-blue-800 border border-blue-200';
+  if (action === 'evidence') return 'bg-amber-100 text-amber-800 border border-amber-200';
+  // specialist
+  return 'bg-indigo-100 text-indigo-800 border border-indigo-200';
+}
+
+function evidenceStatusClasses(status: string): string {
+  if (status === 'accepted') return 'bg-green-100 text-green-800 border border-green-200';
+  if (status === 'error') return 'bg-red-100 text-red-800 border border-red-200';
+  // pending
+  return 'bg-slate-100 text-slate-700 border border-slate-200';
 }
 
 function AuditTestExpandedDetail({ adj }: { adj: TaxOnProfitsAdjustment }) {
