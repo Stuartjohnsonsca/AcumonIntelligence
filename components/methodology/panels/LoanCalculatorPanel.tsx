@@ -87,7 +87,23 @@ export function LoanCalculatorPanel({ engagementId, fsLineName, initialSide, per
         // can flip the side or add more FS Lines on the Setup screen.
         const { root: nextRoot, group, isNew } = ensureGroupForFsLine(parsedRoot, fsLineName);
         setRoot(nextRoot);
-        const merged: LoanCalcData = { ...emptyLoanCalc(group.side), ...group };
+        // Deep-ish merge so a partial group (e.g. legacy data missing
+        // `tests.interestVsTb`) doesn't end up with nested undefineds
+        // that crash dotsForGroup / the tests UI. parseLoanCalcRoot
+        // already normalises, but we belt-and-brace here in case the
+        // group came in via ensureGroupForFsLine's pass-through path.
+        const base = emptyLoanCalc(group.side);
+        const merged: LoanCalcData = {
+          ...base,
+          ...group,
+          setup: { ...base.setup, ...(group.setup || {}) },
+          lead: { ...base.lead, ...(group.lead || {}) },
+          tests: { ...base.tests, ...(group.tests || {}) },
+          disclosure: { ...base.disclosure, ...(group.disclosure || {}) },
+          covenants: { ...base.covenants, ...(group.covenants || {}) },
+          impairment: { ...base.impairment, ...(group.impairment || {}) },
+          fmv: { ...base.fmv, ...(group.fmv || {}) },
+        };
         setData(merged);
         setGroupId(group.id);
         setGroupLabelState(group.label);

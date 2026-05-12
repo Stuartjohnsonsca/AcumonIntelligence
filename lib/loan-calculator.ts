@@ -517,14 +517,34 @@ function normaliseGroup(g: Record<string, unknown>, idx: number): LoanGroup {
   const side: LoanSide = g.side === 'receivable' ? 'receivable' : 'liability';
   const fsLines = Array.isArray(g.fsLines) ? (g.fsLines as unknown[]).filter((s): s is string => typeof s === 'string') : [];
   const base = emptyLoanCalc(side);
+  // Object-by-object merge so a partial `tests` / `disclosure` /
+  // branch object on disk doesn't wipe the nested defaults. Without
+  // this, a legacy group that has only `tests.rateReasonable` would
+  // leave `tests.interestVsTb` undefined and crash dotsForGroup.
+  const gAny = g as Record<string, any>;
   return {
     ...base,
-    ...(g as Partial<LoanCalcData>),
+    side,
+    setup: { ...base.setup, ...(gAny.setup || {}) },
+    loans: Array.isArray(gAny.loans) ? gAny.loans : base.loans,
+    lead: { ...base.lead, ...(gAny.lead || {}) },
+    tests: { ...base.tests, ...(gAny.tests || {}) },
+    disclosure: { ...base.disclosure, ...(gAny.disclosure || {}) },
+    covenants: { ...base.covenants, ...(gAny.covenants || {}) },
+    impairment: { ...base.impairment, ...(gAny.impairment || {}) },
+    fmv: { ...base.fmv, ...(gAny.fmv || {}) },
     id: typeof g.id === 'string' ? g.id : `grp_${Date.now()}_${idx}`,
     label: groupLetter(idx),
     fsLines,
     createdAt: typeof g.createdAt === 'string' ? g.createdAt : new Date().toISOString(),
     title: typeof g.title === 'string' ? g.title : undefined,
+    updatedAt: typeof gAny.updatedAt === 'string' ? gAny.updatedAt : base.updatedAt,
+    reviewedBy: typeof gAny.reviewedBy === 'string' ? gAny.reviewedBy : undefined,
+    reviewedByName: typeof gAny.reviewedByName === 'string' ? gAny.reviewedByName : undefined,
+    reviewedAt: typeof gAny.reviewedAt === 'string' ? gAny.reviewedAt : undefined,
+    riSignedBy: typeof gAny.riSignedBy === 'string' ? gAny.riSignedBy : undefined,
+    riSignedByName: typeof gAny.riSignedByName === 'string' ? gAny.riSignedByName : undefined,
+    riSignedAt: typeof gAny.riSignedAt === 'string' ? gAny.riSignedAt : undefined,
   };
 }
 
@@ -584,21 +604,29 @@ export function upsertGroup(root: LoanCalcRoot, group: LoanGroup): LoanCalcRoot 
 /** Collect every conclusion dot inside a group — the four 3-colour
  *  test dots, the two disclosure dots, and the side-specific branch
  *  dots (covenants OR impairment + FMV). The rateReasonable Y/N is
- *  excluded — it isn't a dot. */
+ *  excluded — it isn't a dot. Defensive against partial / legacy
+ *  shapes: any missing nested field reads as 'hollow' rather than
+ *  blowing up the audit-plan FS Level tab strip. */
 export function dotsForGroup(g: LoanGroup): { key: string; label: string; status: DotStatus }[] {
+  const dot = (r: TestResult | undefined | null): DotStatus => (r && r.status) || 'hollow';
+  const t = (g.tests || {}) as Partial<TestState>;
+  const d = (g.disclosure || {}) as Partial<DisclosureState>;
+  const c = (g.covenants || {}) as Partial<CovenantState>;
+  const i = (g.impairment || {}) as Partial<ImpairmentState>;
+  const f = (g.fmv || {}) as Partial<FmvState>;
   const out: { key: string; label: string; status: DotStatus }[] = [
-    { key: 'interestVsTb',     label: 'Interest vs TB',       status: g.tests.interestVsTb.status },
-    { key: 'openingVsPriorTb', label: 'Opening vs Prior TB',  status: g.tests.openingVsPriorTb.status },
-    { key: 'closingVsTb',      label: 'Closing vs TB',        status: g.tests.closingVsTb.status },
-    { key: 'ltStSplit',        label: 'LT/ST split',          status: g.tests.ltStSplit.status },
-    { key: 'totalsTie',        label: 'Disclosure totals',    status: g.disclosure.totalsTie.status },
-    { key: 'securityConfirmed',label: 'Security confirmed',   status: g.disclosure.securityConfirmed.status },
+    { key: 'interestVsTb',     label: 'Interest vs TB',       status: dot(t.interestVsTb) },
+    { key: 'openingVsPriorTb', label: 'Opening vs Prior TB',  status: dot(t.openingVsPriorTb) },
+    { key: 'closingVsTb',      label: 'Closing vs TB',        status: dot(t.closingVsTb) },
+    { key: 'ltStSplit',        label: 'LT/ST split',          status: dot(t.ltStSplit) },
+    { key: 'totalsTie',        label: 'Disclosure totals',    status: dot(d.totalsTie) },
+    { key: 'securityConfirmed',label: 'Security confirmed',   status: dot(d.securityConfirmed) },
   ];
   if (g.side === 'liability') {
-    out.push({ key: 'covenants', label: 'Covenants', status: g.covenants.conclusion.status });
+    out.push({ key: 'covenants', label: 'Covenants', status: dot(c.conclusion) });
   } else {
-    out.push({ key: 'impairment', label: 'Impairment', status: g.impairment.conclusion.status });
-    out.push({ key: 'fmv',        label: 'FMV',        status: g.fmv.conclusion.status });
+    out.push({ key: 'impairment', label: 'Impairment', status: dot(i.conclusion) });
+    out.push({ key: 'fmv',        label: 'FMV',        status: dot(f.conclusion) });
   }
   return out;
 }
