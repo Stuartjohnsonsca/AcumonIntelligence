@@ -1217,29 +1217,37 @@ export function AuditPlanPanel({ engagementId, clientId, periodId, onClose, peri
       {/* Level 2: FS Level sub-tabs */}
       {!activeOtherTab && levels.length > 0 && (
         <div className="flex flex-wrap gap-0.5 gap-y-0.5 bg-slate-100 rounded p-0.5">
-          {levels.map(level => {
-            // Loan Calculator dots: every group covering this FS Line
-            // contributes one "overall" dot (worst-of across its 7-8
-            // conclusion dots) plus the group's A/B/C letter badge.
-            // Multiple groups → multiple dots side-by-side. No groups
-            // → nothing rendered (the tab stays plain).
-            const lcGroups = groupsForFsLine(loanCalcRoot, level);
-            return (
-              <button key={level}
-                onClick={() => { setActiveLevel(level); setActiveNote(''); }}
-                className={`px-2 py-1 text-[10px] font-medium rounded whitespace-nowrap transition-colors inline-flex items-center gap-1 ${
-                  activeLevel === level ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-700'
-                }`}>
-                <span>{level}</span>
-                {lcGroups.map(g => (
-                  <span key={g.id} className="inline-flex items-center gap-0.5" title={`Loan Calculator group ${g.label} — ${g.fsLines.join(', ')}`}>
-                    <LoanCalcDot status={overallDot(g)} />
-                    <span className="text-[8px] font-bold text-slate-500 leading-none">{g.label}</span>
-                  </span>
-                ))}
-              </button>
-            );
-          })}
+          {levels.map(level => (
+            <button key={level}
+              onClick={() => { setActiveLevel(level); setActiveNote(''); }}
+              className={`px-2 py-1 text-[10px] font-medium rounded whitespace-nowrap transition-colors inline-flex items-center gap-1 ${
+                activeLevel === level ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-700'
+              }`}>
+              <span>{level}</span>
+              {/* Loan Calculator dots: every group covering this FS Line
+                  contributes one "overall" dot (worst-of across its 7-8
+                  conclusion dots) plus the group's A/B/C letter badge.
+                  Multiple groups → multiple dots side-by-side. No groups
+                  → nothing rendered (the tab stays plain). Wrapped in
+                  try/catch as a final belt-and-brace so a partial /
+                  malformed group can never bring the audit-plan render
+                  down. */}
+              {(() => {
+                try {
+                  const lcGroups = groupsForFsLine(loanCalcRoot, level);
+                  if (lcGroups.length === 0) return null;
+                  return lcGroups.map(g => (
+                    <span key={g.id} className="inline-flex items-center gap-0.5" title={`Loan Calculator group ${g.label} — ${(g.fsLines || []).join(', ')}`}>
+                      <LoanCalcDot status={overallDot(g)} />
+                      <span className="text-[8px] font-bold text-slate-500 leading-none">{g.label}</span>
+                    </span>
+                  ));
+                } catch {
+                  return null;
+                }
+              })()}
+            </button>
+          ))}
         </div>
       )}
 
