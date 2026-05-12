@@ -16,7 +16,7 @@ import { VatReconciliationPanel } from './VatReconciliationPanel';
 import { LoanCalculatorPanel } from './LoanCalculatorPanel';
 import { TaxationPanel } from './TaxationPanel';
 import { isRevenueFsLevel } from '@/lib/vat-reconciliation';
-import { isLoanFsLevel, isLoanReceivableFsLevel, inferLoanSide } from '@/lib/loan-calculator';
+import { isLoanFsLevelByRows, isLoanReceivableFsLevel, inferLoanSide } from '@/lib/loan-calculator';
 
 interface TBRow {
   id: string;
@@ -1241,21 +1241,30 @@ export function AuditPlanPanel({ engagementId, clientId, periodId, onClose, peri
                 VAT Reconciliation
               </button>
             )}
-            {/* Loan Calculator — shown on Loan Receivable or Loan Liability
-                FS levels. The side ('receivable' / 'liability') is
-                auto-detected from the FS Level name; the panel lets the
-                auditor override on the Setup screen if the detection is
-                wrong (e.g. an ambiguously-named line). */}
-            {isLoanFsLevel(activeLevel) && (
-              <button
-                onClick={() => setLoanCalcOpen(true)}
-                className="inline-flex items-center gap-1.5 text-xs font-semibold px-3 py-1.5 rounded bg-emerald-600 text-white border border-emerald-700 hover:bg-emerald-700 shadow-sm whitespace-nowrap"
-                title={`Open Loan ${isLoanReceivableFsLevel(activeLevel) ? 'Receivables' : 'Liabilities'} Calculator — schedule, lead summary, tests, disclosure and ${isLoanReceivableFsLevel(activeLevel) ? 'impairment / FMV' : 'covenant'} workings`}
-              >
-                <Calculator className="h-3.5 w-3.5" />
-                Loan Calculator
-              </button>
-            )}
+            {/* Loan Calculator — shown on any FS Line whose name OR
+                whose mapped TB rows contain loan keywords (loan,
+                borrow, finance lease, hire purchase, credit facility,
+                mortgage, intercompany, debenture, due to/from group,
+                note payable/receivable, directors' loan). The side
+                ('receivable' / 'liability') is auto-detected from the
+                FS Level name; the panel lets the auditor override on
+                the Setup screen if the detection picked wrong. */}
+            {(() => {
+              const levelRowText = tbRows
+                .filter(r => (activeLevel ? r.fsLevel === activeLevel : false))
+                .flatMap(r => [r.description, r.originalAccountCode]);
+              if (!isLoanFsLevelByRows(activeLevel, levelRowText)) return null;
+              return (
+                <button
+                  onClick={() => setLoanCalcOpen(true)}
+                  className="inline-flex items-center gap-1.5 text-xs font-semibold px-3 py-1.5 rounded bg-emerald-600 text-white border border-emerald-700 hover:bg-emerald-700 shadow-sm whitespace-nowrap"
+                  title={`Open Loan ${isLoanReceivableFsLevel(activeLevel) ? 'Receivables' : 'Liabilities'} Calculator — schedule, lead summary, tests, disclosure and ${isLoanReceivableFsLevel(activeLevel) ? 'impairment / FMV' : 'covenant'} workings`}
+                >
+                  <Calculator className="h-3.5 w-3.5" />
+                  Loan Calculator
+                </button>
+              );
+            })()}
           <button
             onClick={() => {
               const scopeName = activeOtherTab || activeLevel || activeStatement;

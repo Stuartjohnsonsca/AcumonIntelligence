@@ -29,28 +29,50 @@ export const LOAN_PERMANENT_FILE_TEMPLATE_TYPE = 'permanent_file_questions';
 
 // ── FS-level detection ────────────────────────────────────────────────
 //
-// We match the FS Line name case-insensitively against two keyword
-// banks. A name is a "loan receivable" if it contains "loan" + an asset
-// hint (receivable, debtor, due-from, intercompany-receivable, etc.) OR
-// if it equals one of the well-known receivable labels outright. The
-// liability side mirrors it. A line containing both "loan" and an
-// ambiguous word like "interest" is treated as ambiguous and the caller
-// should fall back to the FS statement category.
+// The button needs to appear on every FS Line that could carry a loan.
+// Firm FS Line names vary (UK GAAP ships "Loans & Borrowings" /
+// "Loans" / "Bank Loans"; IFRS ships "Borrowings" / "Lease
+// Liabilities"; custom firms may use "Long term creditors", "Hire
+// purchase", "Director's loan"). Detection has two paths:
+//   1. NAME match — isLoanFsLevel: any FS Line whose name contains
+//      one of the loan keywords below qualifies. Permissive on purpose.
+//   2. ROW match — isLoanFsLevelByRows: when the caller supplies the
+//      TB rows mapped to the active level, we also check their
+//      descriptions / account codes. Catches FS Lines like "Creditors
+//      due after one year" that don't contain "loan" in the name but
+//      have loan accounts mapped underneath.
+// Side inference is name-driven: explicit receivable hints flip to
+// receivable, everything else defaults to liability. The auditor can
+// override the side on the panel's Setup screen.
 
-const RECEIVABLE_HINTS = [
-  'loan', 'loans receivable', 'loan receivable', 'loans receivables',
-  'loan asset', 'intercompany loan', 'loan to', 'loans to',
-  'loan note receivable', 'loan notes receivable',
-  'due from group', 'group loans receivable',
+// Keywords that, if present anywhere in the FS Line name, qualify the
+// line as carrying loans. Permissive on purpose: the firm's FS Line
+// names vary (UK GAAP ships "Loans & Borrowings" / "Loans" / "Bank
+// Loans"; IFRS ships "Borrowings" / "Lease Liabilities"; custom firms
+// may use "Long term creditors", "Hire purchase", "Director's loan").
+const LOAN_KEYWORDS = [
+  'loan', 'borrow',
+  'finance lease', 'lease liabilit',
+  'hire purchase', 'hp liabilit',
+  'credit facility', 'credit facilities',
+  'mortgage',
+  'due to group', 'due from group', 'group balance',
+  'intercompany', 'inter-company', 'inter company',
+  'debenture', 'note payable', 'note receivable',
+  'notes payable', 'notes receivable',
+  "director's loan", 'directors loan',
 ];
-const LIABILITY_HINTS = [
-  'loan', 'loans payable', 'loan payable', 'loans payables',
-  'borrowings', 'bank loan', 'bank loans', 'bank borrowings',
-  'long term loan', 'long-term loan', 'long term loans', 'long-term loans',
-  'short term loan', 'short-term loan',
-  'loan from', 'loans from', 'intercompany loan', 'due to group',
-  'group loans payable', 'loan note payable', 'loan notes payable',
-  'finance lease', 'finance leases',
+
+// Stronger hints that flip the side from "liability" (default) to
+// "receivable". Order matters: any match here wins.
+const RECEIVABLE_NAME_HINTS = [
+  'receivable',
+  'due from',
+  'loan asset', 'loans asset',
+  'note receivable', 'notes receivable',
+  'loan to', 'loans to',
+  'loan advanced', 'loans advanced',
+  'loan made', 'loans made',
 ];
 
 function norm(s: string | null | undefined): string {
@@ -59,33 +81,50 @@ function norm(s: string | null | undefined): string {
 
 /** True when the FS Level name reads as a Loan Receivable / Loan Asset. */
 export function isLoanReceivableFsLevel(level: string | null | undefined): boolean {
-  const n = norm(level);
-  if (!n) return false;
-  if (!n.includes('loan') && !n.includes('borrow') && !n.includes('due from')) return false;
-  // anything that's clearly a liability bank-loan should NOT match here
-  if (/payable|borrowing|liabilit|creditor|due to|finance lease/.test(n)) return false;
-  return RECEIVABLE_HINTS.some(h => n.includes(h)) || /loan|due from/.test(n);
+  return isLoanFsLevel(level) && inferLoanSide(level) === 'receivable';
 }
 
 /** True when the FS Level name reads as a Loan Liability / Borrowings. */
 export function isLoanLiabilityFsLevel(level: string | null | undefined): boolean {
+  return isLoanFsLevel(level) && inferLoanSide(level) === 'liability';
+}
+
+/** True when the FS Line name reads as anything that could carry a
+ *  loan, receivable OR liability. The caller chooses which side to
+ *  open the panel on via inferLoanSide; the auditor can override on
+ *  the Setup screen if the auto-detect picked the wrong side. */
+export function isLoanFsLevel(level: string | null | undefined): boolean {
   const n = norm(level);
   if (!n) return false;
-  if (!n.includes('loan') && !n.includes('borrow') && !n.includes('due to') && !n.includes('finance lease')) return false;
-  // anything that's clearly an asset should NOT match here
-  if (/receivable|asset|due from/.test(n)) return false;
-  return LIABILITY_HINTS.some(h => n.includes(h));
+  return LOAN_KEYWORDS.some(k => n.includes(k));
 }
 
-/** Either side — used to decide whether to show the button at all. */
-export function isLoanFsLevel(level: string | null | undefined): boolean {
-  return isLoanReceivableFsLevel(level) || isLoanLiabilityFsLevel(level);
+/** Row-aware fallback — extends isLoanFsLevel with a scan of the TB
+ *  rows mapped under the active level. Pass the row description and/or
+ *  account code strings. Catches FS Lines like "Creditors due after
+ *  one year" whose name doesn't contain a loan keyword but have loan
+ *  accounts mapped under them. */
+export function isLoanFsLevelByRows(
+  level: string | null | undefined,
+  tbRowText: Array<string | null | undefined>,
+): boolean {
+  if (isLoanFsLevel(level)) return true;
+  for (const d of tbRowText) {
+    const n = norm(d);
+    if (!n) continue;
+    if (LOAN_KEYWORDS.some(k => n.includes(k))) return true;
+  }
+  return false;
 }
 
-/** Loan "side" inferred from the FS Level — caller may override on the
- *  setup screen if the auto-detect is wrong. */
+/** Loan "side" inferred from the FS Level name. Strong receivable
+ *  hints win; everything else defaults to liability (the more common
+ *  case). The auditor can flip the side on the panel's Setup screen. */
 export function inferLoanSide(level: string | null | undefined): LoanSide {
-  return isLoanReceivableFsLevel(level) ? 'receivable' : 'liability';
+  const n = norm(level);
+  if (RECEIVABLE_NAME_HINTS.some(h => n.includes(h))) return 'receivable';
+  if (/\basset\b/.test(n) && /\bloan/.test(n)) return 'receivable';
+  return 'liability';
 }
 
 // ── Types ────────────────────────────────────────────────────────────
