@@ -254,6 +254,52 @@ export interface TaxOnProfitsAdjustment {
   /** Audit test selection for this adjustment row, once configured
    *  from the audit-test workflow. */
   auditTest?: TaxOnProfitsAuditTest;
+  /** Manual (non-TB) adjustment. When true, the row is a free-form
+   *  entry — typically a tax-computation line that doesn't map to a
+   *  TB account (e.g. capital allowances claimed, R&D super-deduction,
+   *  pension contributions paid vs accrued). The picker is replaced
+   *  with a plain text description input and the country amount is
+   *  set manually rather than from a TB pick. */
+  isManual?: boolean;
+  /** Source tag — set when this adjustment was created by the AI
+   *  extractor pulling rows from an uploaded tax computation. The
+   *  panel surfaces the source so the auditor can tell apart manual
+   *  rows from extracted ones. */
+  source?: 'tb' | 'manual' | 'computation';
+  /** ID of the upload this adjustment came from, when source === 'computation'. */
+  sourceUploadId?: string;
+}
+
+export interface TaxComputationUpload {
+  /** Stable id for cross-references and selection state. */
+  id: string;
+  /** Original filename as uploaded. */
+  filename: string;
+  /** AuditDocument id — the panel can deep-link into the file viewer. */
+  documentId: string;
+  /** ISO timestamp of upload. */
+  uploadedAt: string;
+  /** Name of the user who uploaded — surfaced in the version picker. */
+  uploadedByName: string;
+  /** Free-text label so the auditor can mark "v1 — pre-CA", "v2 — final" etc. */
+  label?: string;
+  /** Plain-English summary the AI produced when it parsed the file. */
+  aiSummary?: string;
+  /** Adjustment rows the AI extracted from the file. Stored in the
+   *  same shape as TaxOnProfitsAdjustment but as a denormalised
+   *  snapshot — the auditor "applies" a version to copy these onto
+   *  the live computation, then can edit freely. */
+  extractedAdjustments?: Array<{
+    description: string;
+    amount: number;
+    disallowable?: number;
+    note?: string;
+  }>;
+  /** Echoes the AI's view of accounting profit / tax charge if the
+   *  source document includes them — surfaced in the version picker
+   *  so the auditor can sanity-check against the TB-derived values. */
+  extractedAccountingProfit?: number;
+  extractedTaxCharge?: number;
 }
 
 export type TaxOnProfitsAction = 'explanation' | 'evidence' | 'specialist';
@@ -305,6 +351,16 @@ export interface TaxOnProfitsData {
     summary: string;
     checkedAt: string; // ISO
   };
+  /** Tax-computation files the auditor has uploaded for this
+   *  engagement. There can be multiple versions (e.g. draft vs final
+   *  CT comp); the version picker in the popup lets them choose which
+   *  to apply. Applying copies the AI-extracted adjustments onto the
+   *  live adjustments array. */
+  uploads?: TaxComputationUpload[];
+  /** Id of the currently selected upload — drives which version's
+   *  metadata shows in the panel and which one the "Apply" action
+   *  pulls adjustments from. */
+  activeUploadId?: string;
 }
 
 export const EMPTY_TAX_ON_PROFITS: TaxOnProfitsData = {

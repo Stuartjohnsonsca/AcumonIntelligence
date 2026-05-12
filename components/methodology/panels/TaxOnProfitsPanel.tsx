@@ -25,7 +25,7 @@
  */
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { AlertCircle, Loader2, Plus, X, Trash2, ClipboardCheck, FileQuestion, UserCheck, MessageSquare, CheckCircle2, Sparkles, ChevronDown, ChevronRight } from 'lucide-react';
+import { AlertCircle, Loader2, Plus, X, Trash2, ClipboardCheck, FileQuestion, UserCheck, MessageSquare, CheckCircle2, Sparkles, ChevronDown, ChevronRight, Upload, FileText } from 'lucide-react';
 import {
   EMPTY_TAX_ON_PROFITS,
   findRateForDate,
@@ -39,6 +39,7 @@ import {
   type TaxOnProfitsAuditTest,
   type TaxOnProfitsData,
   type TaxOnProfitsJurisdictionRow,
+  type TaxComputationUpload,
 } from '@/lib/tax-on-profits';
 
 interface Props {
@@ -68,6 +69,17 @@ type Gate =
   | { kind: 'ready' };
 
 const ZERO_DECIMALS = (n: number) => Math.round(n * 100) / 100;
+
+// Canonical currency formatter — every £ value in the panel goes
+// through this so positive / negative / zero all render in the same
+// shape. Negatives use accounting parentheses, e.g. £(1,234.56).
+function fmtGBP(n: number | null | undefined): string {
+  if (n === null || n === undefined || !isFinite(n)) return '—';
+  const abs = Math.abs(n);
+  const s = abs.toLocaleString('en-GB', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  if (n < 0) return `£(${s})`;
+  return `£${s}`;
+}
 
 // ── TB-derived helpers ────────────────────────────────────────────────
 // The PBT and Tax-charge inputs in the computation popup default-populate
@@ -403,6 +415,7 @@ export function TaxOnProfitsPanel({ engagementId, periodEndDate }: Props) {
       {/* ── Computation pop-up ────────────────────────────────────── */}
       {showComputation && (
         <ComputationPopup
+          engagementId={engagementId}
           data={data}
           jurisdictionRates={jurisdictionRates}
           firmRates={firmRates}
@@ -605,9 +618,10 @@ function JurisdictionPickerPopup({
 // ── Computation grid pop-up ────────────────────────────────────────────
 
 function ComputationPopup({
-  data, jurisdictionRates, firmRates, tbRows, effectiveRate, minRate, maxRate,
+  engagementId, data, jurisdictionRates, firmRates, tbRows, effectiveRate, minRate, maxRate,
   onCancel, onSave, onPickAuditTest, saving,
 }: {
+  engagementId: string;
   data: TaxOnProfitsData;
   jurisdictionRates: { jurisdiction: string; percent: number; rate: number; label: string }[];
   firmRates: FirmTaxOnProfitsRate[];
@@ -631,12 +645,119 @@ function ComputationPopup({
   const [adjustments, setAdjustments] = useState<TaxOnProfitsAdjustment[]>(data.adjustments);
   const [rateMode, setRateMode] = useState<'highest' | 'lowest'>(data.rateMode);
 
+  // Tax-computation upload state — persisted independently of the
+  // Save button so the file/AI extraction survives a Cancel. The
+  // popup talks directly to the tax-on-profits PUT endpoint (shallow
+  // merge) for uploads + activeUploadId.
+  const [uploadsLocal, setUploadsLocal] = useState<TaxComputationUpload[]>(data.uploads || []);
+  const [activeUploadId, setActiveUploadId] = useState<string | undefined>(data.activeUploadId);
+  const [uploading, setUploading] = useState(false);
+  const [uploadError, setUploadError] = useState<string | null>(null);
+  const activeUpload = uploadsLocal.find(u => u.id === activeUploadId) || null;
+
+  async function persistUploadState(nextUploads: TaxComputationUpload[], nextActiveId: string | undefined) {
+    setUploadsLocal(nextUploads);
+    setActiveUploadId(nextActiveId);
+    try {
+      await fetch(`/api/engagements/${engagementId}/tax-on-profits`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ data: { uploads: nextUploads, activeUploadId: nextActiveId } }),
+      });
+    } catch { /* tolerant — the state already moved locally */ }
+  }
+
+  async function handleUploadFile(file: File) {
+    setUploading(true);
+    setUploadError(null);
+    try {
+      // 1) Upload the file to blob and create an AuditDocument row.
+      const fd = new FormData();
+      fd.append('file', file);
+      const upRes = await fetch(`/api/engagements/${engagementId}/tax-on-profits/upload`, { method: 'POST', body: fd });
+      if (!upRes.ok) throw new Error(`Upload failed (${upRes.status})`);
+      const upJson = await upRes.json() as { documentId: string; documentName: string; uploadedByName: string };
+
+      // 2) Ask the AI to extract structured adjustment data.
+      const exRes = await fetch(`/api/engagements/${engagementId}/tax-on-profits/extract`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ documentId: upJson.documentId }),
+      });
+      const exJson = await exRes.json();
+      if (exJson?.error) console.warn('[tax-comp extract]', exJson.error);
+      const extracted = exJson?.data;
+
+      const newUpload: TaxComputationUpload = {
+        id: `up-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+        documentId: upJson.documentId,
+        filename: upJson.documentName,
+        uploadedAt: new Date().toISOString(),
+        uploadedByName: upJson.uploadedByName,
+        aiSummary: extracted?.summary,
+        extractedAdjustments: Array.isArray(extracted?.adjustments) ? extracted.adjustments : undefined,
+        extractedAccountingProfit: typeof extracted?.accountingProfit === 'number' ? extracted.accountingProfit : undefined,
+        extractedTaxCharge: typeof extracted?.taxCharge === 'number' ? extracted.taxCharge : undefined,
+      };
+      const nextUploads = [...uploadsLocal, newUpload];
+      await persistUploadState(nextUploads, newUpload.id);
+    } catch (e: any) {
+      setUploadError(String(e?.message || e));
+    } finally {
+      setUploading(false);
+    }
+  }
+
+  async function handleDeleteUpload(uploadId: string) {
+    const next = uploadsLocal.filter(u => u.id !== uploadId);
+    const nextActive = activeUploadId === uploadId ? (next[0]?.id) : activeUploadId;
+    await persistUploadState(next, nextActive);
+  }
+
+  function handleApplyUpload(uploadId: string) {
+    const upload = uploadsLocal.find(u => u.id === uploadId);
+    if (!upload || !upload.extractedAdjustments?.length) return;
+    const { seedJurisdictionMap, editedMap } = seedJurisdictionMaps();
+    const newRows: TaxOnProfitsAdjustment[] = upload.extractedAdjustments.map((a, idx) => {
+      const split: Record<string, number> = { ...seedJurisdictionMap };
+      // Pro-rata the extracted amount across jurisdictions, mirroring
+      // pickTbForRow so the row foots out of the box.
+      for (const j of jurisdictionRates) {
+        split[j.jurisdiction] = ZERO_DECIMALS((a.amount || 0) * (j.percent / 100));
+      }
+      return {
+        id: `adj-${Date.now()}-${idx}-${Math.random().toString(36).slice(2, 4)}`,
+        description: a.description,
+        accountCode: undefined,
+        accountAmount: a.amount,
+        perJurisdiction: split,
+        perJurisdictionEdited: { ...editedMap },
+        disallowable: a.disallowable || 0,
+        selectedForAudit: false,
+        isManual: true,
+        source: 'computation',
+        sourceUploadId: upload.id,
+      };
+    });
+    setAdjustments(prev => [
+      // Drop any previously-applied rows from this upload so re-Apply
+      // doesn't double-up. Rows from other uploads / manual / TB stay.
+      ...prev.filter(a => a.sourceUploadId !== upload.id),
+      ...newRows,
+    ]);
+    setActiveUploadId(upload.id);
+  }
+
   const jurisdictionsCount = jurisdictionRates.length;
 
-  function addAdjustment() {
+  function seedJurisdictionMaps() {
     const seedJurisdictionMap: Record<string, number> = {};
     const editedMap: Record<string, boolean> = {};
     for (const j of jurisdictionRates) { seedJurisdictionMap[j.jurisdiction] = 0; editedMap[j.jurisdiction] = false; }
+    return { seedJurisdictionMap, editedMap };
+  }
+
+  function addAdjustment() {
+    const { seedJurisdictionMap, editedMap } = seedJurisdictionMaps();
     setAdjustments(prev => [
       ...prev,
       {
@@ -648,8 +769,32 @@ function ComputationPopup({
         perJurisdictionEdited: editedMap,
         disallowable: 0,
         selectedForAudit: false,
+        source: 'tb',
       },
     ]);
+  }
+
+  function addManualAdjustment() {
+    const { seedJurisdictionMap, editedMap } = seedJurisdictionMaps();
+    setAdjustments(prev => [
+      ...prev,
+      {
+        id: `adj-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+        description: '',
+        accountCode: undefined,
+        accountAmount: undefined,
+        perJurisdiction: seedJurisdictionMap,
+        perJurisdictionEdited: editedMap,
+        disallowable: 0,
+        selectedForAudit: false,
+        isManual: true,
+        source: 'manual',
+      },
+    ]);
+  }
+
+  function setManualDescription(adjId: string, description: string) {
+    setAdjustments(prev => prev.map(a => a.id === adjId ? { ...a, description } : a));
   }
 
   function removeAdjustment(id: string) {
@@ -747,6 +892,26 @@ function ComputationPopup({
           <button onClick={onCancel} className="p-1 rounded hover:bg-slate-100 text-slate-500"><X className="h-4 w-4" /></button>
         </div>
 
+        {/* Tax-computation uploads — auditor can upload one or more
+            CT computations (draft, final, etc.), the AI extracts the
+            adjustment lines, and Apply copies those lines onto the
+            grid below as manual rows tagged with source='computation'. */}
+        <TaxCompUploadsBlock
+          uploads={uploadsLocal}
+          activeUploadId={activeUploadId}
+          activeUpload={activeUpload}
+          uploading={uploading}
+          uploadError={uploadError}
+          onUploadFile={handleUploadFile}
+          onSelect={(id) => setActiveUploadId(id)}
+          onApply={handleApplyUpload}
+          onDelete={handleDeleteUpload}
+          onRelabel={async (id, label) => {
+            const next = uploadsLocal.map(u => u.id === id ? { ...u, label } : u);
+            await persistUploadState(next, activeUploadId);
+          }}
+        />
+
         {/* Inputs row — PBT and Tax charge default-populate from the
             engagement TB (P&L items excluding tax/distribution lines
             for PBT; Tax Charge category rows for the tax-per-P&L cell).
@@ -760,7 +925,7 @@ function ComputationPopup({
                 type="button"
                 onClick={() => setAccountingProfit(autoPBT)}
                 className="text-[10px] font-medium px-1.5 py-0.5 rounded bg-slate-100 border border-slate-200 text-slate-600 hover:bg-slate-200"
-                title={`Pull from TB (TBCYvPY): £${autoPBT.toLocaleString('en-GB', { maximumFractionDigits: 2 })}`}
+                title={`Pull from TB (TBCYvPY): ${fmtGBP(autoPBT)}`}
               >
                 Pull from TB
               </button>
@@ -773,7 +938,7 @@ function ComputationPopup({
               className="w-full border border-slate-300 rounded px-2 py-1 text-sm text-right focus:outline-none focus:ring-2 focus:ring-blue-500"
             />
             {autoPBT !== accountingProfit && (
-              <p className="mt-0.5 text-[10px] text-slate-500">TB-derived: £{autoPBT.toLocaleString('en-GB', { maximumFractionDigits: 2 })}</p>
+              <p className="mt-0.5 text-[10px] text-slate-500">TB-derived: {fmtGBP(autoPBT)}</p>
             )}
           </div>
           <div>
@@ -783,7 +948,7 @@ function ComputationPopup({
                 type="button"
                 onClick={() => setTaxChargePerPL(autoTaxCharge)}
                 className="text-[10px] font-medium px-1.5 py-0.5 rounded bg-slate-100 border border-slate-200 text-slate-600 hover:bg-slate-200"
-                title={`Pull from TB (TBCYvPY): £${autoTaxCharge.toLocaleString('en-GB', { maximumFractionDigits: 2 })}`}
+                title={`Pull from TB (TBCYvPY): ${fmtGBP(autoTaxCharge)}`}
               >
                 Pull from TB
               </button>
@@ -796,7 +961,7 @@ function ComputationPopup({
               className="w-full border border-slate-300 rounded px-2 py-1 text-sm text-right focus:outline-none focus:ring-2 focus:ring-blue-500"
             />
             {autoTaxCharge !== taxChargePerPL && (
-              <p className="mt-0.5 text-[10px] text-slate-500">TB-derived: £{autoTaxCharge.toLocaleString('en-GB', { maximumFractionDigits: 2 })}</p>
+              <p className="mt-0.5 text-[10px] text-slate-500">TB-derived: {fmtGBP(autoTaxCharge)}</p>
             )}
           </div>
           {jurisdictionsCount > 1 && (
@@ -856,10 +1021,10 @@ function ComputationPopup({
               <tr className="bg-emerald-50/40">
                 <td className="px-3 py-2 text-xs font-medium text-slate-700">Tax on accounting profit (profit × rate × jurisdiction%)</td>
                 {jurisdictionRates.map(j => (
-                  <td key={j.jurisdiction} className="px-3 py-2 text-right text-xs">£{expectedTaxPerJurisdiction[j.jurisdiction].toLocaleString('en-GB', { maximumFractionDigits: 2 })}</td>
+                  <td key={j.jurisdiction} className="px-3 py-2 text-right text-xs">{fmtGBP(expectedTaxPerJurisdiction[j.jurisdiction])}</td>
                 ))}
                 <td className="px-3 py-2 text-right text-xs text-slate-400">—</td>
-                <td className="px-3 py-2 text-right text-xs font-semibold">£{expectedTaxTotal.toLocaleString('en-GB', { maximumFractionDigits: 2 })}</td>
+                <td className="px-3 py-2 text-right text-xs font-semibold">{fmtGBP(expectedTaxTotal)}</td>
                 <td className="px-3 py-2"></td>
               </tr>
 
@@ -871,19 +1036,36 @@ function ComputationPopup({
                 return (
                   <tr key={adj.id}>
                     <td className="px-3 py-2 align-top w-72">
-                      <TbCodePicker
-                        tbRows={tbRows}
-                        currentCode={adj.accountCode}
-                        currentDescription={adj.description}
-                        onPick={(code, description) => {
-                          if (code) pickTbForRow(adj.id, code);
-                          else setAdjustments(prev => prev.map(a => a.id === adj.id ? { ...a, description, accountCode: undefined, accountAmount: undefined } : a));
-                        }}
-                      />
-                      {adj.accountCode && (
-                        <div className="mt-1 text-[10px] text-slate-500">
-                          {adj.accountCode} · TB amount £{(adj.accountAmount ?? 0).toLocaleString('en-GB', { maximumFractionDigits: 2 })}
-                        </div>
+                      {adj.isManual ? (
+                        <>
+                          <input
+                            type="text"
+                            value={adj.description}
+                            onChange={(e) => setManualDescription(adj.id, e.target.value)}
+                            placeholder="Manual adjustment description…"
+                            className="w-full border border-slate-300 rounded px-2 py-1 text-xs focus:outline-none focus:ring-2 focus:ring-blue-500"
+                          />
+                          <div className="mt-1 text-[10px] text-slate-500 italic">
+                            Manual {adj.source === 'computation' ? '(from uploaded computation)' : '(not linked to TB)'}
+                          </div>
+                        </>
+                      ) : (
+                        <>
+                          <TbCodePicker
+                            tbRows={tbRows}
+                            currentCode={adj.accountCode}
+                            currentDescription={adj.description}
+                            onPick={(code, description) => {
+                              if (code) pickTbForRow(adj.id, code);
+                              else setAdjustments(prev => prev.map(a => a.id === adj.id ? { ...a, description, accountCode: undefined, accountAmount: undefined } : a));
+                            }}
+                          />
+                          {adj.accountCode && (
+                            <div className="mt-1 text-[10px] text-slate-500">
+                              {adj.accountCode} · TB amount {fmtGBP(adj.accountAmount ?? 0)}
+                            </div>
+                          )}
+                        </>
                       )}
                     </td>
                     {jurisdictionRates.map(j => {
@@ -915,7 +1097,7 @@ function ComputationPopup({
                     <td className={`px-3 py-2 align-top text-right text-xs font-medium ${
                       splitMatchesAccount ? '' : 'bg-red-600 text-white'
                     }`}>
-                      £{rowTotal.toLocaleString('en-GB', { maximumFractionDigits: 2 })}
+                      {fmtGBP(rowTotal)}
                     </td>
                     <td className="px-3 py-2 align-top text-center">
                       <div className="flex items-center justify-center gap-1.5">
@@ -949,15 +1131,28 @@ function ComputationPopup({
                 );
               })}
 
-              {/* Add row button */}
+              {/* Add row buttons — TB-linked picker vs manual entry.
+                  Manual rows skip the TbCodePicker and let the auditor
+                  type a description / amount free-form, for CT-comp
+                  lines that don't map to a TB account (capital
+                  allowances, R&D super-deduction, etc.). */}
               <tr>
                 <td colSpan={jurisdictionsCount + 4} className="px-3 py-2">
-                  <button
-                    onClick={addAdjustment}
-                    className="inline-flex items-center gap-1 px-2 py-1 text-[11px] font-medium bg-blue-600 text-white rounded hover:bg-blue-700"
-                  >
-                    <Plus className="h-3 w-3" /> Add adjustment
-                  </button>
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={addAdjustment}
+                      className="inline-flex items-center gap-1 px-2 py-1 text-[11px] font-medium bg-blue-600 text-white rounded hover:bg-blue-700"
+                    >
+                      <Plus className="h-3 w-3" /> Add TB-linked adjustment
+                    </button>
+                    <button
+                      onClick={addManualAdjustment}
+                      className="inline-flex items-center gap-1 px-2 py-1 text-[11px] font-medium bg-slate-700 text-white rounded hover:bg-slate-800"
+                      title="Add a free-form adjustment that isn't linked to a TB account"
+                    >
+                      <Plus className="h-3 w-3" /> Add manual adjustment
+                    </button>
+                  </div>
                 </td>
               </tr>
             </tbody>
@@ -966,10 +1161,27 @@ function ComputationPopup({
               <tr className="bg-slate-50 font-semibold">
                 <td className="px-3 py-2 text-xs">Adjustments total</td>
                 {jurisdictionRates.map(j => (
-                  <td key={j.jurisdiction} className="px-3 py-2 text-right text-xs">£{(columnTotals.perJurisdiction[j.jurisdiction] || 0).toLocaleString('en-GB', { maximumFractionDigits: 2 })}</td>
+                  <td key={j.jurisdiction} className="px-3 py-2 text-right text-xs">{fmtGBP(columnTotals.perJurisdiction[j.jurisdiction] || 0)}</td>
                 ))}
-                <td className="px-3 py-2 text-right text-xs">£{columnTotals.disallowable.toLocaleString('en-GB', { maximumFractionDigits: 2 })}</td>
-                <td className="px-3 py-2 text-right text-xs">£{columnTotals.grand.toLocaleString('en-GB', { maximumFractionDigits: 2 })}</td>
+                <td className="px-3 py-2 text-right text-xs">{fmtGBP(columnTotals.disallowable)}</td>
+                <td className="px-3 py-2 text-right text-xs">{fmtGBP(columnTotals.grand)}</td>
+                <td></td>
+              </tr>
+
+              {/* Adjusted taxable profits — Accounting profit + Adjustments
+                  total. Per-jurisdiction value = (PBT × jurisdiction%) +
+                  adjustments per jurisdiction; column total =
+                  accountingProfit + columnTotals.grand (which is country
+                  sum - disallowable per the agreed Total formula). */}
+              <tr className="bg-emerald-50/60 font-semibold">
+                <td className="px-3 py-2 text-xs text-slate-700">Adjusted taxable profits</td>
+                {jurisdictionRates.map(j => (
+                  <td key={j.jurisdiction} className="px-3 py-2 text-right text-xs">
+                    {fmtGBP((accountingProfit * (j.percent / 100)) + (columnTotals.perJurisdiction[j.jurisdiction] || 0))}
+                  </td>
+                ))}
+                <td className="px-3 py-2 text-right text-xs">{fmtGBP(columnTotals.disallowable)}</td>
+                <td className="px-3 py-2 text-right text-xs">{fmtGBP(accountingProfit + columnTotals.grand)}</td>
                 <td></td>
               </tr>
 
@@ -977,24 +1189,26 @@ function ComputationPopup({
               <tr className="bg-emerald-50">
                 <td className="px-3 py-2 text-xs font-semibold text-slate-700">Computed tax on adjusted profits</td>
                 <td colSpan={jurisdictionsCount + 1}></td>
-                <td className="px-3 py-2 text-right text-xs font-semibold">£{adjustedProfitTax.toLocaleString('en-GB', { maximumFractionDigits: 2 })}</td>
+                <td className="px-3 py-2 text-right text-xs font-semibold">{fmtGBP(adjustedProfitTax)}</td>
                 <td></td>
               </tr>
 
-              {/* P&L tax charge */}
+              {/* TB tax charge (per the trial balance, not the P&L
+                  statement — labelled per the auditor's preferred
+                  terminology). */}
               <tr>
-                <td className="px-3 py-2 text-xs">Tax on profits per P&amp;L</td>
+                <td className="px-3 py-2 text-xs">Tax on profits per Trial Balance</td>
                 <td colSpan={jurisdictionsCount + 1}></td>
-                <td className="px-3 py-2 text-right text-xs">£{taxChargePerPL.toLocaleString('en-GB', { maximumFractionDigits: 2 })}</td>
+                <td className="px-3 py-2 text-right text-xs">{fmtGBP(taxChargePerPL)}</td>
                 <td></td>
               </tr>
 
               {/* Variance */}
               <tr className={varianceMaterial ? 'bg-red-50' : 'bg-green-50'}>
-                <td className="px-3 py-2 text-xs font-semibold">Variance (computed − P&amp;L)</td>
+                <td className="px-3 py-2 text-xs font-semibold">Variance (computed − Trial Balance)</td>
                 <td colSpan={jurisdictionsCount + 1}></td>
                 <td className={`px-3 py-2 text-right text-xs font-semibold ${varianceMaterial ? 'text-red-700' : 'text-green-700'}`}>
-                  £{variance.toLocaleString('en-GB', { maximumFractionDigits: 2 })}
+                  {fmtGBP(variance)}
                 </td>
                 <td className="px-3 py-2 text-center">
                   {varianceMaterial && <span className="inline-block w-2 h-2 rounded-full bg-red-500" title="Variance flagged for review" />}
@@ -1016,6 +1230,140 @@ function ComputationPopup({
           </button>
         </div>
       </div>
+    </div>
+  );
+}
+
+// ── Tax-computation uploads block ──────────────────────────────────────
+
+function TaxCompUploadsBlock({
+  uploads, activeUploadId, activeUpload, uploading, uploadError,
+  onUploadFile, onSelect, onApply, onDelete, onRelabel,
+}: {
+  uploads: TaxComputationUpload[];
+  activeUploadId: string | undefined;
+  activeUpload: TaxComputationUpload | null;
+  uploading: boolean;
+  uploadError: string | null;
+  onUploadFile: (file: File) => void;
+  onSelect: (id: string) => void;
+  onApply: (id: string) => void;
+  onDelete: (id: string) => void;
+  onRelabel: (id: string, label: string) => Promise<void>;
+}) {
+  const [labelDraft, setLabelDraft] = useState<string>(activeUpload?.label || '');
+
+  // Re-sync label draft when the active upload changes.
+  useEffect(() => { setLabelDraft(activeUpload?.label || ''); }, [activeUpload?.id, activeUpload?.label]);
+
+  return (
+    <div className="border border-slate-200 rounded-lg p-3 bg-slate-50/40">
+      <div className="flex items-center justify-between gap-3 mb-2">
+        <div className="text-xs font-semibold text-slate-700 flex items-center gap-1.5">
+          <FileText className="h-3.5 w-3.5 text-slate-500" />
+          Tax computation uploads
+          {uploads.length > 0 && (
+            <span className="text-[10px] font-normal text-slate-500">— {uploads.length} version{uploads.length === 1 ? '' : 's'}</span>
+          )}
+        </div>
+        <label className="inline-flex items-center gap-1 text-[11px] font-medium px-2 py-1 rounded bg-indigo-600 text-white hover:bg-indigo-700 cursor-pointer">
+          {uploading ? <Loader2 className="h-3 w-3 animate-spin" /> : <Upload className="h-3 w-3" />}
+          {uploading ? 'Extracting…' : 'Upload computation'}
+          <input
+            type="file"
+            className="hidden"
+            disabled={uploading}
+            onChange={(e) => {
+              const file = e.target.files?.[0];
+              if (file) onUploadFile(file);
+              e.target.value = '';
+            }}
+            accept=".pdf,.xlsx,.xls,.csv,.docx,.txt"
+          />
+        </label>
+      </div>
+
+      {uploadError && (
+        <div className="mb-2 px-2 py-1 bg-red-50 border border-red-200 rounded text-[11px] text-red-700">
+          {uploadError}
+        </div>
+      )}
+
+      {uploads.length === 0 ? (
+        <p className="text-[11px] text-slate-500 italic">
+          Upload a draft or final tax computation (PDF / Excel / Word). The AI will pull the adjustment lines so you
+          can apply them to the grid below in one click.
+        </p>
+      ) : (
+        <div className="space-y-1.5">
+          {uploads.map(u => {
+            const isActive = u.id === activeUploadId;
+            const lineCount = u.extractedAdjustments?.length ?? 0;
+            return (
+              <div
+                key={u.id}
+                className={`flex items-center gap-2 px-2 py-1.5 rounded border text-[11px] ${
+                  isActive ? 'border-indigo-300 bg-white shadow-sm' : 'border-slate-200 bg-white/60'
+                }`}
+              >
+                <input
+                  type="radio"
+                  checked={isActive}
+                  onChange={() => onSelect(u.id)}
+                  className="h-3 w-3"
+                  aria-label={`Select ${u.filename}`}
+                />
+                <div className="flex-1 min-w-0">
+                  <div className="font-medium text-slate-800 truncate">
+                    {u.label || u.filename}
+                  </div>
+                  <div className="text-[10px] text-slate-500">
+                    {u.filename} · uploaded by {u.uploadedByName} · {new Date(u.uploadedAt).toLocaleDateString('en-GB')}
+                    {lineCount > 0 && <> · {lineCount} adjustment line{lineCount === 1 ? '' : 's'}</>}
+                    {u.extractedAccountingProfit !== undefined && <> · PBT {fmtGBP(u.extractedAccountingProfit)}</>}
+                    {u.extractedTaxCharge !== undefined && <> · Tax {fmtGBP(u.extractedTaxCharge)}</>}
+                  </div>
+                </div>
+                {lineCount > 0 && (
+                  <button
+                    onClick={() => onApply(u.id)}
+                    className="text-[10px] px-2 py-0.5 rounded bg-emerald-600 text-white hover:bg-emerald-700"
+                    title="Replace rows previously applied from this upload with the freshly-extracted lines"
+                  >
+                    Apply
+                  </button>
+                )}
+                <button
+                  onClick={() => onDelete(u.id)}
+                  className="text-slate-400 hover:text-red-500"
+                  title="Remove this upload"
+                >
+                  <Trash2 className="h-3 w-3" />
+                </button>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {activeUpload && (
+        <div className="mt-2 px-2 py-1.5 bg-white border border-slate-200 rounded text-[11px] text-slate-700 space-y-1.5">
+          {activeUpload.aiSummary && (
+            <div className="text-[11px] text-slate-600"><span className="font-medium">AI summary:</span> {activeUpload.aiSummary}</div>
+          )}
+          <div className="flex items-center gap-2">
+            <label className="text-[10px] text-slate-500 font-medium">Version label</label>
+            <input
+              type="text"
+              value={labelDraft}
+              onChange={(e) => setLabelDraft(e.target.value)}
+              onBlur={() => { if (labelDraft !== (activeUpload.label || '')) void onRelabel(activeUpload.id, labelDraft); }}
+              placeholder="e.g. v2 — final"
+              className="flex-1 border border-slate-200 rounded px-1.5 py-0.5 text-[11px] focus:outline-none focus:ring-1 focus:ring-blue-500"
+            />
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -1072,7 +1420,7 @@ function TbCodePicker({
                 className="w-full text-left px-2 py-1 text-[11px] hover:bg-blue-50 border-b border-slate-100 last:border-0"
               >
                 <div className="font-mono text-slate-700">{code}</div>
-                <div className="text-slate-500 truncate">{r.description} · £{(r.currentYear ?? 0).toLocaleString('en-GB', { maximumFractionDigits: 2 })}</div>
+                <div className="text-slate-500 truncate">{r.description} · {fmtGBP(r.currentYear ?? 0)}</div>
               </button>
             );
           })}
@@ -1170,7 +1518,7 @@ function AuditTestSummaryRows({
 function AuditTestExpandedDetail({ adj }: { adj: TaxOnProfitsAdjustment }) {
   const t = adj.auditTest;
   if (!t) return null;
-  const fmt = (n?: number) => n === undefined ? '—' : `£${n.toLocaleString('en-GB', { maximumFractionDigits: 2 })}`;
+  const fmt = (n?: number) => fmtGBP(n);
   return (
     <div className="px-6 py-2 bg-slate-50/60 border-t border-slate-100 text-[11px] text-slate-700 space-y-1.5">
       <div className="grid grid-cols-2 gap-x-4 gap-y-1">
