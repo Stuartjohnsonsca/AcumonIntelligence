@@ -367,19 +367,11 @@ export function SignificantRiskPanel({ engagementId, userId, userName, teamMembe
     }
   }
 
-  if (loading) return <div className="py-8 text-center text-sm text-slate-400 animate-pulse">Loading significant risks...</div>;
-
-  if (rmmRows.length === 0) {
-    return (
-      <div className="text-center py-12 border border-slate-200 rounded-lg">
-        <AlertTriangle className="h-10 w-10 mx-auto mb-3 text-slate-300" />
-        <p className="text-sm text-slate-400">No significant risks identified</p>
-        <p className="text-xs text-slate-300 mt-1">Add Significant Risks in the RMM tab (overall risk = High or Very High)</p>
-      </div>
-    );
-  }
-
-  // Find tests linked to this risk (by FS Line name match and significantRisk flag)
+  // Find tests linked to this risk (by FS Line name match and significantRisk flag).
+  // Defined BEFORE the early returns below so the sectionOrder useMemo
+  // further down is reached on every render — React error #310
+  // ("rendered more hooks than during the previous render") fires
+  // otherwise when `loading` transitions from true to false.
   const relevantTests = activeRisk
     ? allocations.filter(a =>
         a.test?.significantRisk &&
@@ -496,6 +488,23 @@ export function SignificantRiskPanel({ engagementId, userId, userName, teamMembe
     ];
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeRisk?.id]);
+
+  // ─── Loading / empty-state gates ─────────────────────────────────
+  // Placed AFTER every hook so all hooks (incl. sectionOrder useMemo
+  // above) are called on every render. Putting these gates earlier
+  // skipped the useMemo on first-render-while-loading and tripped
+  // React error #310 once `loading` flipped to false.
+  if (loading) return <div className="py-8 text-center text-sm text-slate-400 animate-pulse">Loading significant risks...</div>;
+
+  if (rmmRows.length === 0) {
+    return (
+      <div className="text-center py-12 border border-slate-200 rounded-lg">
+        <AlertTriangle className="h-10 w-10 mx-auto mb-3 text-slate-300" />
+        <p className="text-sm text-slate-400">No significant risks identified</p>
+        <p className="text-xs text-slate-300 mt-1">Add Significant Risks in the RMM tab (overall risk = High or Very High)</p>
+      </div>
+    );
+  }
 
   // Section content map — built each render so values stay live. The
   // order is computed once in sectionOrder above; this map just
