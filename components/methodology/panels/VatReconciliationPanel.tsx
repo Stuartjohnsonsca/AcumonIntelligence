@@ -161,16 +161,13 @@ export function VatReconciliationPanel({ engagementId, periodStartDate, periodEn
   const allMapped = revenueRows.length > 0 && mappedCount === revenueRows.length;
 
   // ── Render ──────────────────────────────────────────────────────────
-  // Width handling for the reconciliation grid (14 columns) lives at
-  // the panel level so every block — toolbar, mapping table, grid,
-  // reconciliation block, cross-check — shares the same content
-  // width. On wide screens the inline wrapper bleeds past the tab's
-  // content padding via negative horizontal margin so the grid fits
-  // without a horizontal scrollbar; narrower viewports retain the
-  // `overflow-x-auto` fallback inside the grid itself. The modal
-  // wrapper bumps to a wider max-width for the same reason.
+  // The reconciliation grid is 14 columns wide; its own `overflow-x-auto`
+  // handles narrow viewports. The inline wrapper stays within the tab's
+  // content box so it can't bleed past the viewport edge (previously used
+  // xl:-mx-12 2xl:-mx-24 to widen the grid, but that pushed content
+  // off-screen on layouts where the parent didn't reserve that padding).
   const Wrapper: React.FC<{ children: React.ReactNode }> = inline
-    ? ({ children }) => <div className="space-y-4 xl:-mx-12 2xl:-mx-24">{children}</div>
+    ? ({ children }) => <div className="space-y-4">{children}</div>
     : ({ children }) => <Modal onClose={onClose} title="VAT Reconciliation">{children}</Modal>;
   return (
     <Wrapper>

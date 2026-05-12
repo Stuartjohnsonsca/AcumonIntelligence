@@ -156,13 +156,28 @@ export async function readSubjectToTax(engagementId: string): Promise<SubjectToT
       raw = readAt(TAX_ON_PROFITS_PERMANENT_QUESTION_SLUG);
     }
 
-    // 2. Tolerant scan — accept any question whose slug contains
-    //    'subject' + 'tax' + 'profit' (covers minor rewordings).
-    if (raw === undefined || raw === null || raw === '') {
+    // 2. Tolerant scan — accept any yes/no question in the Taxation
+    //    section whose slug contains 'tax' + 'profit'. Covers firm
+    //    rewordings like "Does the entity pay tax on its profits?"
+    //    or "Is the entity liable to tax on profits?". We exclude
+    //    companion questions (jurisdiction, reference number, adviser
+    //    contact) by keyword, and require the answer be Y/N so a stray
+    //    textarea mentioning "tax on profits" can't satisfy the gate.
+    if (raw !== 'Y' && raw !== 'N') {
       for (const [slug, id] of Object.entries(slugToId)) {
-        if (slug.includes('subject') && slug.includes('tax') && slug.includes('profit')) {
-          raw = flat[flatKey(id, 1)] ?? flat[id];
-          if (raw === 'Y' || raw === 'N') break;
+        if (!slug.includes('tax')) continue;
+        if (!slug.includes('profit')) continue;
+        if (slug.includes('jurisdict')) continue;
+        if (slug.includes('which')) continue;
+        if (slug.includes('where')) continue;
+        if (slug.includes('refer')) continue;
+        if (slug.includes('number')) continue;
+        if (slug.includes('advis')) continue;
+        if (slug.includes('contact')) continue;
+        const candidate = flat[flatKey(id, 1)] ?? flat[id];
+        if (candidate === 'Y' || candidate === 'N') {
+          raw = candidate;
+          break;
         }
       }
     }
