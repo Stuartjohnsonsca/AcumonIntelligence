@@ -16,7 +16,11 @@ import { VatReconciliationPanel } from './VatReconciliationPanel';
 import { LoanCalculatorPanel } from './LoanCalculatorPanel';
 import { TaxationPanel } from './TaxationPanel';
 import { isRevenueFsLevel } from '@/lib/vat-reconciliation';
-import { isLoanFsLevelByRows, isLoanReceivableFsLevel, inferLoanSide } from '@/lib/loan-calculator';
+import {
+  isLoanFsLevelByRows, isLoanReceivableFsLevel, inferLoanSide,
+  parseLoanCalcRoot, groupsForFsLine, overallDot,
+  type LoanCalcRoot, type DotStatus as LoanDotStatus,
+} from '@/lib/loan-calculator';
 
 interface TBRow {
   id: string;
@@ -406,6 +410,25 @@ export function AuditPlanPanel({ engagementId, clientId, periodId, onClose, peri
   const [showErrorSchedule, setShowErrorSchedule] = useState(false);
   const [vatReconcOpen, setVatReconcOpen] = useState(false);
   const [loanCalcOpen, setLoanCalcOpen] = useState(false);
+  // Mirrors AuditLoanCalculator.data so the FS Level tabs can render
+  // conclusion dots + A/B/C letter badges for every line a group
+  // covers. Reloaded after the panel closes so changes persist into
+  // the tab strip immediately.
+  const [loanCalcRoot, setLoanCalcRoot] = useState<LoanCalcRoot>({ groups: [] });
+  const [loanCalcReloadTick, setLoanCalcReloadTick] = useState(0);
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const r = await fetch(`/api/engagements/${engagementId}/loan-calculator`);
+        if (!r.ok) return;
+        const j = await r.json();
+        if (cancelled) return;
+        setLoanCalcRoot(parseLoanCalcRoot(j.data));
+      } catch { /* non-fatal — dots simply don't show */ }
+    })();
+    return () => { cancelled = true; };
+  }, [engagementId, loanCalcReloadTick]);
 
   function toggleMergeSelect(rowId: string) {
     setSelectedForMerge(prev => {
@@ -1194,15 +1217,29 @@ export function AuditPlanPanel({ engagementId, clientId, periodId, onClose, peri
       {/* Level 2: FS Level sub-tabs */}
       {!activeOtherTab && levels.length > 0 && (
         <div className="flex flex-wrap gap-0.5 gap-y-0.5 bg-slate-100 rounded p-0.5">
-          {levels.map(level => (
-            <button key={level}
-              onClick={() => { setActiveLevel(level); setActiveNote(''); }}
-              className={`px-2 py-1 text-[10px] font-medium rounded whitespace-nowrap transition-colors ${
-                activeLevel === level ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-700'
-              }`}>
-              {level}
-            </button>
-          ))}
+          {levels.map(level => {
+            // Loan Calculator dots: every group covering this FS Line
+            // contributes one "overall" dot (worst-of across its 7-8
+            // conclusion dots) plus the group's A/B/C letter badge.
+            // Multiple groups → multiple dots side-by-side. No groups
+            // → nothing rendered (the tab stays plain).
+            const lcGroups = groupsForFsLine(loanCalcRoot, level);
+            return (
+              <button key={level}
+                onClick={() => { setActiveLevel(level); setActiveNote(''); }}
+                className={`px-2 py-1 text-[10px] font-medium rounded whitespace-nowrap transition-colors inline-flex items-center gap-1 ${
+                  activeLevel === level ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-700'
+                }`}>
+                <span>{level}</span>
+                {lcGroups.map(g => (
+                  <span key={g.id} className="inline-flex items-center gap-0.5" title={`Loan Calculator group ${g.label} — ${g.fsLines.join(', ')}`}>
+                    <LoanCalcDot status={overallDot(g)} />
+                    <span className="text-[8px] font-bold text-slate-500 leading-none">{g.label}</span>
+                  </span>
+                ))}
+              </button>
+            );
+          })}
         </div>
       )}
 
@@ -2118,12 +2155,30 @@ export function AuditPlanPanel({ engagementId, clientId, periodId, onClose, peri
       {loanCalcOpen && (
         <LoanCalculatorPanel
           engagementId={engagementId}
+          fsLineName={activeLevel}
           initialSide={inferLoanSide(activeLevel)}
           periodStartDate={periodStartDate}
           periodEndDate={periodEndDate}
-          onClose={() => setLoanCalcOpen(false)}
+          onClose={() => {
+            setLoanCalcOpen(false);
+            // Reload so the FS Level tabs pick up the latest
+            // conclusion dots + any new group letter assignments.
+            setLoanCalcReloadTick(t => t + 1);
+          }}
         />
       )}
     </div>
   );
+}
+
+// Tiny coloured dot used inside the FS Level tab strip to mirror the
+// Loan Calculator's overall conclusion for each group covering a line.
+// Mirrors the dot palette used inside the calculator (green / orange /
+// red / hollow). Size is constrained because it lives in a 10px tab.
+function LoanCalcDot({ status }: { status: LoanDotStatus }) {
+  const cls = status === 'green'  ? 'bg-emerald-500'
+            : status === 'orange' ? 'bg-amber-500'
+            : status === 'red'    ? 'bg-red-500'
+            :                       'bg-transparent border border-slate-300';
+  return <span className={`inline-block h-2 w-2 rounded-full ${cls}`} />;
 }

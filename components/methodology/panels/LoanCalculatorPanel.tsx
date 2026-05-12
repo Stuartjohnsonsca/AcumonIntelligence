@@ -28,14 +28,20 @@ import {
 import {
   emptyLoanCalc, emptyHeader, buildLoanLabel, fmtCcy,
   generateScheduleRows, aggregateLeadRow,
-  type LoanCalcData, type LoanTab, type LoanHeader, type LoanScheduleRow,
+  parseLoanCalcRoot, ensureGroupForFsLine, upsertGroup,
+  type LoanCalcData, type LoanGroup, type LoanCalcRoot,
+  type LoanTab, type LoanHeader, type LoanScheduleRow,
   type LoanSide, type Periodicity, type DayCount, type DotStatus,
   type TestResult, type LoanCovenant, type LoanPenalty,
 } from '@/lib/loan-calculator';
 
 interface Props {
   engagementId: string;
-  /** Auto-detected from the FS Level the button was clicked on. */
+  /** FS Line the button was clicked from. The panel scopes its edits
+   *  to the group covering this FS Line — finds or creates it. */
+  fsLineName: string;
+  /** Auto-detected from the FS Level the button was clicked on. Used
+   *  only when a brand-new group is being created. */
   initialSide: LoanSide;
   /** Engagement period — used for schedule generation + lead aggregation. */
   periodStartDate?: string | null;
@@ -49,8 +55,15 @@ type Screen = 'setup' | 'source' | 'sheets' | 'tests' | 'disclosure' | 'branch';
 const PERIODICITY_OPTS: Periodicity[] = ['Monthly', 'Quarterly', 'Semi-annual', 'Annual'];
 const DAYCOUNT_OPTS: DayCount[] = ['Actual/365', 'Actual/360', '30/360'];
 
-export function LoanCalculatorPanel({ engagementId, initialSide, periodStartDate, periodEndDate, onClose }: Props) {
+export function LoanCalculatorPanel({ engagementId, fsLineName, initialSide, periodStartDate, periodEndDate, onClose }: Props) {
+  // The root holds every group on the engagement; the panel edits ONE
+  // group at a time (the one covering `fsLineName`). Saving merges the
+  // edited group back into the root and PUTs `groups` so the API's
+  // shallow merge sees a single top-level key change.
+  const [root, setRoot] = useState<LoanCalcRoot>({ groups: [] });
   const [data, setData] = useState<LoanCalcData>(() => emptyLoanCalc(initialSide));
+  const [groupId, setGroupId] = useState<string>('');
+  const [groupLabelState, setGroupLabelState] = useState<string>('A');
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [screen, setScreen] = useState<Screen>('setup');
@@ -67,18 +80,28 @@ export function LoanCalculatorPanel({ engagementId, initialSide, periodStartDate
         if (!r.ok) throw new Error(await r.text());
         const j = await r.json();
         if (cancelled) return;
-        const blob = j.data as Partial<LoanCalcData> | null;
-        if (blob && (blob as any).side) {
-          // Merge over defaults so newly-added keys still get sensible
-          // empties when reading an older row.
-          setData({ ...emptyLoanCalc((blob as any).side as LoanSide), ...(blob as LoanCalcData) });
-          // If the loaded blob has at least one loan, jump straight to sheets.
-          if (Array.isArray((blob as any).loans) && (blob as any).loans.length > 0) {
-            setScreen('sheets');
-            setActiveLoanId('__lead__');
-          }
-        } else {
-          setData(emptyLoanCalc(initialSide));
+        const parsedRoot = parseLoanCalcRoot(j.data);
+        // Find or create the group covering this FS Line. The auto-
+        // created group inherits `initialSide` (from the FS Line name)
+        // and lists fsLineName as its first covered line — the auditor
+        // can flip the side or add more FS Lines on the Setup screen.
+        const { root: nextRoot, group, isNew } = ensureGroupForFsLine(parsedRoot, fsLineName);
+        setRoot(nextRoot);
+        const merged: LoanCalcData = { ...emptyLoanCalc(group.side), ...group };
+        setData(merged);
+        setGroupId(group.id);
+        setGroupLabelState(group.label);
+        if (!isNew && Array.isArray(group.loans) && group.loans.length > 0) {
+          setScreen('sheets');
+          setActiveLoanId('__lead__');
+        }
+        // Persist the new group immediately so subsequent opens find it.
+        if (isNew) {
+          await fetch(`/api/engagements/${engagementId}/loan-calculator`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ data: { groups: nextRoot.groups } }),
+          });
         }
       } catch (err: any) {
         setError(String(err?.message || err));
@@ -87,18 +110,35 @@ export function LoanCalculatorPanel({ engagementId, initialSide, periodStartDate
       }
     })();
     return () => { cancelled = true; };
-  }, [engagementId, initialSide]);
+  }, [engagementId, initialSide, fsLineName]);
 
-  // ── Save (shallow merge) ───────────────────────────────────────────
+  // ── Save (group-scoped, shallow-merge at root level) ───────────────
   const save = async (patch: Partial<LoanCalcData>) => {
     setSaving(true);
     try {
-      const next = { ...data, ...patch };
+      const next: LoanCalcData = { ...data, ...patch };
       setData(next);
+      // Merge the edited group back into the root, then PUT only the
+      // `groups` key so the API's shallow merge doesn't touch any
+      // other top-level keys (audit trail markers, requests, etc.).
+      const updatedGroup: LoanGroup = {
+        ...next,
+        id: groupId,
+        label: groupLabelState,
+        fsLines: (root.groups.find(g => g.id === groupId)?.fsLines) || [fsLineName],
+        createdAt: (root.groups.find(g => g.id === groupId)?.createdAt) || new Date().toISOString(),
+      };
+      const nextRoot = upsertGroup(root, updatedGroup);
+      setRoot(nextRoot);
+      // After upsertGroup, the group's label may have shifted (only if
+      // a new group was inserted ahead of it, which can't happen here)
+      // — read it back so the badge stays correct.
+      const refreshedGroup = nextRoot.groups.find(g => g.id === groupId);
+      if (refreshedGroup) setGroupLabelState(refreshedGroup.label);
       await fetch(`/api/engagements/${engagementId}/loan-calculator`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ data: patch }),
+        body: JSON.stringify({ data: { groups: nextRoot.groups } }),
       });
     } finally {
       setSaving(false);
@@ -253,11 +293,21 @@ export function LoanCalculatorPanel({ engagementId, initialSide, periodStartDate
       const labels = data.loans.map(l => l.label);
       const r = await fetch(`/api/engagements/${engagementId}/loan-calculator/request-from-client`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ kind, loanLabels: labels }),
+        body: JSON.stringify({ kind, loanLabels: labels, groupId }),
       });
       if (!r.ok) throw new Error(await r.text());
       const j = await r.json();
-      await save({ ...(kind === 'documents' ? { documentsRequest: { portalRequestId: j.id, sentAt: j.sentAt } } as any : {}) });
+      // For covenants / impairment the server has already merged the
+      // pointer into our active group inside `data.groups`. For
+      // 'documents' the server keeps writing at root for legacy
+      // reasons; mirror it into the active group's working state too.
+      if (kind === 'documents') {
+        await save({ ...({ documentsRequest: { portalRequestId: j.id, sentAt: j.sentAt } } as any) });
+      } else if (kind === 'covenants') {
+        await save({ covenants: { ...data.covenants, portalRequestId: j.id, portalSentAt: j.sentAt } });
+      } else {
+        await save({ impairment: { ...data.impairment, portalRequestId: j.id, portalSentAt: j.sentAt } });
+      }
     } catch (err: any) {
       setError(String(err?.message || err));
     } finally {
@@ -268,10 +318,21 @@ export function LoanCalculatorPanel({ engagementId, initialSide, periodStartDate
   const copyFromPrior = async () => {
     setBusy('prior');
     try {
-      const r = await fetch(`/api/engagements/${engagementId}/loan-calculator/copy-from-prior`, { method: 'POST' });
+      const r = await fetch(`/api/engagements/${engagementId}/loan-calculator/copy-from-prior`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({}),
+      });
       if (!r.ok) throw new Error(await r.text());
       const j = await r.json();
-      setData({ ...emptyLoanCalc(j.data.side), ...j.data });
+      // Endpoint now returns just the carried-forward slice. Merge it
+      // into the active group via save() so every other group on the
+      // engagement is preserved.
+      await save({
+        side: j.side,
+        setup: j.setup,
+        loans: j.loans,
+      });
     } catch (err: any) {
       setError(String(err?.message || err));
     } finally {
@@ -986,8 +1047,19 @@ export function LoanCalculatorPanel({ engagementId, initialSide, periodStartDate
           <div className="flex items-center gap-2">
             <Calculator className="h-5 w-5" />
             <div>
-              <div className="text-sm font-semibold leading-tight">Loan Calculator — {sideLabel}</div>
-              <div className="text-[11px] opacity-80">{stepLabel(screen)}{saving && <> · <Loader2 className="inline h-3 w-3 animate-spin ml-1" /> saving</>}</div>
+              <div className="text-sm font-semibold leading-tight flex items-center gap-2">
+                <span>Loan Calculator — {sideLabel}</span>
+                <span
+                  className="inline-flex items-center justify-center h-5 w-5 rounded-full bg-white text-emerald-700 text-[11px] font-bold shadow"
+                  title={`Loan group ${groupLabelState} — covers ${(root.groups.find(g => g.id === groupId)?.fsLines || []).join(', ') || fsLineName}`}
+                >{groupLabelState}</span>
+              </div>
+              <div className="text-[11px] opacity-80">
+                {stepLabel(screen)}
+                {' · '}
+                <span>Group {groupLabelState} — {(root.groups.find(g => g.id === groupId)?.fsLines || [fsLineName]).join(', ')}</span>
+                {saving && <> · <Loader2 className="inline h-3 w-3 animate-spin ml-1" /> saving</>}
+              </div>
             </div>
           </div>
           <button onClick={onClose} className="p-1.5 rounded hover:bg-white/10"><X className="h-4 w-4" /></button>

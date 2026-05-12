@@ -363,6 +363,38 @@ export interface LoanCalcData {
   riSignedAt?: string;
 }
 
+/**
+ * One "loan group" — a self-contained calculator run scoped to one or
+ * more FS Lines. Engagements with several loan-bearing FS Lines (e.g.
+ * "Bank Loans", "Director's Loan", "Lease Liabilities") run the
+ * calculator separately for each, and each run gets its own group
+ * with an auto-assigned letter badge ("A", "B", "C", ...) so the audit
+ * plan can mirror the conclusion dots back onto every FS Line that
+ * triggered a run.
+ */
+export interface LoanGroup extends LoanCalcData {
+  /** Stable id — used in URLs and React keys. */
+  id: string;
+  /** Letter badge "A", "B", "C"... — assigned by index on save. */
+  label: string;
+  /** FS Line names this group covers (the user can group several FS
+   *  Lines under one calculator run, but the default is one). */
+  fsLines: string[];
+  /** ISO timestamp the group was first opened. */
+  createdAt: string;
+  /** Optional free-text title (auditor-supplied), defaults to label. */
+  title?: string;
+}
+
+/** Top-level shape of AuditLoanCalculator.data after groups land. The
+ *  panel and audit plan always read/write through parseLoanCalcRoot so
+ *  legacy single-group blobs (which had `side`/`setup`/`loans` at the
+ *  root) keep working — they lift into a single group "A". */
+export interface LoanCalcRoot {
+  groups: LoanGroup[];
+  updatedAt?: string;
+}
+
 // ── Empty / default helpers ──────────────────────────────────────────
 export function emptyHeader(): LoanHeader {
   return {
@@ -425,6 +457,161 @@ export function emptyLoanCalc(side: LoanSide): LoanCalcData {
       conclusion: emptyTestResult(),
     },
   };
+}
+
+// ── Group helpers ────────────────────────────────────────────────────
+
+/** Convert a 0-based index to a spreadsheet-style letter label:
+ *  0 → "A", 1 → "B", 25 → "Z", 26 → "AA", 27 → "AB", etc. */
+export function groupLetter(idx: number): string {
+  if (idx < 0) return '';
+  let n = idx;
+  let out = '';
+  while (true) {
+    out = String.fromCharCode(65 + (n % 26)) + out;
+    n = Math.floor(n / 26) - 1;
+    if (n < 0) break;
+  }
+  return out;
+}
+
+/** Coerce whatever was loaded from `audit_loan_calculators.data` into
+ *  the canonical `LoanCalcRoot` shape. Tolerant of:
+ *   - empty / undefined: returns `{ groups: [] }`.
+ *   - legacy single-group blob (has `side` at the root): lifts the
+ *     whole blob into one group "A" covering the FS Lines listed under
+ *     `legacy._fsLines` (when present) or an empty array.
+ *   - new shape (has `groups: [...]`): coerced + relabelled.
+ *  Re-labels group letters by index every time so deleting / reordering
+ *  groups stays consistent. */
+export function parseLoanCalcRoot(raw: unknown): LoanCalcRoot {
+  if (!raw || typeof raw !== 'object') return { groups: [] };
+  const r = raw as Record<string, unknown>;
+  // New shape — groups at root.
+  if (Array.isArray(r.groups)) {
+    const groups = (r.groups as unknown[])
+      .filter((g): g is Record<string, unknown> => !!g && typeof g === 'object')
+      .map((g, idx) => normaliseGroup(g, idx));
+    return { groups, updatedAt: typeof r.updatedAt === 'string' ? r.updatedAt : undefined };
+  }
+  // Legacy single-blob — was the old `LoanCalcData` saved directly.
+  if (typeof r.side === 'string' && (r.side === 'receivable' || r.side === 'liability')) {
+    const side = r.side as LoanSide;
+    const legacyFsLines = Array.isArray((r as any)._fsLines)
+      ? ((r as any)._fsLines as string[]).filter(s => typeof s === 'string')
+      : [];
+    const group: LoanGroup = {
+      ...emptyLoanCalc(side),
+      ...(r as unknown as LoanCalcData),
+      id: typeof r.id === 'string' ? r.id as string : `grp_legacy_${Date.now()}`,
+      label: 'A',
+      fsLines: legacyFsLines,
+      createdAt: typeof r.createdAt === 'string' ? r.createdAt as string : new Date().toISOString(),
+    };
+    return { groups: [group], updatedAt: typeof r.updatedAt === 'string' ? r.updatedAt : undefined };
+  }
+  return { groups: [] };
+}
+
+function normaliseGroup(g: Record<string, unknown>, idx: number): LoanGroup {
+  const side: LoanSide = g.side === 'receivable' ? 'receivable' : 'liability';
+  const fsLines = Array.isArray(g.fsLines) ? (g.fsLines as unknown[]).filter((s): s is string => typeof s === 'string') : [];
+  const base = emptyLoanCalc(side);
+  return {
+    ...base,
+    ...(g as Partial<LoanCalcData>),
+    id: typeof g.id === 'string' ? g.id : `grp_${Date.now()}_${idx}`,
+    label: groupLetter(idx),
+    fsLines,
+    createdAt: typeof g.createdAt === 'string' ? g.createdAt : new Date().toISOString(),
+    title: typeof g.title === 'string' ? g.title : undefined,
+  };
+}
+
+/** Build an empty new group attached to a specific FS Line. Side is
+ *  auto-inferred from the FS Line name; auditor can override on the
+ *  panel's Setup screen. */
+export function emptyLoanGroup(fsLineName: string, idx: number): LoanGroup {
+  const side = inferLoanSide(fsLineName);
+  return {
+    ...emptyLoanCalc(side),
+    id: `grp_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
+    label: groupLetter(idx),
+    fsLines: fsLineName ? [fsLineName] : [],
+    createdAt: new Date().toISOString(),
+  };
+}
+
+/** Find every group covering a given FS Line. */
+export function groupsForFsLine(root: LoanCalcRoot, fsLineName: string | null | undefined): LoanGroup[] {
+  if (!fsLineName) return [];
+  const target = norm(fsLineName);
+  return root.groups.filter(g => g.fsLines.some(x => norm(x) === target));
+}
+
+/** Pick a single group covering an FS Line, or create a new one and
+ *  return it. The returned `{ root, group, isNew }` lets the caller
+ *  persist back via `root.groups`. */
+export function ensureGroupForFsLine(
+  root: LoanCalcRoot,
+  fsLineName: string,
+): { root: LoanCalcRoot; group: LoanGroup; isNew: boolean } {
+  const matches = groupsForFsLine(root, fsLineName);
+  if (matches.length > 0) {
+    return { root, group: matches[0], isNew: false };
+  }
+  const idx = root.groups.length;
+  const group = emptyLoanGroup(fsLineName, idx);
+  const next: LoanCalcRoot = { ...root, groups: [...root.groups, group] };
+  return { root: next, group, isNew: true };
+}
+
+/** Replace one group inside a root (matched by id) and return the
+ *  patched root. Relabels every group by index so deleting / reordering
+ *  always gives stable A/B/C labels. */
+export function upsertGroup(root: LoanCalcRoot, group: LoanGroup): LoanCalcRoot {
+  const idx = root.groups.findIndex(g => g.id === group.id);
+  const next = idx >= 0
+    ? root.groups.map(g => g.id === group.id ? group : g)
+    : [...root.groups, group];
+  return {
+    ...root,
+    groups: next.map((g, i) => ({ ...g, label: groupLetter(i) })),
+    updatedAt: new Date().toISOString(),
+  };
+}
+
+/** Collect every conclusion dot inside a group — the four 3-colour
+ *  test dots, the two disclosure dots, and the side-specific branch
+ *  dots (covenants OR impairment + FMV). The rateReasonable Y/N is
+ *  excluded — it isn't a dot. */
+export function dotsForGroup(g: LoanGroup): { key: string; label: string; status: DotStatus }[] {
+  const out: { key: string; label: string; status: DotStatus }[] = [
+    { key: 'interestVsTb',     label: 'Interest vs TB',       status: g.tests.interestVsTb.status },
+    { key: 'openingVsPriorTb', label: 'Opening vs Prior TB',  status: g.tests.openingVsPriorTb.status },
+    { key: 'closingVsTb',      label: 'Closing vs TB',        status: g.tests.closingVsTb.status },
+    { key: 'ltStSplit',        label: 'LT/ST split',          status: g.tests.ltStSplit.status },
+    { key: 'totalsTie',        label: 'Disclosure totals',    status: g.disclosure.totalsTie.status },
+    { key: 'securityConfirmed',label: 'Security confirmed',   status: g.disclosure.securityConfirmed.status },
+  ];
+  if (g.side === 'liability') {
+    out.push({ key: 'covenants', label: 'Covenants', status: g.covenants.conclusion.status });
+  } else {
+    out.push({ key: 'impairment', label: 'Impairment', status: g.impairment.conclusion.status });
+    out.push({ key: 'fmv',        label: 'FMV',        status: g.fmv.conclusion.status });
+  }
+  return out;
+}
+
+/** Single roll-up dot for a group: worst-of (red > orange > green >
+ *  hollow). Hollow when ALL dots are hollow — i.e. the calculator has
+ *  not yet been concluded on any front. */
+export function overallDot(g: LoanGroup): DotStatus {
+  const dots = dotsForGroup(g);
+  if (dots.some(d => d.status === 'red')) return 'red';
+  if (dots.some(d => d.status === 'orange')) return 'orange';
+  if (dots.some(d => d.status === 'green')) return 'green';
+  return 'hollow';
 }
 
 // ── Period math ──────────────────────────────────────────────────────

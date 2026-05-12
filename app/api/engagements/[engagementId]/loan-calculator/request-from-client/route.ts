@@ -46,6 +46,10 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ eng
     ? body.loanLabels.filter((s: unknown): s is string => typeof s === 'string')
     : [];
   const message: string = typeof body?.message === 'string' ? body.message : '';
+  // Optional group id — when present, the request pointer is written
+  // into the matching group inside `data.groups[]` instead of the
+  // legacy top-level keys. The panel always supplies it.
+  const groupId: string | undefined = typeof body?.groupId === 'string' ? body.groupId : undefined;
 
   const loanListMd = loanLabels.length > 0
     ? loanLabels.map(l => `- ${l}`).join('\n')
@@ -103,7 +107,9 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ eng
     },
   });
 
-  // Persist a pointer on the loan-calculator blob.
+  // Persist a pointer on the loan-calculator blob — scoped to the
+  // active group when `groupId` is supplied (the panel always does),
+  // otherwise written at the top level for backward compatibility.
   try {
     const existing = await (prisma as any).auditLoanCalculator?.findUnique({ where: { engagementId } });
     const baseData = (existing?.data && typeof existing.data === 'object' && !Array.isArray(existing.data))
@@ -111,7 +117,21 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ eng
       : {};
     const sentAt = new Date().toISOString();
     let merged: Record<string, unknown>;
-    if (kind === 'documents') {
+    if (groupId && Array.isArray((baseData as any).groups)) {
+      const groups = ((baseData as any).groups as any[]).map(g => {
+        if (!g || g.id !== groupId) return g;
+        if (kind === 'documents') {
+          return { ...g, documentsRequest: { portalRequestId: portalRequest.id, sentAt } };
+        }
+        if (kind === 'covenants') {
+          const existingCov = (g.covenants && typeof g.covenants === 'object' && !Array.isArray(g.covenants)) ? g.covenants : {};
+          return { ...g, covenants: { ...existingCov, portalRequestId: portalRequest.id, portalSentAt: sentAt } };
+        }
+        const existingImp = (g.impairment && typeof g.impairment === 'object' && !Array.isArray(g.impairment)) ? g.impairment : {};
+        return { ...g, impairment: { ...existingImp, portalRequestId: portalRequest.id, portalSentAt: sentAt } };
+      });
+      merged = { ...baseData, groups, updatedAt: new Date().toISOString() };
+    } else if (kind === 'documents') {
       merged = { ...baseData, documentsRequest: { portalRequestId: portalRequest.id, sentAt } };
     } else if (kind === 'covenants') {
       const existingCov = (baseData.covenants && typeof baseData.covenants === 'object' && !Array.isArray(baseData.covenants))

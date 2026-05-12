@@ -2,20 +2,26 @@ import { NextResponse } from 'next/server';
 import { assertEngagementWriteAccess } from '@/lib/auth/engagement-auth';
 import { auth } from '@/lib/auth';
 import { prisma } from '@/lib/db';
+import { parseLoanCalcRoot } from '@/lib/loan-calculator';
 
 /**
  * POST /api/engagements/[engagementId]/loan-calculator/copy-from-prior
  *
- * Copies the prior-period engagement's loan-calculator JSON blob (loans,
- * headers, schedules, covenants, penalties) into the current engagement
- * — clearing the current-period flow figures so the auditor can refresh
- * them, but preserving the loan setup, lender names, agreement dates,
- * and any custom covenant/penalty rows.
+ * Returns the prior-period engagement's loan-calculator data for the
+ * loan group matching the supplied `priorGroupId` (or the first group
+ * if not specified). The response carries the loan header(s), schedule,
+ * covenants and penalties — flow figures and tests are reset by the
+ * client so the auditor re-evaluates them for the new period.
  *
- * No body. The endpoint reads `priorPeriodEngagementId` off the current
- * engagement and returns the merged blob.
+ * This endpoint is READ-ONLY against the current engagement. The
+ * panel merges the response into the currently-active group via its
+ * normal save() flow, which preserves every OTHER group already on
+ * the engagement (the previous version of this endpoint wrote the
+ * legacy flat shape and clobbered any sibling groups).
+ *
+ * Body (optional): { priorGroupId?: string }
  */
-export async function POST(_req: Request, { params }: { params: Promise<{ engagementId: string }> }) {
+export async function POST(req: Request, { params }: { params: Promise<{ engagementId: string }> }) {
   const session = await auth();
   if (!session?.user?.twoFactorVerified) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
@@ -35,50 +41,47 @@ export async function POST(_req: Request, { params }: { params: Promise<{ engage
     return NextResponse.json({ error: 'No prior-period engagement linked to this audit.' }, { status: 412 });
   }
 
+  const body = await req.json().catch(() => ({}));
+  const priorGroupId: string | undefined = typeof body?.priorGroupId === 'string' ? body.priorGroupId : undefined;
+
   const priorRow = await (prisma as any).auditLoanCalculator?.findUnique({
     where: { engagementId: engagement.priorPeriodEngagementId },
   });
   if (!priorRow?.data) {
     return NextResponse.json({ error: 'Prior engagement has no Loan Calculator data to copy.' }, { status: 404 });
   }
-  const prior = priorRow.data as Record<string, any>;
+  const priorRoot = parseLoanCalcRoot(priorRow.data);
+  if (priorRoot.groups.length === 0) {
+    return NextResponse.json({ error: 'Prior engagement has no loan groups to copy.' }, { status: 404 });
+  }
+  const sourceGroup = priorGroupId
+    ? priorRoot.groups.find(g => g.id === priorGroupId) || priorRoot.groups[0]
+    : priorRoot.groups[0];
 
   // Carry header + covenants + penalties forward; reset flow figures and
   // tests so the auditor re-evaluates them for the new period.
-  const carriedLoans = Array.isArray(prior.loans) ? prior.loans.map((l: any) => ({
+  const carriedLoans = sourceGroup.loans.map(l => ({
     id: l.id,
     label: l.label,
     header: l.header,
     documents: [], // documents don't carry — they live against their original engagement
-    covenants: Array.isArray(l.covenants) ? l.covenants.map((c: any) => ({
+    covenants: (l.covenants || []).map(c => ({
       ...c,
       clientConfirmedViaPortal: false,
       portalRequestId: undefined,
       portalSentAt: undefined,
-      metStatus: '',
-    })) : [],
-    penalties: Array.isArray(l.penalties) ? l.penalties : [],
+      metStatus: '' as const,
+    })),
+    penalties: l.penalties || [],
     schedule: [], // reset — auditor regenerates / extracts for new period
-  })) : [];
+  }));
 
-  const existing = await (prisma as any).auditLoanCalculator?.findUnique({ where: { engagementId } });
-  const baseData = (existing?.data && typeof existing.data === 'object' && !Array.isArray(existing.data))
-    ? existing.data as Record<string, unknown>
-    : {};
-  const merged = {
-    ...baseData,
-    side: prior.side || (baseData.side ?? 'liability'),
-    setup: prior.setup || baseData.setup || { loanCount: carriedLoans.length, maxTranches: 1 },
+  return NextResponse.json({
+    success: true,
+    side: sourceGroup.side,
+    setup: sourceGroup.setup,
     loans: carriedLoans,
-    copiedFromPriorAt: new Date().toISOString(),
-    updatedAt: new Date().toISOString(),
-  };
-
-  await (prisma as any).auditLoanCalculator?.upsert({
-    where: { engagementId },
-    create: { engagementId, data: merged as object },
-    update: { data: merged as object },
+    sourceLabel: sourceGroup.label,
+    sourceFsLines: sourceGroup.fsLines,
   });
-
-  return NextResponse.json({ success: true, data: merged });
 }
