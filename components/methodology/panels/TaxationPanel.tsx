@@ -86,8 +86,15 @@ export function TaxationPanel({
   // (so dots update after the user saves a conclusion) and on initial
   // mount. Tolerant of API errors / missing fields (everything is
   // optional — empty fields render hollow dots).
+  //
+  // Also re-fetched whenever a sub-panel broadcasts a change event so
+  // the dots aren't stale just because the user signed off without
+  // leaving the active sub-tab. Without this trigger, the Taxation
+  // tab-pill dots appeared "uneditable" — they kept showing pending
+  // even after the auditor signed off inside.
   const [taxOnProfitsSO, setTaxOnProfitsSO] = useState<SubTabSignOffs>({});
   const [vatReconciliationSO, setVatReconciliationSO] = useState<SubTabSignOffs>({});
+  const [signOffRefreshTick, setSignOffRefreshTick] = useState(0);
 
   useEffect(() => {
     let cancelled = false;
@@ -134,7 +141,25 @@ export function TaxationPanel({
     }
     loadSignOffs();
     return () => { cancelled = true; };
-  }, [engagementId, activeSubTab]);
+  }, [engagementId, activeSubTab, signOffRefreshTick]);
+
+  // Listen for sub-panel save broadcasts so the rollup dots refresh
+  // immediately when the auditor signs off / saves a conclusion. The
+  // sub-panels dispatch their own events from inside their persist()
+  // helpers; we just bump a tick that re-runs the fetch above.
+  useEffect(() => {
+    function onChange(e: Event) {
+      const detail = (e as CustomEvent).detail as { engagementId?: string } | undefined;
+      if (!detail || detail.engagementId !== engagementId) return;
+      setSignOffRefreshTick(t => t + 1);
+    }
+    window.addEventListener('engagement:tax-on-profits-changed', onChange);
+    window.addEventListener('engagement:vat-reconciliation-changed', onChange);
+    return () => {
+      window.removeEventListener('engagement:tax-on-profits-changed', onChange);
+      window.removeEventListener('engagement:vat-reconciliation-changed', onChange);
+    };
+  }, [engagementId]);
 
   useEffect(() => {
     onSubTabChange?.(activeSubTab);
@@ -147,17 +172,26 @@ export function TaxationPanel({
 
   // Roll up Reviewer/RI sign-offs across both Taxation sub-tabs and
   // broadcast to CompletionPanel so the tab-strip Reviewer/RI dots
-  // mirror what's signed inside this panel. Green only when both
-  // sub-tabs have the role signed; pending otherwise.
+  // mirror what's signed inside this panel. Three states:
+  //   • green  — both Tax on Profits AND VAT Reconciliation signed
+  //   • orange — exactly one of them signed (partial rollup)
+  //   • pending — neither signed
+  // The partial state matches the dot convention used elsewhere in
+  // the Completion strip (orange = some, green = all, pending = none).
   useEffect(() => {
-    const reviewerOk = !!taxOnProfitsSO.reviewer?.timestamp && !!vatReconciliationSO.reviewer?.timestamp;
-    const riOk = !!taxOnProfitsSO.ri?.timestamp && !!vatReconciliationSO.ri?.timestamp;
+    function rollup(top?: SignOffEntry, vat?: SignOffEntry): 'green' | 'orange' | 'pending' {
+      const a = !!top?.timestamp;
+      const b = !!vat?.timestamp;
+      if (a && b) return 'green';
+      if (a || b) return 'orange';
+      return 'pending';
+    }
     try {
       window.dispatchEvent(new CustomEvent('engagement:taxation-signoffs', {
         detail: {
           engagementId,
-          reviewer: reviewerOk ? 'green' : 'pending',
-          ri: riOk ? 'green' : 'pending',
+          reviewer: rollup(taxOnProfitsSO.reviewer, vatReconciliationSO.reviewer),
+          ri: rollup(taxOnProfitsSO.ri, vatReconciliationSO.ri),
         },
       }));
     } catch {}

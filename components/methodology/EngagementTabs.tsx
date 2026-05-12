@@ -1550,7 +1550,7 @@ export function EngagementTabs({ engagement, auditType, clientName, periodEndDat
                     </Fragment>
                   );
                 })}
-                {(['Going Concern', 'Management Override', 'Subsequent Events', 'Taxation', 'Tax Technical', 'Permanent', 'Disclosure'] as const).map(other => (
+                {(['Going Concern', 'Management Override', 'Subsequent Events', 'Taxation', 'Permanent', 'Disclosure'] as const).map(other => (
                   <button
                     key={other}
                     onClick={() => {
@@ -1573,8 +1573,12 @@ export function EngagementTabs({ engagement, auditType, clientName, periodEndDat
               </button>
             )}
           </div>
-          {/* Main area: Completion Panel */}
-          <div className="flex-1 flex flex-col min-h-0">
+          {/* Main area: Completion Panel.
+              min-w-0 lets the flex item shrink below its content's
+              natural width so the inner tab strip's overflow-x-auto
+              actually engages a scrollbar instead of pushing the
+              column wider than the viewport. */}
+          <div className="flex-1 min-w-0 flex flex-col min-h-0">
             <CompletionPanel
               engagementId={engagement.id}
               clientId={engagement.clientId}
@@ -1655,6 +1659,15 @@ export function EngagementTabs({ engagement, auditType, clientName, periodEndDat
                 initialStatement={auditPlanTarget?.statement}
                 initialLevel={auditPlanTarget?.level}
                 initialOtherTab={auditPlanTarget?.otherTab}
+                specialists={(engagement.specialists || []).map(s => ({
+                  id: s.id,
+                  specialistType: s.specialistType,
+                  name: s.name || '',
+                  email: s.email,
+                }))}
+                teamMembers={teamMembers as any}
+                currentUserId={currentUserId}
+                currentUserName={teamMembers.find(m => m.userId === currentUserId)?.userName || undefined}
               />
             </TabErrorBoundary>
           </div>

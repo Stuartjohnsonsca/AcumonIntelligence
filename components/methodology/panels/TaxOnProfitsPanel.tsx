@@ -236,6 +236,11 @@ export function TaxOnProfitsPanel({ engagementId, periodEndDate }: Props) {
         const json = await res.json();
         if (json.data) setData(prev => ({ ...prev, ...json.data }));
       }
+      // Notify the parent Taxation panel so the rollup dots on the
+      // Completion sub-tab pill refresh immediately (otherwise the
+      // pill stays stale until the user remounts the panel — looks
+      // like the dot is "stuck" / uneditable).
+      try { window.dispatchEvent(new CustomEvent('engagement:tax-on-profits-changed', { detail: { engagementId } })); } catch {}
     } finally {
       setSaving(false);
     }

@@ -130,6 +130,10 @@ export function VatReconciliationPanel({ engagementId, periodStartDate, periodEn
         const json = await res.json();
         if (json.data) setData(prev => ({ ...prev, ...json.data }));
       }
+      // Same broadcast trick as TaxOnProfitsPanel — lets the parent
+      // Taxation panel refresh its rollup so the Completion tab-pill
+      // dots reflect the new sign-off state immediately.
+      try { window.dispatchEvent(new CustomEvent('engagement:vat-reconciliation-changed', { detail: { engagementId } })); } catch {}
     } finally {
       setSaving(false);
     }

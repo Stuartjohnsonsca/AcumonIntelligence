@@ -15,6 +15,7 @@ import { PlanCustomiserModal } from './PlanCustomiserModal';
 import { VatReconciliationPanel } from './VatReconciliationPanel';
 import { LoanCalculatorPanel } from './LoanCalculatorPanel';
 import { TaxationPanel } from './TaxationPanel';
+import { SpecialistsTab } from '../tabs/SpecialistsTab';
 import { isRevenueFsLevel } from '@/lib/vat-reconciliation';
 import {
   isLoanFsLevelByRows, isLoanReceivableFsLevel, inferLoanSide,
@@ -104,11 +105,21 @@ interface Props {
   initialLevel?: string;
   /** Same idea for the "Other" group (Going Concern, etc.). */
   initialOtherTab?: string;
+  /** Specialists assigned to the engagement (from Opening tab) — used
+   *  by the embedded SpecialistsTab when activeOtherTab === 'Specialists'. */
+  specialists?: Array<{ id: string; specialistType: string; name?: string | null; email?: string | null }>;
+  /** Engagement team members — needed by SpecialistsTab for sign-off
+   *  role gating. Optional so existing AuditPlan callers don't break. */
+  teamMembers?: Array<{ userId: string; userName?: string | null; role: string }>;
+  /** Current user id + name — needed by SpecialistsTab for sign-off
+   *  attribution. */
+  currentUserId?: string;
+  currentUserName?: string;
 }
 
 const STATEMENT_ORDER = ['Profit & Loss', 'Balance Sheet', 'Cash Flow Statement', 'Notes'];
 const THREE_LEVEL_STATEMENTS = new Set(['Balance Sheet']);
-const OTHER_TABS = ['Going Concern', 'Management Override', 'Subsequent Events', 'Taxation', 'Tax Technical', 'Permanent', 'Disclosure'] as const;
+const OTHER_TABS = ['Going Concern', 'Management Override', 'Subsequent Events', 'Taxation', 'Specialists', 'Permanent', 'Disclosure'] as const;
 type OtherTab = typeof OTHER_TABS[number];
 
 // Statutory format order by framework
@@ -322,7 +333,7 @@ const FS_LINE_ALIASES: Record<string, string[]> = {
   'equity': ['capital & reserves', 'shareholders funds'],
 };
 
-export function AuditPlanPanel({ engagementId, clientId, periodId, onClose, periodEndDate, periodStartDate, initialStatement, initialLevel, initialOtherTab }: Props) {
+export function AuditPlanPanel({ engagementId, clientId, periodId, onClose, periodEndDate, periodStartDate, initialStatement, initialLevel, initialOtherTab, specialists, teamMembers, currentUserId, currentUserName }: Props) {
   const [tbRows, setTbRows] = useState<TBRow[]>([]);
   const [rmmItems, setRmmItems] = useState<RMMItem[]>([]);
   const [allocations, setAllocations] = useState<AllocationEntry[]>([]);
@@ -1337,6 +1348,29 @@ export function AuditPlanPanel({ engagementId, clientId, periodId, onClose, peri
           <div className="inline-flex items-center gap-2 px-4 py-2 bg-purple-50 text-purple-700 rounded-lg text-sm font-medium">Disclosure</div>
           <p className="text-xs text-slate-400 mt-3">Disclosure checklist and testing workspace — coming soon.</p>
         </div>
+      )}
+      {/* Specialists — embeds the same SpecialistsTab that powers the
+          top-level Specialists engagement tab, so per-specialist chats,
+          reports and conclusions (and any messages posted back via the
+          external Specialist Portal — shared PF section) are reachable
+          directly from the Audit Plan Other strip. */}
+      {activeOtherTab === 'Specialists' && (
+        <SpecialistsTab
+          engagementId={engagementId}
+          specialists={(specialists || []).map(s => ({
+            id: s.id,
+            specialistType: s.specialistType,
+            name: s.name || '',
+            email: s.email || undefined,
+          }))}
+          teamMembers={(teamMembers || []).map(m => ({
+            userId: m.userId,
+            userName: m.userName || undefined,
+            role: m.role,
+          })) as any}
+          currentUserId={currentUserId}
+          currentUserName={currentUserName}
+        />
       )}
 
       {/* Level 3: FS Note sub-sub-tabs — only for Balance Sheet */}

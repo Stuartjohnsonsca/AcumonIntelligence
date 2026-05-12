@@ -248,13 +248,16 @@ export function CompletionPanel({
   }
 
   return (
-    <div className="flex-1 flex flex-col min-h-0">
+    <div className="flex-1 min-w-0 flex flex-col min-h-0">
       {/* Tab bar — Plan Customiser button sits on the same row, pinned
           to the right. Visible only on the Significant Risk tab today;
           clicking dispatches `engagement:open-plan-customiser` and
           SignificantRiskPanel handles the modal locally (so the active
-          risk's FS-line context is preserved). */}
-      <div className="flex items-center gap-1 px-3 py-2 border-b border-slate-200 bg-slate-50/50">
+          risk's FS-line context is preserved).
+          The outer row carries min-w-0 so the inner overflow-x-auto
+          scrollbar engages instead of the strip pushing the panel
+          wider than the viewport. */}
+      <div className="flex items-center gap-1 px-3 py-2 border-b border-slate-200 bg-slate-50/50 min-w-0">
         <div className="flex items-center gap-1 overflow-x-auto flex-1 min-w-0">
         {orderedCompletionTabs.map(tab => {
           const Icon = tab.icon;
