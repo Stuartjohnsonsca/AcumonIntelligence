@@ -2107,6 +2107,7 @@ model AuditEngagement {
   actionLogs            EngagementActionLog[]
   vatReconciliation     AuditVatReconciliation?
   taxOnProfits          AuditTaxOnProfits?
+  loanCalculator        AuditLoanCalculator?
   importProposals       ImportExtractionProposal[]
   importHandoffSessions ImportHandoffSession[]
   interrogateInteractions InterrogateInteraction[]
@@ -2672,6 +2673,21 @@ model AuditVatReconciliation {
   engagement AuditEngagement @relation(fields: [engagementId], references: [id], onDelete: Cascade)
 
   @@map("audit_vat_reconciliations")
+}
+
+/// Per-engagement Loan Calculator (receivables OR liabilities, with the
+/// FS Line indicating which "side"). Stored as a JSON blob — the shape
+/// evolves with the panel; lib/loan-calculator.ts is the source of truth.
+/// One row holds every loan tab for the engagement, plus the lead summary,
+/// tests, disclosure answers and covenants/impairment/FMV branch state.
+model AuditLoanCalculator {
+  id           String @id @default(uuid())
+  engagementId String @unique @map("engagement_id")
+  data         Json   @default("{}")
+
+  engagement AuditEngagement @relation(fields: [engagementId], references: [id], onDelete: Cascade)
+
+  @@map("audit_loan_calculators")
 }
 
 /// Per-engagement Tax on Profits / Corporation Tax computation.
