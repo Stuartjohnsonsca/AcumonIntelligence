@@ -75,6 +75,29 @@ export async function PUT(req: NextRequest, ctx: Ctx) {
       (e: unknown) => typeof e === 'string' && /\S+@\S+\.\S+/.test(e as string),
     );
   }
+  // Delivery method dropdown — Email and/or Teams. Empty array means
+  // in-app only (a paused channel without losing recipient details).
+  if (Array.isArray(body.deliveryMethods)) {
+    patch.deliveryMethods = body.deliveryMethods
+      .filter((m: unknown): m is string => typeof m === 'string')
+      .filter((m: string) => m === 'email' || m === 'teams');
+  }
+  // Teams webhook URL. Validate HTTPS to catch typos before the
+  // runner tries (and logs) a failed POST. Null clears the value.
+  if ('teamsWebhookUrl' in body) {
+    if (body.teamsWebhookUrl === null) {
+      patch.teamsWebhookUrl = null;
+    } else if (typeof body.teamsWebhookUrl === 'string') {
+      const trimmed = body.teamsWebhookUrl.trim();
+      if (!trimmed) {
+        patch.teamsWebhookUrl = null;
+      } else if (/^https:\/\//i.test(trimmed)) {
+        patch.teamsWebhookUrl = trimmed;
+      } else {
+        return NextResponse.json({ error: 'Teams webhook URL must start with https://' }, { status: 400 });
+      }
+    }
+  }
   if (typeof body.isActive === 'boolean') patch.isActive = body.isActive;
 
   if (Object.keys(patch).length === 0) {

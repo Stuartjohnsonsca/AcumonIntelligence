@@ -15,6 +15,27 @@ import { prisma } from '@/lib/db';
 import { computeNextRunAt, type Frequency } from '@/lib/audit-file-monitoring';
 
 const FREQUENCIES: ReadonlyArray<Frequency> = ['manual', 'daily', 'weekly', 'monthly'];
+const DELIVERY_METHODS = ['email', 'teams'] as const;
+type DeliveryMethod = typeof DELIVERY_METHODS[number];
+
+function sanitiseDeliveryMethods(raw: unknown): DeliveryMethod[] {
+  if (!Array.isArray(raw)) return [];
+  const out: DeliveryMethod[] = [];
+  for (const v of raw) {
+    if (typeof v === 'string' && (DELIVERY_METHODS as ReadonlyArray<string>).includes(v) && !out.includes(v as DeliveryMethod)) {
+      out.push(v as DeliveryMethod);
+    }
+  }
+  return out;
+}
+
+function sanitiseTeamsWebhook(raw: unknown): string | null {
+  if (typeof raw !== 'string') return null;
+  const trimmed = raw.trim();
+  if (!trimmed) return null;
+  if (!/^https:\/\//i.test(trimmed)) return null; // Teams webhooks are always HTTPS
+  return trimmed;
+}
 
 export async function GET(req: NextRequest, ctx: { params: Promise<{ engagementId: string }> }) {
   const session = await auth();
@@ -44,6 +65,8 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ engagementI
       nextRunAt: true,
       lastRunAt: true,
       emailRecipients: true,
+      teamsWebhookUrl: true,
+      deliveryMethods: true,
       createdByName: true,
       createdAt: true,
       runs: {
@@ -89,6 +112,8 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ engagement
   const emailRecipients: string[] = Array.isArray(body.emailRecipients)
     ? body.emailRecipients.filter((e: unknown) => typeof e === 'string' && /\S+@\S+\.\S+/.test(e as string))
     : [];
+  const deliveryMethods = sanitiseDeliveryMethods(body.deliveryMethods);
+  const teamsWebhookUrl = sanitiseTeamsWebhook(body.teamsWebhookUrl);
 
   const report = await prisma.auditFileMonitoringReport.create({
     data: {
@@ -99,6 +124,8 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ engagement
       frequency,
       nextRunAt: computeNextRunAt(frequency),
       emailRecipients: emailRecipients.length ? (emailRecipients as any) : undefined,
+      teamsWebhookUrl: teamsWebhookUrl,
+      deliveryMethods: deliveryMethods.length ? (deliveryMethods as any) : undefined,
       createdById: session.user.id,
       createdByName: session.user.name || session.user.email || null,
     },

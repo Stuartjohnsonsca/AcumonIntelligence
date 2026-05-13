@@ -41,6 +41,13 @@ CREATE INDEX IF NOT EXISTS audit_file_monitoring_reports_engagement_id_idx
 CREATE INDEX IF NOT EXISTS audit_file_monitoring_reports_firm_active_next_idx
   ON audit_file_monitoring_reports (firm_id, is_active, next_run_at);
 
+-- Delivery method + Teams webhook — added in a follow-up commit, so
+-- if a database is on the previous migration these ADD COLUMN IF NOT
+-- EXISTS clauses backfill them cleanly.
+ALTER TABLE audit_file_monitoring_reports
+  ADD COLUMN IF NOT EXISTS delivery_methods   JSONB NULL,
+  ADD COLUMN IF NOT EXISTS teams_webhook_url  TEXT NULL;
+
 -- ─── audit_file_monitoring_runs ──────────────────────────────────────
 CREATE TABLE IF NOT EXISTS audit_file_monitoring_runs (
   id            TEXT PRIMARY KEY,

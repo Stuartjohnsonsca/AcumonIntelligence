@@ -23,6 +23,7 @@ import { prisma } from '@/lib/db';
 import { buildTemplateContext } from '@/lib/template-context';
 import { askInterrogateBot } from '@/lib/interrogate-bot';
 import { sendEmail } from '@/lib/email';
+import { postToTeamsWebhook, renderMonitoringRunForTeams } from '@/lib/teams-webhook';
 
 export type Frequency = 'manual' | 'daily' | 'weekly' | 'monthly';
 
@@ -110,6 +111,8 @@ export async function runMonitoringReport(
       questions: true,
       frequency: true,
       emailRecipients: true,
+      teamsWebhookUrl: true,
+      deliveryMethods: true,
     },
   });
   if (!report) throw new Error(`Monitoring report ${reportId} not found`);
@@ -173,10 +176,21 @@ export async function runMonitoringReport(
   const status: 'ok' | 'partial' | 'failed' =
     failCount === 0 ? 'ok' : okCount === 0 ? 'failed' : 'partial';
 
+  // Delivery method gating — only push to a channel if BOTH the
+  // method is in deliveryMethods AND the matching target field is
+  // populated. This keeps recipient lists intact while letting the
+  // user pause a channel by toggling its checkbox off.
+  const methods: string[] = Array.isArray(report.deliveryMethods)
+    ? (report.deliveryMethods as unknown[]).filter((m): m is string => typeof m === 'string')
+    : [];
+  const wantsEmail = methods.includes('email');
+  const wantsTeams = methods.includes('teams');
+
   const recipients = Array.isArray(report.emailRecipients)
     ? (report.emailRecipients as unknown[]).filter(e => typeof e === 'string' && /\S+@\S+/.test(e as string)) as string[]
     : [];
 
+  const runAt = new Date();
   const run = await prisma.auditFileMonitoringRun.create({
     data: {
       reportId: report.id,
@@ -184,7 +198,7 @@ export async function runMonitoringReport(
       trigger,
       answers: results as any,
       status,
-      emailedTo: recipients.length ? recipients : undefined,
+      emailedTo: wantsEmail && recipients.length ? recipients : undefined,
     },
   });
 
@@ -205,8 +219,10 @@ export async function runMonitoringReport(
     });
   }
 
-  // Best-effort email — failures don't fail the run.
-  if (recipients.length > 0) {
+  // Best-effort delivery — failures land in console.error and never
+  // fail the run. The run row stays usable in-app regardless of
+  // whether a push channel succeeded.
+  if (wantsEmail && recipients.length > 0) {
     try {
       await sendEmail(
         recipients[0],
@@ -218,6 +234,26 @@ export async function runMonitoringReport(
       );
     } catch (err) {
       console.error('[monitoring] email send failed', err);
+    }
+  }
+
+  if (wantsTeams && report.teamsWebhookUrl) {
+    try {
+      const portalBase = (process.env.PORTAL_PUBLIC_URL || process.env.NEXT_PUBLIC_APP_URL || '').replace(/\/+$/, '');
+      const portalUrl = portalBase ? `${portalBase}/methodology/engagements/${report.engagementId}` : undefined;
+      const card = renderMonitoringRunForTeams({
+        reportName: report.name,
+        runAt,
+        status,
+        rows: results,
+        portalUrl,
+      });
+      const teamsResult = await postToTeamsWebhook({ webhookUrl: report.teamsWebhookUrl, ...card });
+      if (!teamsResult.ok) {
+        console.error('[monitoring] Teams post failed', teamsResult.error);
+      }
+    } catch (err) {
+      console.error('[monitoring] Teams post threw', err);
     }
   }
 

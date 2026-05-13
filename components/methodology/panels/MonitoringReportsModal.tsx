@@ -20,6 +20,7 @@ import { useEffect, useState, useCallback } from 'react';
 import {
   X, Plus, Loader2, Play, Calendar, Trash2, Edit3, Mail, History,
   AlertTriangle, Sparkles, CheckCircle2, ChevronRight, ChevronDown,
+  Send,
 } from 'lucide-react';
 
 interface RunSummary {
@@ -34,6 +35,8 @@ interface RunDetail extends RunSummary {
   errorMessage?: string | null;
   emailedTo?: string[] | null;
 }
+type DeliveryMethod = 'email' | 'teams';
+
 interface Report {
   id: string;
   name: string;
@@ -43,6 +46,8 @@ interface Report {
   nextRunAt: string | null;
   lastRunAt: string | null;
   emailRecipients: string[] | null;
+  teamsWebhookUrl: string | null;
+  deliveryMethods: DeliveryMethod[];
   createdByName: string | null;
   createdAt: string;
   runs: RunSummary[];
@@ -83,6 +88,8 @@ export function MonitoringReportsModal({ engagementId, onClose }: Props) {
     questions: string[];
     frequency: Report['frequency'];
     emailRecipients: string;
+    teamsWebhookUrl: string;
+    deliveryMethods: DeliveryMethod[];
   } | null>(null);
 
   // Latest-run detail for the active report — separate fetch so the
@@ -102,6 +109,10 @@ export function MonitoringReportsModal({ engagementId, onClose }: Props) {
         ...r,
         questions: Array.isArray(r.questions) ? r.questions : [],
         emailRecipients: Array.isArray(r.emailRecipients) ? r.emailRecipients : null,
+        teamsWebhookUrl: r.teamsWebhookUrl ?? null,
+        deliveryMethods: Array.isArray(r.deliveryMethods)
+          ? r.deliveryMethods.filter((m: unknown): m is DeliveryMethod => m === 'email' || m === 'teams')
+          : [],
       })) as Report[];
       setReports(list);
       if (!activeId && list.length > 0) setActiveId(list[0].id);
@@ -140,7 +151,17 @@ export function MonitoringReportsModal({ engagementId, onClose }: Props) {
 
   function startCreate() {
     setCreating(true);
-    setDraft({ name: '', questions: [], frequency: 'weekly', emailRecipients: '' });
+    setDraft({
+      name: '',
+      questions: [],
+      frequency: 'weekly',
+      emailRecipients: '',
+      teamsWebhookUrl: '',
+      // Default Email on so the most common path is one click — the
+      // user just adds an address. Teams is opt-in because it needs
+      // a webhook URL from the Teams channel setup.
+      deliveryMethods: ['email'],
+    });
   }
   function startEdit(report: Report) {
     setCreating(false);
@@ -150,6 +171,8 @@ export function MonitoringReportsModal({ engagementId, onClose }: Props) {
       questions: [...report.questions],
       frequency: report.frequency,
       emailRecipients: (report.emailRecipients || []).join(', '),
+      teamsWebhookUrl: report.teamsWebhookUrl || '',
+      deliveryMethods: [...(report.deliveryMethods || [])],
     });
   }
   function cancelDraft() {
@@ -164,11 +187,18 @@ export function MonitoringReportsModal({ engagementId, onClose }: Props) {
       .split(/[,;\n]/)
       .map(s => s.trim())
       .filter(s => /\S+@\S+\.\S+/.test(s));
+    const teamsWebhookUrl = draft.teamsWebhookUrl.trim();
+    if (draft.deliveryMethods.includes('teams') && teamsWebhookUrl && !/^https:\/\//i.test(teamsWebhookUrl)) {
+      setError('Teams webhook URL must start with https://');
+      return;
+    }
     const body = {
       name: draft.name.trim(),
       questions: trimmedQs,
       frequency: draft.frequency,
       emailRecipients: recipients,
+      teamsWebhookUrl: teamsWebhookUrl || null,
+      deliveryMethods: draft.deliveryMethods,
     };
     if (!body.name) { setError('Name is required'); return; }
 
@@ -349,8 +379,22 @@ export function MonitoringReportsModal({ engagementId, onClose }: Props) {
                         <span>Next: {new Date(active.nextRunAt).toLocaleString('en-GB')}</span>
                       )}
                       {active.lastRunAt && <span>Last: {new Date(active.lastRunAt).toLocaleString('en-GB')}</span>}
-                      {active.emailRecipients && active.emailRecipients.length > 0 && (
-                        <span className="inline-flex items-center gap-1"><Mail className="h-3 w-3" />{active.emailRecipients.join(', ')}</span>
+                      {/* Delivery summary — shows which channels are enabled
+                          AND have a target populated. Greys out when there's
+                          no push channel so the user sees the run only
+                          lands in-app. */}
+                      {active.deliveryMethods.includes('email') && active.emailRecipients && active.emailRecipients.length > 0 && (
+                        <span className="inline-flex items-center gap-1 text-blue-600"><Mail className="h-3 w-3" />{active.emailRecipients.join(', ')}</span>
+                      )}
+                      {active.deliveryMethods.includes('teams') && active.teamsWebhookUrl && (
+                        <span className="inline-flex items-center gap-1 text-purple-700"><Send className="h-3 w-3" />Teams channel</span>
+                      )}
+                      {(active.deliveryMethods.length === 0 ||
+                        (active.deliveryMethods.every(m =>
+                          (m === 'email' && (!active.emailRecipients || active.emailRecipients.length === 0)) ||
+                          (m === 'teams' && !active.teamsWebhookUrl)
+                        ))) && (
+                        <span className="text-slate-400 italic">In-app only — pick a delivery method to push the report</span>
                       )}
                     </div>
                   </div>
@@ -521,7 +565,15 @@ function HistoricRun({ engagementId, reportId, runId }: { engagementId: string; 
 function DraftEditor({
   draft, setDraft, onSave, onCancel, isNew,
 }: {
-  draft: { id?: string; name: string; questions: string[]; frequency: Report['frequency']; emailRecipients: string };
+  draft: {
+    id?: string;
+    name: string;
+    questions: string[];
+    frequency: Report['frequency'];
+    emailRecipients: string;
+    teamsWebhookUrl: string;
+    deliveryMethods: DeliveryMethod[];
+  };
   setDraft: (next: NonNullable<typeof draft>) => void;
   onSave: () => void;
   onCancel: () => void;
@@ -529,6 +581,12 @@ function DraftEditor({
 }) {
   function setField<K extends keyof typeof draft>(key: K, value: typeof draft[K]) {
     setDraft({ ...draft, [key]: value });
+  }
+  function toggleMethod(method: DeliveryMethod) {
+    const next = draft.deliveryMethods.includes(method)
+      ? draft.deliveryMethods.filter(m => m !== method)
+      : [...draft.deliveryMethods, method];
+    setField('deliveryMethods', next);
   }
   function setQ(idx: number, value: string) {
     const next = [...draft.questions];
@@ -566,29 +624,81 @@ function DraftEditor({
         />
       </div>
 
-      <div className="grid grid-cols-2 gap-3">
-        <div>
-          <label className="text-[11px] font-semibold text-slate-600 block mb-1">Frequency</label>
-          <select
-            value={draft.frequency}
-            onChange={e => setField('frequency', e.target.value as Report['frequency'])}
-            className="w-full border border-slate-300 rounded px-2 py-1.5 text-xs bg-white"
-          >
-            <option value="manual">Manual only</option>
-            <option value="daily">Daily (08:00 UTC)</option>
-            <option value="weekly">Weekly (Mon 08:00 UTC)</option>
-            <option value="monthly">Monthly (1st, 08:00 UTC)</option>
-          </select>
-        </div>
-        <div>
-          <label className="text-[11px] font-semibold text-slate-600 block mb-1">Email recipients (optional)</label>
-          <input
-            type="text"
-            value={draft.emailRecipients}
-            onChange={e => setField('emailRecipients', e.target.value)}
-            placeholder="e.g. me@firm.co.uk, partner@firm.co.uk"
-            className="w-full border border-slate-300 rounded px-3 py-1.5 text-xs focus:outline-none focus:border-blue-300"
-          />
+      <div>
+        <label className="text-[11px] font-semibold text-slate-600 block mb-1">Frequency</label>
+        <select
+          value={draft.frequency}
+          onChange={e => setField('frequency', e.target.value as Report['frequency'])}
+          className="w-full border border-slate-300 rounded px-2 py-1.5 text-xs bg-white"
+        >
+          <option value="manual">Manual only</option>
+          <option value="daily">Daily (08:00 UTC)</option>
+          <option value="weekly">Weekly (Mon 08:00 UTC)</option>
+          <option value="monthly">Monthly (1st, 08:00 UTC)</option>
+        </select>
+      </div>
+
+      {/* Delivery — pick how the report is pushed after each run.
+          Checkbox list rather than a single dropdown so the user can
+          combine Email + Teams in one report. Empty selection means
+          the run still lands in the modal's history but no outbound
+          push happens. */}
+      <div>
+        <label className="text-[11px] font-semibold text-slate-600 block mb-1">Delivery</label>
+        <p className="text-[10px] text-slate-500 mb-2">
+          Choose where the report goes after each run. Leave both unticked to keep it in-app only.
+        </p>
+        <div className="space-y-2.5">
+          <label className="flex items-start gap-2 cursor-pointer group">
+            <input
+              type="checkbox"
+              checked={draft.deliveryMethods.includes('email')}
+              onChange={() => toggleMethod('email')}
+              className="mt-0.5 rounded border-slate-300"
+            />
+            <div className="flex-1">
+              <div className="flex items-center gap-1.5 text-xs font-medium text-slate-700">
+                <Mail className="h-3 w-3 text-blue-600" /> Email
+              </div>
+              {draft.deliveryMethods.includes('email') && (
+                <input
+                  type="text"
+                  value={draft.emailRecipients}
+                  onChange={e => setField('emailRecipients', e.target.value)}
+                  placeholder="e.g. me@firm.co.uk, partner@firm.co.uk"
+                  className="w-full mt-1 border border-slate-300 rounded px-3 py-1.5 text-xs focus:outline-none focus:border-blue-300"
+                />
+              )}
+            </div>
+          </label>
+
+          <label className="flex items-start gap-2 cursor-pointer group">
+            <input
+              type="checkbox"
+              checked={draft.deliveryMethods.includes('teams')}
+              onChange={() => toggleMethod('teams')}
+              className="mt-0.5 rounded border-slate-300"
+            />
+            <div className="flex-1">
+              <div className="flex items-center gap-1.5 text-xs font-medium text-slate-700">
+                <Send className="h-3 w-3 text-purple-700" /> Microsoft Teams
+              </div>
+              {draft.deliveryMethods.includes('teams') && (
+                <div>
+                  <input
+                    type="url"
+                    value={draft.teamsWebhookUrl}
+                    onChange={e => setField('teamsWebhookUrl', e.target.value)}
+                    placeholder="https://outlook.office.com/webhook/..."
+                    className="w-full mt-1 border border-slate-300 rounded px-3 py-1.5 text-xs focus:outline-none focus:border-purple-300 font-mono"
+                  />
+                  <p className="text-[10px] text-slate-500 mt-1">
+                    In Teams: open the channel → ⋯ → <strong>Manage channel</strong> → Connectors → <strong>Incoming Webhook</strong> → Create. Paste the URL here.
+                  </p>
+                </div>
+              )}
+            </div>
+          </label>
         </div>
       </div>
 
