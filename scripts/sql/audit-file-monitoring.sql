@@ -46,7 +46,8 @@ CREATE INDEX IF NOT EXISTS audit_file_monitoring_reports_firm_active_next_idx
 -- EXISTS clauses backfill them cleanly.
 ALTER TABLE audit_file_monitoring_reports
   ADD COLUMN IF NOT EXISTS delivery_methods   JSONB NULL,
-  ADD COLUMN IF NOT EXISTS teams_webhook_url  TEXT NULL;
+  ADD COLUMN IF NOT EXISTS teams_webhook_url  TEXT NULL,
+  ADD COLUMN IF NOT EXISTS wecom_webhook_url  TEXT NULL;
 
 -- ─── audit_file_monitoring_runs ──────────────────────────────────────
 CREATE TABLE IF NOT EXISTS audit_file_monitoring_runs (

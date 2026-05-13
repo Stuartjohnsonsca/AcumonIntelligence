@@ -35,7 +35,7 @@ interface RunDetail extends RunSummary {
   errorMessage?: string | null;
   emailedTo?: string[] | null;
 }
-type DeliveryMethod = 'email' | 'teams';
+type DeliveryMethod = 'email' | 'teams' | 'wecom';
 
 interface Report {
   id: string;
@@ -47,6 +47,7 @@ interface Report {
   lastRunAt: string | null;
   emailRecipients: string[] | null;
   teamsWebhookUrl: string | null;
+  wecomWebhookUrl: string | null;
   deliveryMethods: DeliveryMethod[];
   createdByName: string | null;
   createdAt: string;
@@ -89,6 +90,7 @@ export function MonitoringReportsModal({ engagementId, onClose }: Props) {
     frequency: Report['frequency'];
     emailRecipients: string;
     teamsWebhookUrl: string;
+    wecomWebhookUrl: string;
     deliveryMethods: DeliveryMethod[];
   } | null>(null);
 
@@ -110,8 +112,9 @@ export function MonitoringReportsModal({ engagementId, onClose }: Props) {
         questions: Array.isArray(r.questions) ? r.questions : [],
         emailRecipients: Array.isArray(r.emailRecipients) ? r.emailRecipients : null,
         teamsWebhookUrl: r.teamsWebhookUrl ?? null,
+        wecomWebhookUrl: r.wecomWebhookUrl ?? null,
         deliveryMethods: Array.isArray(r.deliveryMethods)
-          ? r.deliveryMethods.filter((m: unknown): m is DeliveryMethod => m === 'email' || m === 'teams')
+          ? r.deliveryMethods.filter((m: unknown): m is DeliveryMethod => m === 'email' || m === 'teams' || m === 'wecom')
           : [],
       })) as Report[];
       setReports(list);
@@ -157,9 +160,10 @@ export function MonitoringReportsModal({ engagementId, onClose }: Props) {
       frequency: 'weekly',
       emailRecipients: '',
       teamsWebhookUrl: '',
+      wecomWebhookUrl: '',
       // Default Email on so the most common path is one click — the
-      // user just adds an address. Teams is opt-in because it needs
-      // a webhook URL from the Teams channel setup.
+      // user just adds an address. Teams + WeCom are opt-in because
+      // they need webhook URLs from each channel's setup screen.
       deliveryMethods: ['email'],
     });
   }
@@ -172,6 +176,7 @@ export function MonitoringReportsModal({ engagementId, onClose }: Props) {
       frequency: report.frequency,
       emailRecipients: (report.emailRecipients || []).join(', '),
       teamsWebhookUrl: report.teamsWebhookUrl || '',
+      wecomWebhookUrl: report.wecomWebhookUrl || '',
       deliveryMethods: [...(report.deliveryMethods || [])],
     });
   }
@@ -192,12 +197,18 @@ export function MonitoringReportsModal({ engagementId, onClose }: Props) {
       setError('Teams webhook URL must start with https://');
       return;
     }
+    const wecomWebhookUrl = draft.wecomWebhookUrl.trim();
+    if (draft.deliveryMethods.includes('wecom') && wecomWebhookUrl && !/^https:\/\/qyapi\.weixin\.qq\.com\/.+key=/.test(wecomWebhookUrl)) {
+      setError('WeCom webhook URL must be the qyapi.weixin.qq.com/cgi-bin/webhook/send?key=... URL from the WeCom Group Robot screen.');
+      return;
+    }
     const body = {
       name: draft.name.trim(),
       questions: trimmedQs,
       frequency: draft.frequency,
       emailRecipients: recipients,
       teamsWebhookUrl: teamsWebhookUrl || null,
+      wecomWebhookUrl: wecomWebhookUrl || null,
       deliveryMethods: draft.deliveryMethods,
     };
     if (!body.name) { setError('Name is required'); return; }
@@ -389,10 +400,14 @@ export function MonitoringReportsModal({ engagementId, onClose }: Props) {
                       {active.deliveryMethods.includes('teams') && active.teamsWebhookUrl && (
                         <span className="inline-flex items-center gap-1 text-purple-700"><Send className="h-3 w-3" />Teams channel</span>
                       )}
+                      {active.deliveryMethods.includes('wecom') && active.wecomWebhookUrl && (
+                        <span className="inline-flex items-center gap-1 text-emerald-700"><Send className="h-3 w-3" />WeCom group</span>
+                      )}
                       {(active.deliveryMethods.length === 0 ||
                         (active.deliveryMethods.every(m =>
                           (m === 'email' && (!active.emailRecipients || active.emailRecipients.length === 0)) ||
-                          (m === 'teams' && !active.teamsWebhookUrl)
+                          (m === 'teams' && !active.teamsWebhookUrl) ||
+                          (m === 'wecom' && !active.wecomWebhookUrl)
                         ))) && (
                         <span className="text-slate-400 italic">In-app only — pick a delivery method to push the report</span>
                       )}
@@ -572,6 +587,7 @@ function DraftEditor({
     frequency: Report['frequency'];
     emailRecipients: string;
     teamsWebhookUrl: string;
+    wecomWebhookUrl: string;
     deliveryMethods: DeliveryMethod[];
   };
   setDraft: (next: NonNullable<typeof draft>) => void;
@@ -694,6 +710,35 @@ function DraftEditor({
                   />
                   <p className="text-[10px] text-slate-500 mt-1">
                     In Teams: open the channel → ⋯ → <strong>Manage channel</strong> → Connectors → <strong>Incoming Webhook</strong> → Create. Paste the URL here.
+                  </p>
+                </div>
+              )}
+            </div>
+          </label>
+
+          <label className="flex items-start gap-2 cursor-pointer group">
+            <input
+              type="checkbox"
+              checked={draft.deliveryMethods.includes('wecom')}
+              onChange={() => toggleMethod('wecom')}
+              className="mt-0.5 rounded border-slate-300"
+            />
+            <div className="flex-1">
+              <div className="flex items-center gap-1.5 text-xs font-medium text-slate-700">
+                <Send className="h-3 w-3 text-emerald-700" /> WeCom (企业微信)
+              </div>
+              {draft.deliveryMethods.includes('wecom') && (
+                <div>
+                  <input
+                    type="url"
+                    value={draft.wecomWebhookUrl}
+                    onChange={e => setField('wecomWebhookUrl', e.target.value)}
+                    placeholder="https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=..."
+                    className="w-full mt-1 border border-slate-300 rounded px-3 py-1.5 text-xs focus:outline-none focus:border-emerald-300 font-mono"
+                  />
+                  <p className="text-[10px] text-slate-500 mt-1">
+                    In WeCom: open the group chat → ⋯ → <strong>Group Robots</strong> (群机器人) → <strong>Add Robot</strong> → copy the Webhook URL.
+                    Robots send into the group, so any client you've added to that group sees the report.
                   </p>
                 </div>
               )}

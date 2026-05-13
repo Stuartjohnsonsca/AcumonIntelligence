@@ -80,7 +80,7 @@ export async function PUT(req: NextRequest, ctx: Ctx) {
   if (Array.isArray(body.deliveryMethods)) {
     patch.deliveryMethods = body.deliveryMethods
       .filter((m: unknown): m is string => typeof m === 'string')
-      .filter((m: string) => m === 'email' || m === 'teams');
+      .filter((m: string) => m === 'email' || m === 'teams' || m === 'wecom');
   }
   // Teams webhook URL. Validate HTTPS to catch typos before the
   // runner tries (and logs) a failed POST. Null clears the value.
@@ -95,6 +95,23 @@ export async function PUT(req: NextRequest, ctx: Ctx) {
         patch.teamsWebhookUrl = trimmed;
       } else {
         return NextResponse.json({ error: 'Teams webhook URL must start with https://' }, { status: 400 });
+      }
+    }
+  }
+  // WeCom group-robot webhook URL. Stricter validation: must be the
+  // canonical qyapi.weixin.qq.com /cgi-bin/webhook/send?key=... URL so
+  // a paste of an unrelated link doesn't silently never send.
+  if ('wecomWebhookUrl' in body) {
+    if (body.wecomWebhookUrl === null) {
+      patch.wecomWebhookUrl = null;
+    } else if (typeof body.wecomWebhookUrl === 'string') {
+      const trimmed = body.wecomWebhookUrl.trim();
+      if (!trimmed) {
+        patch.wecomWebhookUrl = null;
+      } else if (/^https:\/\/qyapi\.weixin\.qq\.com\/.+key=/.test(trimmed)) {
+        patch.wecomWebhookUrl = trimmed;
+      } else {
+        return NextResponse.json({ error: 'WeCom webhook URL must be the qyapi.weixin.qq.com/cgi-bin/webhook/send?key=... URL from the WeCom Group Robot setup screen.' }, { status: 400 });
       }
     }
   }

@@ -2473,12 +2473,13 @@ model AuditFileMonitoringReport {
   nextRunAt    DateTime? @map("next_run_at")
   lastRunAt    DateTime? @map("last_run_at")
   /// Delivery method picked by the auditor. JSON array of strings,
-  /// any subset of ['email', 'teams']. Empty / null means in-app
-  /// only (the report still lands on /api ... /run history, but no
-  /// outbound push). The runner consults this AND the matching
-  /// per-channel target field (emailRecipients / teamsWebhookUrl) so
-  /// you can keep recipients populated while temporarily pausing a
-  /// channel by removing it from this array.
+  /// any subset of ['email', 'teams', 'wecom']. Empty / null means
+  /// in-app only (the report still lands on /api ... /run history,
+  /// but no outbound push). The runner consults this AND the
+  /// matching per-channel target field (emailRecipients /
+  /// teamsWebhookUrl / wecomWebhookUrl) so you can keep recipients
+  /// populated while temporarily pausing a channel by removing it
+  /// from this array.
   deliveryMethods Json? @map("delivery_methods")
   /// Optional list of email addresses that get the report after each
   /// run. JSON array of strings. Honoured only when 'email' is in
@@ -2488,6 +2489,11 @@ model AuditFileMonitoringReport {
   /// is in deliveryMethods. The runner POSTs a MessageCard to this
   /// URL so the report shows up in the chosen Teams channel.
   teamsWebhookUrl String? @map("teams_webhook_url")
+  /// WeCom (企业微信 / WeChat Work) Group Robot webhook URL. Honoured
+  /// only when 'wecom' is in deliveryMethods. The runner POSTs the
+  /// same plain-text digest used for email; group members (including
+  /// external WeChat clients added via External Contact) see it.
+  wecomWebhookUrl String? @map("wecom_webhook_url")
   /// Soft-disable so a report can be paused without losing its
   /// question list.
   isActive     Boolean  @default(true) @map("is_active")

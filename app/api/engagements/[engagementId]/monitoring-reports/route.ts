@@ -15,7 +15,7 @@ import { prisma } from '@/lib/db';
 import { computeNextRunAt, type Frequency } from '@/lib/audit-file-monitoring';
 
 const FREQUENCIES: ReadonlyArray<Frequency> = ['manual', 'daily', 'weekly', 'monthly'];
-const DELIVERY_METHODS = ['email', 'teams'] as const;
+const DELIVERY_METHODS = ['email', 'teams', 'wecom'] as const;
 type DeliveryMethod = typeof DELIVERY_METHODS[number];
 
 function sanitiseDeliveryMethods(raw: unknown): DeliveryMethod[] {
@@ -34,6 +34,17 @@ function sanitiseTeamsWebhook(raw: unknown): string | null {
   const trimmed = raw.trim();
   if (!trimmed) return null;
   if (!/^https:\/\//i.test(trimmed)) return null; // Teams webhooks are always HTTPS
+  return trimmed;
+}
+
+/** WeCom group-robot webhook URLs are always on qyapi.weixin.qq.com
+ *  with a `key=` query param. Reject anything else so a typo doesn't
+ *  silently never send. */
+function sanitiseWeComWebhook(raw: unknown): string | null {
+  if (typeof raw !== 'string') return null;
+  const trimmed = raw.trim();
+  if (!trimmed) return null;
+  if (!/^https:\/\/qyapi\.weixin\.qq\.com\/.+key=/.test(trimmed)) return null;
   return trimmed;
 }
 
@@ -66,6 +77,7 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ engagementI
       lastRunAt: true,
       emailRecipients: true,
       teamsWebhookUrl: true,
+      wecomWebhookUrl: true,
       deliveryMethods: true,
       createdByName: true,
       createdAt: true,
@@ -114,6 +126,7 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ engagement
     : [];
   const deliveryMethods = sanitiseDeliveryMethods(body.deliveryMethods);
   const teamsWebhookUrl = sanitiseTeamsWebhook(body.teamsWebhookUrl);
+  const wecomWebhookUrl = sanitiseWeComWebhook(body.wecomWebhookUrl);
 
   const report = await prisma.auditFileMonitoringReport.create({
     data: {
@@ -125,6 +138,7 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ engagement
       nextRunAt: computeNextRunAt(frequency),
       emailRecipients: emailRecipients.length ? (emailRecipients as any) : undefined,
       teamsWebhookUrl: teamsWebhookUrl,
+      wecomWebhookUrl: wecomWebhookUrl,
       deliveryMethods: deliveryMethods.length ? (deliveryMethods as any) : undefined,
       createdById: session.user.id,
       createdByName: session.user.name || session.user.email || null,

@@ -24,6 +24,7 @@ import { buildTemplateContext } from '@/lib/template-context';
 import { askInterrogateBot } from '@/lib/interrogate-bot';
 import { sendEmail } from '@/lib/email';
 import { postToTeamsWebhook, renderMonitoringRunForTeams } from '@/lib/teams-webhook';
+import { sendWeComGroupMessage } from '@/lib/messaging/wecom';
 import { resolvePortalPublicUrl } from '@/lib/portal-public-url';
 
 export type Frequency = 'manual' | 'daily' | 'weekly' | 'monthly';
@@ -113,6 +114,7 @@ export async function runMonitoringReport(
       frequency: true,
       emailRecipients: true,
       teamsWebhookUrl: true,
+      wecomWebhookUrl: true,
       deliveryMethods: true,
     },
   });
@@ -186,6 +188,7 @@ export async function runMonitoringReport(
     : [];
   const wantsEmail = methods.includes('email');
   const wantsTeams = methods.includes('teams');
+  const wantsWeCom = methods.includes('wecom');
 
   const recipients = Array.isArray(report.emailRecipients)
     ? (report.emailRecipients as unknown[]).filter(e => typeof e === 'string' && /\S+@\S+/.test(e as string)) as string[]
@@ -258,6 +261,33 @@ export async function runMonitoringReport(
       }
     } catch (err) {
       console.error('[monitoring] Teams post threw', err);
+    }
+  }
+
+  // WeCom Group Robot — plain text equivalent of the email digest.
+  // Robot webhooks don't render Markdown reliably so we keep this
+  // simple. Status emoji + report name as the heading, one block per
+  // answered question.
+  if (wantsWeCom && report.wecomWebhookUrl) {
+    try {
+      const statusEmoji = status === 'ok' ? '✅' : status === 'partial' ? '⚠️' : '❌';
+      const lines: string[] = [`${statusEmoji} ${report.name}`, `Run at ${runAt.toLocaleString('en-GB')} (${status})`, ''];
+      for (const r of results) {
+        lines.push(`【${r.question}】`);
+        lines.push(r.error ? `Error: ${r.error}` : r.answer);
+        lines.push('');
+      }
+      const wecomResult = await sendWeComGroupMessage({
+        channel: 'wechat',
+        to: report.wecomWebhookUrl,
+        webhookUrl: report.wecomWebhookUrl,
+        body: lines.join('\n').slice(0, 3800),
+      });
+      if (!wecomResult.ok) {
+        console.error('[monitoring] WeCom post failed', wecomResult.error);
+      }
+    } catch (err) {
+      console.error('[monitoring] WeCom post threw', err);
     }
   }
 

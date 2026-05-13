@@ -34,6 +34,7 @@ import {
   sendSentDmWhatsApp,
 } from './sent-dm';
 import { isWeChatConfigured, sendWeChatMessage } from './wechat';
+import { isWeComConfigured, isWeComRobotConfigured, sendWeComGroupMessage } from './wecom';
 import type { MessageChannel, SendResult } from './types';
 
 export type { MessageChannel } from './types';
@@ -54,6 +55,13 @@ export {
   parseWeChatXml,
   createWeChatLoginQr,
 } from './wechat';
+export {
+  isWeComConfigured,
+  isWeComRobotConfigured,
+  isWeComAppConfigured,
+  sendWeComGroupMessage,
+  sendWeComAppMessage,
+} from './wecom';
 
 interface NotifyArgs {
   portalUserId: string;
@@ -173,14 +181,24 @@ export async function notifyPortalUser(args: NotifyArgs): Promise<NotifyResult> 
           ? await sendTelegramMessage({ channel, body: args.body, to, mediaUrls: args.mediaUrls })
           : { ok: false, error: 'Telegram not configured' };
       } else {
-        // wechat — sends customer-service text via the bound OpenID.
-        // Subject to WeChat's 48-hour-since-last-interaction rule;
-        // failures land as 'failed' rows in portal_messages so the
-        // firm can prompt the user to send any message to the Account
-        // first.
-        result = isWeChatConfigured()
-          ? await sendWeChatMessage({ channel, body: args.body, to, mediaUrls: args.mediaUrls })
-          : { ok: false, error: 'WeChat not configured' };
+        // wechat channel — provider priority:
+        //   1. WeCom Group Robot if WECOM_GROUP_WEBHOOK_URL is set.
+        //      POSTs to a fixed group webhook so every linked client
+        //      in that group sees the message. No per-user binding
+        //      needed; works on the free WeCom tier and doesn't
+        //      require a mainland Chinese phone for setup.
+        //   2. WeChat Official Account customer-service text via the
+        //      bound OpenID (subject to the 48h rule).
+        //   3. Failed with a friendly error if neither is configured.
+        // WeCom takes precedence because it's the path most UK firms
+        // can actually onboard without a mainland phone number.
+        if (isWeComRobotConfigured()) {
+          result = await sendWeComGroupMessage({ channel, body: args.body, to, mediaUrls: args.mediaUrls });
+        } else if (isWeChatConfigured()) {
+          result = await sendWeChatMessage({ channel, body: args.body, to, mediaUrls: args.mediaUrls });
+        } else {
+          result = { ok: false, error: 'Neither WeCom nor WeChat Official Account configured' };
+        }
       }
     } catch (err: any) {
       result = { ok: false, error: err?.message || String(err) };
