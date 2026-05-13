@@ -17,7 +17,7 @@ import {
 } from '@/lib/messaging';
 
 export async function POST(req: Request) {
-  if (!isWeChatConfigured()) {
+  if (!(await isWeChatConfigured())) {
     return NextResponse.json({ error: 'WeChat is not configured on this server' }, { status: 503 });
   }
   const body = await req.json().catch(() => ({}));

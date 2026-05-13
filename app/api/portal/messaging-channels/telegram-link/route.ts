@@ -22,18 +22,18 @@ import {
 } from '@/lib/messaging';
 
 export async function POST(req: Request) {
-  if (!isTelegramConfigured()) {
+  if (!(await isTelegramConfigured())) {
     return NextResponse.json({ error: 'Telegram is not configured on this server' }, { status: 503 });
   }
-  if (!telegramBotUsername()) {
-    return NextResponse.json({ error: 'TELEGRAM_BOT_USERNAME is not set' }, { status: 503 });
+  if (!(await telegramBotUsername())) {
+    return NextResponse.json({ error: 'Telegram bot username not set in SuperAdmin → Messaging Providers' }, { status: 503 });
   }
   const body = await req.json().catch(() => ({}));
   const me = await resolvePortalUserFromToken(body.token);
   if (!me) return NextResponse.json({ error: 'Invalid or expired session' }, { status: 401 });
 
   const code = await generateTelegramLinkCode(me.id);
-  const url = buildTelegramConnectUrl(code);
+  const url = await buildTelegramConnectUrl(code);
   return NextResponse.json({
     url,
     code,

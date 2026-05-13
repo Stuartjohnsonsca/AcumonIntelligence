@@ -1165,6 +1165,13 @@ model ClientPortalUser {
   wechatOptIn           Boolean   @default(false) @map("wechat_opt_in")
   wechatLinkCode        String?   @unique @map("wechat_link_code")
   wechatLinkExpiresAt   DateTime? @map("wechat_link_expires_at")
+  /// WeCom Pro External Contact user id. Distinct from `wechatOpenId`
+  /// (which is the Official Account-side OpenID) — this is issued by
+  /// WeCom when the client taps an "Add as External Contact" link and
+  /// the firm employee accepts. Used by the WeCom Pro send path
+  /// (externalcontact/send_welcome_msg / add_msg_template) for true
+  /// 1:1 messaging without a shared group.
+  wecomExternalUserId   String?   @map("wecom_external_user_id")
 
   // Single preferred outbound channel. The user (or the Portal
   // Principal on their behalf) picks ONE of these in /portal/my-details;
@@ -1191,6 +1198,7 @@ model ClientPortalUser {
   @@index([smsNumber])
   @@index([telegramChatId])
   @@index([wechatOpenId])
+  @@index([wecomExternalUserId])
   @@map("client_portal_users")
 }
 
@@ -1485,7 +1493,40 @@ model PortalMessage {
   @@map("portal_messages")
 }
 
-// ─── Audit Evidence Requests ──────────────────────────────────────────────────
+/// Platform-wide messaging provider configuration, managed by Super
+/// Admin via /methodology-admin/messaging-providers. One row per
+/// provider (twilio, sent_dm, telegram, wecom). The library code
+/// reads this table first and falls back to env vars when the row is
+/// missing or `enabled=false` so existing env-based deployments keep
+/// working through the migration.
+///
+/// Stored credentials are encrypted at rest by Postgres column-level
+/// encryption (Supabase's default) plus the audit firm's RLS policies
+/// — no application-layer crypto on top, in line with how the rest
+/// of the platform stores 3rd-party tokens (Xero, Twilio webhook
+/// auth, etc.).
+model MessagingProviderConfig {
+  id            String   @id @default(uuid())
+  /// One of: 'twilio' | 'sent_dm' | 'telegram' | 'wecom'.
+  /// WeCom's mode (Group Robot vs Pro External Contact) lives inside
+  /// the JSON config.
+  provider      String   @unique
+  enabled       Boolean  @default(false)
+  /// Provider-specific keys / IDs. Shape per provider:
+  ///   twilio:    { accountSid, authToken, smsFrom, whatsappFrom, webhookPublicUrl? }
+  ///   sent_dm:   { apiKey, templateId, smsTemplateId?, whatsappTemplateId? }
+  ///   telegram:  { botToken, botUsername, webhookSecret }
+  ///   wecom:     { mode: 'group_robot'|'external_contact_pro',
+  ///                groupWebhookUrl?, corpId?, agentId?, appSecret?,
+  ///                token? }
+  /// The provider's lib/ helper knows the field names and shape.
+  config        Json     @default("{}")
+  updatedById   String?  @map("updated_by_id")
+  updatedByName String?  @map("updated_by_name")
+  updatedAt     DateTime @updatedAt @map("updated_at")
+
+  @@map("messaging_provider_configs")
+}
 
 model AuditEvidenceRequest {
   id                   String   @id @default(uuid())

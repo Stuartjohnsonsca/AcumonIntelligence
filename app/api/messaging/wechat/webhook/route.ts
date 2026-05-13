@@ -36,7 +36,7 @@ import {
 export const dynamic = 'force-dynamic';
 
 export async function GET(req: NextRequest) {
-  if (!isWeChatConfigured()) {
+  if (!(await isWeChatConfigured())) {
     return new NextResponse('not configured', { status: 503 });
   }
   const url = new URL(req.url);
@@ -44,7 +44,7 @@ export async function GET(req: NextRequest) {
   const timestamp = url.searchParams.get('timestamp') || '';
   const nonce = url.searchParams.get('nonce') || '';
   const echostr = url.searchParams.get('echostr') || '';
-  if (!verifyWeChatSignature({ signature, timestamp, nonce })) {
+  if (!(await verifyWeChatSignature({ signature, timestamp, nonce }))) {
     console.warn('[wechat webhook] signature mismatch on handshake');
     return new NextResponse('forbidden', { status: 403 });
   }
@@ -53,7 +53,7 @@ export async function GET(req: NextRequest) {
 }
 
 export async function POST(req: NextRequest) {
-  if (!isWeChatConfigured()) {
+  if (!(await isWeChatConfigured())) {
     return new NextResponse('not configured', { status: 503 });
   }
   // Even on POST WeChat appends the signature query params for every
@@ -62,7 +62,7 @@ export async function POST(req: NextRequest) {
   const signature = url.searchParams.get('signature') || '';
   const timestamp = url.searchParams.get('timestamp') || '';
   const nonce = url.searchParams.get('nonce') || '';
-  if (!verifyWeChatSignature({ signature, timestamp, nonce })) {
+  if (!(await verifyWeChatSignature({ signature, timestamp, nonce }))) {
     console.warn('[wechat webhook] signature mismatch on POST');
     return new NextResponse('forbidden', { status: 403 });
   }

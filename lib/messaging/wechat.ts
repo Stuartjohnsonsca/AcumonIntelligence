@@ -42,16 +42,20 @@
 
 import crypto from 'crypto';
 import type { OutboundMessage, SendResult } from './types';
+import { getProviderConfig, type WeComConfig } from './provider-config';
 
 const DEFAULT_API_BASE = 'https://api.weixin.qq.com';
-function apiBase(): string {
-  return (process.env.WECHAT_API_BASE || DEFAULT_API_BASE).replace(/\/+$/, '');
+async function apiBase(): Promise<string> {
+  const { config } = await getProviderConfig<WeComConfig>('wecom');
+  return (config.apiBase || DEFAULT_API_BASE).replace(/\/+$/, '');
 }
 
-export function isWeChatConfigured(): boolean {
-  return !!process.env.WECHAT_APP_ID
-    && !!process.env.WECHAT_APP_SECRET
-    && !!process.env.WECHAT_TOKEN;
+export async function isWeChatConfigured(): Promise<boolean> {
+  const { enabled, config } = await getProviderConfig<WeComConfig>('wecom');
+  return enabled
+    && !!config.corpId
+    && !!config.appSecret
+    && !!config.token;
 }
 
 // In-process access-token cache. WeChat issues a 2-hour token; we
@@ -67,10 +71,11 @@ async function fetchAccessToken(): Promise<string> {
   if (cachedToken && cachedToken.expiresAt > now + 5 * 60_000) {
     return cachedToken.token;
   }
-  const appId = process.env.WECHAT_APP_ID;
-  const appSecret = process.env.WECHAT_APP_SECRET;
-  if (!appId || !appSecret) throw new Error('WECHAT_APP_ID + WECHAT_APP_SECRET not set');
-  const url = `${apiBase()}/cgi-bin/token?grant_type=client_credential&appid=${encodeURIComponent(appId)}&secret=${encodeURIComponent(appSecret)}`;
+  const { config } = await getProviderConfig<WeComConfig>('wecom');
+  const appId = config.corpId;
+  const appSecret = config.appSecret;
+  if (!appId || !appSecret) throw new Error('WeCom corpId + appSecret not set');
+  const url = `${await apiBase()}/cgi-bin/token?grant_type=client_credential&appid=${encodeURIComponent(appId)}&secret=${encodeURIComponent(appSecret)}`;
   const res = await fetch(url);
   const json: any = await res.json().catch(() => ({}));
   if (!res.ok || !json?.access_token) {
@@ -93,7 +98,7 @@ export async function sendWeChatMessage(msg: OutboundMessage): Promise<SendResul
       return { ok: false, error: 'WeChat recipient must be an OpenID — link the user via the Connect WeChat flow first.' };
     }
     const token = await fetchAccessToken();
-    const url = `${apiBase()}/cgi-bin/message/custom/send?access_token=${encodeURIComponent(token)}`;
+    const url = `${await apiBase()}/cgi-bin/message/custom/send?access_token=${encodeURIComponent(token)}`;
     const res = await fetch(url, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json; charset=utf-8' },
@@ -139,7 +144,7 @@ export async function createWeChatLoginQr(args: {
   expireSeconds: number;
 }): Promise<{ ticket: string; qrUrl: string; expiresAt: Date }> {
   const token = await fetchAccessToken();
-  const url = `${apiBase()}/cgi-bin/qrcode/create?access_token=${encodeURIComponent(token)}`;
+  const url = `${await apiBase()}/cgi-bin/qrcode/create?access_token=${encodeURIComponent(token)}`;
   const clamped = Math.min(2_592_000, Math.max(60, Math.floor(args.expireSeconds)));
   const res = await fetch(url, {
     method: 'POST',
@@ -168,13 +173,17 @@ export async function createWeChatLoginQr(args: {
  *
  * Algorithm: sha1(sort([token, timestamp, nonce]).join('')) === signature.
  */
-export function verifyWeChatSignature(args: {
+export async function verifyWeChatSignature(args: {
   signature: string;
   timestamp: string;
   nonce: string;
   token?: string;
-}): boolean {
-  const token = args.token || process.env.WECHAT_TOKEN;
+}): Promise<boolean> {
+  let token = args.token;
+  if (!token) {
+    const { config } = await getProviderConfig<WeComConfig>('wecom');
+    token = config.token;
+  }
   if (!token) return false;
   const parts = [token, String(args.timestamp), String(args.nonce)].sort();
   const expected = crypto.createHash('sha1').update(parts.join('')).digest('hex');

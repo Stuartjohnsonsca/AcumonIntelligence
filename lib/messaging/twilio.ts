@@ -22,38 +22,40 @@
 
 import crypto from 'crypto';
 import type { OutboundMessage, SendResult } from './types';
+import { getProviderConfig, type TwilioConfig } from './provider-config';
 
 const TWILIO_API_BASE = 'https://api.twilio.com/2010-04-01';
 
-function getCreds() {
-  const sid = process.env.TWILIO_ACCOUNT_SID;
-  const token = process.env.TWILIO_AUTH_TOKEN;
-  if (!sid || !token) {
-    throw new Error('Twilio is not configured: set TWILIO_ACCOUNT_SID and TWILIO_AUTH_TOKEN');
+async function getCreds() {
+  const { config } = await getProviderConfig<TwilioConfig>('twilio');
+  if (!config.accountSid || !config.authToken) {
+    throw new Error('Twilio is not configured: set credentials in SuperAdmin → Messaging Providers or via TWILIO_* env vars.');
   }
-  return { sid, token };
+  return { sid: config.accountSid, token: config.authToken };
 }
 
-/** True when Twilio creds exist — callers gate so dev runs without
- *  the keys still log + persist messages as "queued / not sent". */
-export function isTwilioConfigured(): boolean {
-  return !!process.env.TWILIO_ACCOUNT_SID && !!process.env.TWILIO_AUTH_TOKEN;
+/** True when Twilio creds exist — DB config wins; env vars are the
+ *  fallback. Async because the DB lookup is async; sync callers
+ *  should await. */
+export async function isTwilioConfigured(): Promise<boolean> {
+  const { enabled, config } = await getProviderConfig<TwilioConfig>('twilio');
+  return enabled && !!config.accountSid && !!config.authToken;
 }
 
 /** Send an SMS via Twilio Messages API. */
 export async function sendTwilioSms(msg: OutboundMessage): Promise<SendResult> {
-  const from = process.env.TWILIO_SMS_FROM;
-  if (!from) return { ok: false, error: 'TWILIO_SMS_FROM is not set' };
-  return await postMessage({ From: from, To: msg.to, Body: msg.body, MediaUrls: msg.mediaUrls });
+  const { config } = await getProviderConfig<TwilioConfig>('twilio');
+  if (!config.smsFrom) return { ok: false, error: 'Twilio SMS sender not set (smsFrom).' };
+  return await postMessage({ From: config.smsFrom, To: msg.to, Body: msg.body, MediaUrls: msg.mediaUrls });
 }
 
 /** Send a WhatsApp message via Twilio. Both From and To must be
  *  prefixed with `whatsapp:`; the helper adds the prefix when the
  *  caller passes a plain E.164 number. */
 export async function sendTwilioWhatsApp(msg: OutboundMessage): Promise<SendResult> {
-  const fromRaw = process.env.TWILIO_WHATSAPP_FROM;
-  if (!fromRaw) return { ok: false, error: 'TWILIO_WHATSAPP_FROM is not set' };
-  const From = fromRaw.startsWith('whatsapp:') ? fromRaw : `whatsapp:${fromRaw}`;
+  const { config } = await getProviderConfig<TwilioConfig>('twilio');
+  if (!config.whatsappFrom) return { ok: false, error: 'Twilio WhatsApp sender not set (whatsappFrom).' };
+  const From = config.whatsappFrom.startsWith('whatsapp:') ? config.whatsappFrom : `whatsapp:${config.whatsappFrom}`;
   const To = msg.to.startsWith('whatsapp:') ? msg.to : `whatsapp:${msg.to}`;
   return await postMessage({ From, To, Body: msg.body, MediaUrls: msg.mediaUrls });
 }
@@ -69,7 +71,7 @@ async function postMessage(args: {
   MediaUrls?: string[];
 }): Promise<SendResult> {
   try {
-    const { sid, token } = getCreds();
+    const { sid, token } = await getCreds();
     const params = new URLSearchParams();
     params.set('From', args.From);
     params.set('To', args.To);
@@ -120,13 +122,17 @@ async function postMessage(args: {
  * object. The provided URL must be the one Twilio was configured
  * with — typically your https://… webhook URL.
  */
-export function verifyTwilioSignature(args: {
+export async function verifyTwilioSignature(args: {
   url: string;
   params: Record<string, string>;
   signature: string;
   authToken?: string;
-}): boolean {
-  const token = args.authToken || process.env.TWILIO_AUTH_TOKEN;
+}): Promise<boolean> {
+  let token = args.authToken;
+  if (!token) {
+    const { config } = await getProviderConfig<TwilioConfig>('twilio');
+    token = config.authToken;
+  }
   if (!token) return false;
   const sortedKeys = Object.keys(args.params).sort();
   let data = args.url;

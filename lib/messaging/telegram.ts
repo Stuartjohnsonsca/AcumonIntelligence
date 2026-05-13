@@ -19,24 +19,29 @@
  */
 
 import type { OutboundMessage, SendResult } from './types';
+import { getProviderConfig, type TelegramConfig } from './provider-config';
 
-function getToken(): string {
-  const t = process.env.TELEGRAM_BOT_TOKEN;
-  if (!t) throw new Error('Telegram is not configured: set TELEGRAM_BOT_TOKEN');
-  return t;
+async function getToken(): Promise<string> {
+  const { config } = await getProviderConfig<TelegramConfig>('telegram');
+  if (!config.botToken) {
+    throw new Error('Telegram is not configured: set credentials in SuperAdmin → Messaging Providers or via TELEGRAM_BOT_TOKEN.');
+  }
+  return config.botToken;
 }
 
-/** True when the bot token is configured. Used by the orchestrator
- *  to skip Telegram sends in dev runs without the env var. */
-export function isTelegramConfigured(): boolean {
-  return !!process.env.TELEGRAM_BOT_TOKEN;
+/** True when the bot token is configured. Async — DB-first via the
+ *  provider-config layer, env-fallback. */
+export async function isTelegramConfigured(): Promise<boolean> {
+  const { enabled, config } = await getProviderConfig<TelegramConfig>('telegram');
+  return enabled && !!config.botToken;
 }
 
 /** Bot's public @username — required to build deep-links for the
  *  "Connect Telegram" UX. Falls back to undefined when not set;
  *  callers should show a friendly "Telegram not yet enabled" hint. */
-export function telegramBotUsername(): string | undefined {
-  return process.env.TELEGRAM_BOT_USERNAME || undefined;
+export async function telegramBotUsername(): Promise<string | undefined> {
+  const { config } = await getProviderConfig<TelegramConfig>('telegram');
+  return config.botUsername || undefined;
 }
 
 /**
@@ -45,8 +50,8 @@ export function telegramBotUsername(): string | undefined {
  * client_portal_users.telegram_link_code; the bot's webhook resolves
  * it on /start.
  */
-export function buildTelegramConnectUrl(code: string): string | undefined {
-  const username = telegramBotUsername();
+export async function buildTelegramConnectUrl(code: string): Promise<string | undefined> {
+  const username = await telegramBotUsername();
   if (!username) return undefined;
   return `https://t.me/${username}?start=${encodeURIComponent(code)}`;
 }
@@ -62,7 +67,7 @@ export function buildTelegramConnectUrl(code: string): string | undefined {
  */
 export async function sendTelegramMessage(msg: OutboundMessage): Promise<SendResult> {
   try {
-    const token = getToken();
+    const token = await getToken();
     const chatId = msg.to;
     if (!/^-?\d+$/.test(chatId)) {
       return { ok: false, error: 'Telegram chat_id must be numeric — link the user via /start first.' };
@@ -108,8 +113,9 @@ export async function sendTelegramMessage(msg: OutboundMessage): Promise<SendRes
  * `X-Telegram-Bot-Api-Secret-Token`; comparing constant-time keeps
  * spoofers out without HMAC.
  */
-export function verifyTelegramSecret(headerValue: string | null | undefined): boolean {
-  const expected = process.env.TELEGRAM_WEBHOOK_SECRET;
+export async function verifyTelegramSecret(headerValue: string | null | undefined): Promise<boolean> {
+  const { config } = await getProviderConfig<TelegramConfig>('telegram');
+  const expected = config.webhookSecret;
   if (!expected) return false;
   if (!headerValue) return false;
   if (headerValue.length !== expected.length) return false;

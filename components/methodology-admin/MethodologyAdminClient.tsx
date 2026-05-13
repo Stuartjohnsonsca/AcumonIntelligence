@@ -1,7 +1,7 @@
 'use client';
 
 import Link from 'next/link';
-import { BookOpen, Settings, FileText, ClipboardCheck, Users, FileStack, Mail, AlertTriangle, ShieldAlert, Brain, ShieldCheck, ShieldOff, Search, Gauge, Trash2, Cloud } from 'lucide-react';
+import { BookOpen, Settings, FileText, ClipboardCheck, Users, FileStack, Mail, AlertTriangle, ShieldAlert, Brain, ShieldCheck, ShieldOff, Search, Gauge, Trash2, Cloud, MessageSquare } from 'lucide-react';
 
 // Map href → registry howto-id so the global guide can point at any tile.
 // Keep these in sync with HOWTO_ELEMENTS in lib/howto/registry.ts.
@@ -123,6 +123,14 @@ const TILE_GROUPS: TileGroup[] = [
         icon: Cloud,
         color: 'bg-sky-50 border-sky-200 hover:bg-sky-100',
         iconColor: 'text-sky-600',
+      },
+      {
+        title: 'Messaging Providers',
+        description: 'Twilio / sent.dm / Telegram / WeCom credentials. Super Admin only — drives every outbound SMS, WhatsApp, Telegram and WeChat notification.',
+        href: '/methodology-admin/messaging-providers',
+        icon: MessageSquare,
+        color: 'bg-emerald-50 border-emerald-200 hover:bg-emerald-100',
+        iconColor: 'text-emerald-600',
       },
     ],
   },

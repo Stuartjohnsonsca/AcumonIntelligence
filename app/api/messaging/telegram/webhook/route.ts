@@ -25,6 +25,7 @@ import {
   verifyTelegramSecret,
   isTelegramConfigured,
 } from '@/lib/messaging/telegram';
+import { getProviderConfig, type TelegramConfig } from '@/lib/messaging/provider-config';
 import {
   findPortalUserByAddress,
   recordInboundMessage,
@@ -46,12 +47,12 @@ interface TelegramUpdate {
 }
 
 export async function POST(req: NextRequest) {
-  if (!isTelegramConfigured()) {
+  if (!(await isTelegramConfigured())) {
     return NextResponse.json({ ok: true }); // 200 so Telegram doesn't retry
   }
 
   const secret = req.headers.get('x-telegram-bot-api-secret-token');
-  if (!verifyTelegramSecret(secret)) {
+  if (!(await verifyTelegramSecret(secret))) {
     console.warn('[telegram webhook] secret token mismatch');
     // 401 prompts Telegram to retry — once setWebhook is correct this
     // never fires; logging the rejection is enough for triage.
@@ -85,7 +86,7 @@ export async function POST(req: NextRequest) {
     if (result) {
       // Confirm to the user inside Telegram so they know the link
       // worked. We don't fail the webhook if the send errors.
-      const token = process.env.TELEGRAM_BOT_TOKEN!;
+      const token = (await getProviderConfig<TelegramConfig>('telegram')).config.botToken!;
       await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -95,7 +96,7 @@ export async function POST(req: NextRequest) {
         }),
       }).catch(() => {});
     } else {
-      const token = process.env.TELEGRAM_BOT_TOKEN!;
+      const token = (await getProviderConfig<TelegramConfig>('telegram')).config.botToken!;
       await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },

@@ -41,7 +41,7 @@ export async function POST(req: NextRequest) {
     ? `${overrideBase.replace(/\/+$/, '')}/api/messaging/twilio/webhook`
     : req.url;
   const signature = req.headers.get('x-twilio-signature') || '';
-  if (!verifyTwilioSignature({ url, params, signature })) {
+  if (!(await verifyTwilioSignature({ url, params, signature }))) {
     // We log + 403 rather than silently dropping so misconfiguration
     // is obvious from the Twilio debugger.
     console.warn('[twilio webhook] signature verification failed', { url });

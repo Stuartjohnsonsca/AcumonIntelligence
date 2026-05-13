@@ -159,32 +159,39 @@ export async function notifyPortalUser(args: NotifyArgs): Promise<NotifyResult> 
     // doesn't cover Telegram.
     let result: SendResult;
     let fallbackUsed = false;
+    // Resolve configured flags up front so the branch below stays
+    // sync-looking. Avoids `await` inside each if-check making the
+    // logic harder to read.
+    const [twilioOn, sentDmOn, telegramOn, wecomRobotOn, wechatOaOn] = await Promise.all([
+      isTwilioConfigured(),
+      isSentDmConfigured(),
+      isTelegramConfigured(),
+      isWeComRobotConfigured(),
+      isWeChatConfigured(),
+    ]);
     try {
       if (channel === 'sms') {
         const outbound = { channel, body: args.body, to, mediaUrls: args.mediaUrls };
-        if (isSentDmConfigured()) {
+        if (sentDmOn) {
           result = await sendSentDmSms(outbound);
-          if (!result.ok && isTwilioConfigured()) {
+          if (!result.ok && twilioOn) {
             console.warn(`[messaging] sent.dm SMS failed (${result.error}); falling back to Twilio`);
             const fallback = await sendTwilioSms(outbound);
             if (fallback.ok) fallbackUsed = true;
-            // Preserve the sent.dm error context on the providerRaw so
-            // we can still see why the primary failed even after a
-            // successful fallback.
             result = fallback.ok
               ? { ...fallback, providerRaw: { primary: result.providerRaw, fallback: fallback.providerRaw } }
               : { ok: false, error: `sent.dm: ${result.error}; twilio: ${fallback.error}` };
           }
         } else {
-          result = isTwilioConfigured()
+          result = twilioOn
             ? await sendTwilioSms(outbound)
             : { ok: false, error: 'No SMS provider configured (need sent.dm or Twilio)' };
         }
       } else if (channel === 'whatsapp') {
         const outbound = { channel, body: args.body, to, mediaUrls: args.mediaUrls };
-        if (isSentDmConfigured()) {
+        if (sentDmOn) {
           result = await sendSentDmWhatsApp(outbound);
-          if (!result.ok && isTwilioConfigured()) {
+          if (!result.ok && twilioOn) {
             console.warn(`[messaging] sent.dm WhatsApp failed (${result.error}); falling back to Twilio`);
             const fallback = await sendTwilioWhatsApp(outbound);
             if (fallback.ok) fallbackUsed = true;
@@ -193,12 +200,12 @@ export async function notifyPortalUser(args: NotifyArgs): Promise<NotifyResult> 
               : { ok: false, error: `sent.dm: ${result.error}; twilio: ${fallback.error}` };
           }
         } else {
-          result = isTwilioConfigured()
+          result = twilioOn
             ? await sendTwilioWhatsApp(outbound)
             : { ok: false, error: 'No WhatsApp provider configured (need sent.dm or Twilio)' };
         }
       } else if (channel === 'telegram') {
-        result = isTelegramConfigured()
+        result = telegramOn
           ? await sendTelegramMessage({ channel, body: args.body, to, mediaUrls: args.mediaUrls })
           : { ok: false, error: 'Telegram not configured' };
       } else {
@@ -213,9 +220,9 @@ export async function notifyPortalUser(args: NotifyArgs): Promise<NotifyResult> 
         //   3. Failed with a friendly error if neither is configured.
         // WeCom takes precedence because it's the path most UK firms
         // can actually onboard without a mainland phone number.
-        if (isWeComRobotConfigured()) {
+        if (wecomRobotOn) {
           result = await sendWeComGroupMessage({ channel, body: args.body, to, mediaUrls: args.mediaUrls });
-        } else if (isWeChatConfigured()) {
+        } else if (wechatOaOn) {
           result = await sendWeChatMessage({ channel, body: args.body, to, mediaUrls: args.mediaUrls });
         } else {
           result = { ok: false, error: 'Neither WeCom nor WeChat Official Account configured' };

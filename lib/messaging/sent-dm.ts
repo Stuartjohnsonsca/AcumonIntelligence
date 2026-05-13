@@ -25,19 +25,22 @@
  */
 
 import type { MessageChannel, OutboundMessage, SendResult } from './types';
+import { getProviderConfig, type SentDmConfig } from './provider-config';
 
 const SENT_DM_API_BASE = 'https://api.sent.dm';
 
-export function isSentDmConfigured(): boolean {
-  return !!process.env.SENT_DM_API_KEY && !!process.env.SENT_DM_TEMPLATE_ID;
+export async function isSentDmConfigured(): Promise<boolean> {
+  const { enabled, config } = await getProviderConfig<SentDmConfig>('sent_dm');
+  return enabled && !!config.apiKey && !!config.templateId;
 }
 
 /** Channel-specific template-id overrides. Falls back to the shared
- *  SENT_DM_TEMPLATE_ID so most firms only need to configure one. */
-function templateIdForChannel(channel: 'sms' | 'whatsapp'): string | undefined {
-  if (channel === 'sms' && process.env.SENT_DM_SMS_TEMPLATE_ID) return process.env.SENT_DM_SMS_TEMPLATE_ID;
-  if (channel === 'whatsapp' && process.env.SENT_DM_WHATSAPP_TEMPLATE_ID) return process.env.SENT_DM_WHATSAPP_TEMPLATE_ID;
-  return process.env.SENT_DM_TEMPLATE_ID;
+ *  templateId so most firms only need to configure one. */
+async function templateIdForChannel(channel: 'sms' | 'whatsapp'): Promise<string | undefined> {
+  const { config } = await getProviderConfig<SentDmConfig>('sent_dm');
+  if (channel === 'sms' && config.smsTemplateId) return config.smsTemplateId;
+  if (channel === 'whatsapp' && config.whatsappTemplateId) return config.whatsappTemplateId;
+  return config.templateId;
 }
 
 /** Send an SMS via sent.dm using the configured template. */
@@ -52,9 +55,10 @@ export async function sendSentDmWhatsApp(msg: OutboundMessage): Promise<SendResu
 
 async function sendSentDmMessage(channel: 'sms' | 'whatsapp', msg: OutboundMessage): Promise<SendResult> {
   try {
-    const apiKey = process.env.SENT_DM_API_KEY;
-    if (!apiKey) return { ok: false, error: 'SENT_DM_API_KEY is not set' };
-    const templateId = templateIdForChannel(channel);
+    const { config } = await getProviderConfig<SentDmConfig>('sent_dm');
+    const apiKey = config.apiKey;
+    if (!apiKey) return { ok: false, error: 'sent.dm API key not set (apiKey).' };
+    const templateId = await templateIdForChannel(channel);
     if (!templateId) return { ok: false, error: `No sent.dm template id configured for ${channel}` };
 
     // Strip the `whatsapp:` prefix Twilio's stack adds — sent.dm

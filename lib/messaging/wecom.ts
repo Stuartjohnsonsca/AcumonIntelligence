@@ -27,29 +27,40 @@
  */
 
 import type { OutboundMessage, SendResult } from './types';
+import { getProviderConfig, type WeComConfig } from './provider-config';
 
-/** True when at least one WeCom path is configured. The orchestrator
- *  uses this to decide whether the `wechat` channel can route via
- *  WeCom at all. Individual paths have their own readiness checks. */
-export function isWeComConfigured(): boolean {
-  return isWeComRobotConfigured() || isWeComAppConfigured();
+/** True when at least one WeCom path is configured. */
+export async function isWeComConfigured(): Promise<boolean> {
+  return (await isWeComRobotConfigured()) || (await isWeComAppConfigured());
 }
 
-/** Firm-wide default Group Robot webhook URL. Used when an engagement
- *  hasn't set its own. Optional — most setups will configure a
- *  per-engagement URL on Monitoring Reports / Portal Principal Setup
- *  rather than a global one. */
-export function isWeComRobotConfigured(): boolean {
-  return !!process.env.WECOM_GROUP_WEBHOOK_URL;
+/** Group Robot webhook URL (firm-wide default). */
+export async function isWeComRobotConfigured(): Promise<boolean> {
+  const { enabled, config } = await getProviderConfig<WeComConfig>('wecom');
+  return enabled && !!config.groupWebhookUrl;
 }
 
-/** Internal App Message path — for sending to the firm's own WeCom
- *  users. Out-of-scope for client-portal v1 but plumbed so it's a
- *  short follow-up when the firm wants it. */
-export function isWeComAppConfigured(): boolean {
-  return !!process.env.WECOM_CORP_ID
-    && !!process.env.WECOM_AGENT_ID
-    && !!process.env.WECOM_APP_SECRET;
+/** Internal / Pro App Message path. */
+export async function isWeComAppConfigured(): Promise<boolean> {
+  const { enabled, config } = await getProviderConfig<WeComConfig>('wecom');
+  return enabled && !!config.corpId && !!config.agentId && !!config.appSecret;
+}
+
+/** WeCom Pro External Contact path — requires External Contact
+ *  secret (or App secret fallback) on top of basic creds, and the
+ *  SuperAdmin must have selected the external-contact-pro mode. */
+export async function isWeComExternalContactConfigured(): Promise<boolean> {
+  const { enabled, config } = await getProviderConfig<WeComConfig>('wecom');
+  return enabled
+    && config.mode === 'external_contact_pro'
+    && !!config.corpId
+    && !!(config.externalContactSecret || config.appSecret);
+}
+
+/** Which WeCom mode is selected by the SuperAdmin. */
+export async function getWeComMode(): Promise<'group_robot' | 'external_contact_pro'> {
+  const { config } = await getProviderConfig<WeComConfig>('wecom');
+  return config.mode === 'external_contact_pro' ? 'external_contact_pro' : 'group_robot';
 }
 
 /**
@@ -71,7 +82,8 @@ export async function sendWeComGroupMessage(msg: OutboundMessage & {
     // user's `wechatOpenId` field as `to`, which for WeCom-only
     // setups will typically be unset, so the env URL becomes the
     // operative target.
-    const webhookUrl = (msg.webhookUrl || (msg.to.startsWith('https://') ? msg.to : '') || process.env.WECOM_GROUP_WEBHOOK_URL || '').trim();
+    const { config } = await getProviderConfig<WeComConfig>('wecom');
+    const webhookUrl = (msg.webhookUrl || (msg.to.startsWith('https://') ? msg.to : '') || config.groupWebhookUrl || '').trim();
     if (!webhookUrl) {
       return { ok: false, error: 'No WeCom group webhook URL configured (set WECOM_GROUP_WEBHOOK_URL or pass webhookUrl).' };
     }
@@ -114,14 +126,24 @@ export async function sendWeComGroupMessage(msg: OutboundMessage & {
 
 let cachedAppToken: { token: string; expiresAt: number } | null = null;
 
-async function fetchAppAccessToken(): Promise<string> {
+async function fetchAppAccessToken(options: { useExternalContactSecret?: boolean } = {}): Promise<string> {
   const now = Date.now();
   if (cachedAppToken && cachedAppToken.expiresAt > now + 5 * 60_000) {
     return cachedAppToken.token;
   }
-  const corpId = process.env.WECOM_CORP_ID;
-  const secret = process.env.WECOM_APP_SECRET;
-  if (!corpId || !secret) throw new Error('WECOM_CORP_ID + WECOM_APP_SECRET not set');
+  const { config } = await getProviderConfig<WeComConfig>('wecom');
+  const corpId = config.corpId;
+  // External Contact API needs its own secret (configured separately
+  // in the WeCom dashboard). If the caller asked for that path but
+  // it isn't set, fall back to the main app secret so legacy setups
+  // still work — but log a warning so the operator knows.
+  const secret = options.useExternalContactSecret
+    ? (config.externalContactSecret || config.appSecret)
+    : config.appSecret;
+  if (!corpId || !secret) throw new Error('WeCom corpId + appSecret not set');
+  if (options.useExternalContactSecret && !config.externalContactSecret) {
+    console.warn('[wecom] external-contact path using app secret; configure externalContactSecret for separate scoping.');
+  }
   const url = `https://qyapi.weixin.qq.com/cgi-bin/gettoken?corpid=${encodeURIComponent(corpId)}&corpsecret=${encodeURIComponent(secret)}`;
   const res = await fetch(url);
   const json: any = await res.json().catch(() => ({}));
@@ -143,8 +165,9 @@ export async function sendWeComAppMessage(args: {
   body: string;
 }): Promise<SendResult> {
   try {
-    const agentId = process.env.WECOM_AGENT_ID;
-    if (!agentId) return { ok: false, error: 'WECOM_AGENT_ID not set' };
+    const { config } = await getProviderConfig<WeComConfig>('wecom');
+    const agentId = config.agentId;
+    if (!agentId) return { ok: false, error: 'WeCom agentId not set' };
     const token = await fetchAppAccessToken();
     const res = await fetch(`https://qyapi.weixin.qq.com/cgi-bin/message/send?access_token=${encodeURIComponent(token)}`, {
       method: 'POST',
@@ -161,6 +184,136 @@ export async function sendWeComAppMessage(args: {
       return { ok: false, error: json?.errmsg || `HTTP ${res.status}`, providerRaw: json };
     }
     return { ok: true, providerRaw: { ...json, _via: 'wecom-app' } };
+  } catch (err: any) {
+    return { ok: false, error: err?.message || String(err) };
+  }
+}
+
+// ── WeCom Pro: External Contact API ─────────────────────────────────
+//
+// Pro-only path that lets the firm message WeChat clients 1:1 by
+// External Contact UserID (issued by WeCom when the client taps an
+// "Add as External Contact" link sent by the firm). The client sees
+// the firm employee as a regular WeChat contact; the firm sees them
+// as an External Contact in WeCom. Replies arrive via the same
+// /api/messaging/wechat/webhook route as the OA path (different event
+// type — `change_external_contact` for adds, `external_contact_*`
+// for messages).
+//
+//   https://developer.work.weixin.qq.com/document/path/91570  (External Contact API)
+
+/**
+ * Generate an "Add as External Contact" link for a portal user. The
+ * portal sends the URL via email; the client taps once, lands in
+ * WeChat with the firm employee's contact card and an "Add" button.
+ * Once accepted, the change_external_contact webhook fires with the
+ * client's external_userid and the state parameter we passed in.
+ *
+ * `userIdToAdd` is the WeCom UserID of the firm employee the client
+ * should be routed to (typically the audit team's WeCom admin or a
+ * round-robin pool). `state` is the one-time link code we use to
+ * match the eventual webhook back to the portal user.
+ */
+export async function createWeComExternalContactWay(args: {
+  userIdsToAdd: string[];
+  state: string;
+  remark?: string;
+}): Promise<{ ok: boolean; configId?: string; qrUrl?: string; error?: string }> {
+  try {
+    const token = await fetchAppAccessToken({ useExternalContactSecret: true });
+    const res = await fetch(`https://qyapi.weixin.qq.com/cgi-bin/externalcontact/add_contact_way?access_token=${encodeURIComponent(token)}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json; charset=utf-8' },
+      body: JSON.stringify({
+        // type: 1 = single-employee QR; type: 2 = multi-employee pool.
+        type: args.userIdsToAdd.length > 1 ? 2 : 1,
+        // scene: 2 = QR shared outside the firm. The other scene (1)
+        // is for QRs shown only inside the firm.
+        scene: 2,
+        style: 1,
+        remark: args.remark?.slice(0, 30) || 'Portal client',
+        skip_verify: true,        // auto-accept the add — Pro feature
+        state: args.state,        // echoed back in the webhook for binding
+        user: args.userIdsToAdd,
+      }),
+    });
+    const json: any = await res.json().catch(() => ({}));
+    if (!res.ok || (json?.errcode && json.errcode !== 0)) {
+      return { ok: false, error: json?.errmsg || `HTTP ${res.status}` };
+    }
+    return { ok: true, configId: json?.config_id, qrUrl: json?.qr_code };
+  } catch (err: any) {
+    return { ok: false, error: err?.message || String(err) };
+  }
+}
+
+/**
+ * Send a free-text "welcome" message to an External Contact. Pro-
+ * only API. Used for the FIRST send right after the client adds the
+ * employee — within Tencent's "welcome message window" (~20s) there's
+ * no 48-hour restriction. After the welcome window, subsequent sends
+ * need a pre-approved template via add_msg_template.
+ */
+export async function sendWeComWelcomeMessage(args: {
+  welcomeCode: string;
+  body: string;
+}): Promise<SendResult> {
+  try {
+    const token = await fetchAppAccessToken({ useExternalContactSecret: true });
+    const res = await fetch(`https://qyapi.weixin.qq.com/cgi-bin/externalcontact/send_welcome_msg?access_token=${encodeURIComponent(token)}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json; charset=utf-8' },
+      body: JSON.stringify({
+        welcome_code: args.welcomeCode,
+        text: { content: (args.body || '').slice(0, 3000) },
+      }),
+    });
+    const json: any = await res.json().catch(() => ({}));
+    if (!res.ok || (json?.errcode && json.errcode !== 0)) {
+      return { ok: false, error: json?.errmsg || `HTTP ${res.status}`, providerRaw: json };
+    }
+    return { ok: true, providerRaw: { ...json, _via: 'wecom-pro-welcome' } };
+  } catch (err: any) {
+    return { ok: false, error: err?.message || String(err) };
+  }
+}
+
+/**
+ * Send a template message to one or more External Contacts. The
+ * actual "ongoing notifications" API once a client is past their
+ * welcome window. Requires the template to be approved by Tencent
+ * — see docs/wecom-setup.md for the template-approval process.
+ *
+ * `chatType` of 'single' targets external_userids directly;
+ * 'group' targets external group chats by chat_id.
+ */
+export async function sendWeComExternalTemplate(args: {
+  externalUserIds: string[];
+  text: string;
+  /** WeCom Pro employee user id sending on behalf of. */
+  sender: string;
+}): Promise<SendResult> {
+  try {
+    const token = await fetchAppAccessToken({ useExternalContactSecret: true });
+    const res = await fetch(`https://qyapi.weixin.qq.com/cgi-bin/externalcontact/add_msg_template?access_token=${encodeURIComponent(token)}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json; charset=utf-8' },
+      body: JSON.stringify({
+        chat_type: 'single',
+        external_userid: args.externalUserIds,
+        sender: args.sender,
+        text: { content: (args.text || '').slice(0, 3000) },
+      }),
+    });
+    const json: any = await res.json().catch(() => ({}));
+    if (!res.ok || (json?.errcode && json.errcode !== 0)) {
+      return { ok: false, error: json?.errmsg || `HTTP ${res.status}`, providerRaw: json };
+    }
+    return {
+      ok: true,
+      providerMessageId: typeof json?.msgid === 'string' ? json.msgid : undefined,
+      providerRaw: { ...json, _via: 'wecom-pro-template' },
+    };
   } catch (err: any) {
     return { ok: false, error: err?.message || String(err) };
   }
