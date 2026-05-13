@@ -28,6 +28,11 @@ import {
   sendTwilioWhatsApp,
 } from './twilio';
 import { isTelegramConfigured, sendTelegramMessage } from './telegram';
+import {
+  isSentDmConfigured,
+  sendSentDmSms,
+  sendSentDmWhatsApp,
+} from './sent-dm';
 import type { MessageChannel, SendResult } from './types';
 
 export type { MessageChannel } from './types';
@@ -41,6 +46,7 @@ export {
   buildTelegramConnectUrl,
   telegramBotUsername,
 } from './telegram';
+export { isSentDmConfigured } from './sent-dm';
 
 interface NotifyArgs {
   portalUserId: string;
@@ -104,16 +110,51 @@ export async function notifyPortalUser(args: NotifyArgs): Promise<NotifyResult> 
     if (channel === 'telegram') to = user.telegramChatId!;
     if (channel === 'sms') to = user.smsNumber!;
 
+    // SMS + WhatsApp go through sent.dm first (unified messaging API,
+    // template-based) and fall back to Twilio on any failure so a
+    // sent.dm template-not-approved / quota-exhausted incident doesn't
+    // silently drop messages. Telegram remains direct Bot API — sent.dm
+    // doesn't cover Telegram.
     let result: SendResult;
+    let fallbackUsed = false;
     try {
       if (channel === 'sms') {
-        result = isTwilioConfigured()
-          ? await sendTwilioSms({ channel, body: args.body, to, mediaUrls: args.mediaUrls })
-          : { ok: false, error: 'Twilio not configured' };
+        const outbound = { channel, body: args.body, to, mediaUrls: args.mediaUrls };
+        if (isSentDmConfigured()) {
+          result = await sendSentDmSms(outbound);
+          if (!result.ok && isTwilioConfigured()) {
+            console.warn(`[messaging] sent.dm SMS failed (${result.error}); falling back to Twilio`);
+            const fallback = await sendTwilioSms(outbound);
+            if (fallback.ok) fallbackUsed = true;
+            // Preserve the sent.dm error context on the providerRaw so
+            // we can still see why the primary failed even after a
+            // successful fallback.
+            result = fallback.ok
+              ? { ...fallback, providerRaw: { primary: result.providerRaw, fallback: fallback.providerRaw } }
+              : { ok: false, error: `sent.dm: ${result.error}; twilio: ${fallback.error}` };
+          }
+        } else {
+          result = isTwilioConfigured()
+            ? await sendTwilioSms(outbound)
+            : { ok: false, error: 'No SMS provider configured (need sent.dm or Twilio)' };
+        }
       } else if (channel === 'whatsapp') {
-        result = isTwilioConfigured()
-          ? await sendTwilioWhatsApp({ channel, body: args.body, to, mediaUrls: args.mediaUrls })
-          : { ok: false, error: 'Twilio not configured' };
+        const outbound = { channel, body: args.body, to, mediaUrls: args.mediaUrls };
+        if (isSentDmConfigured()) {
+          result = await sendSentDmWhatsApp(outbound);
+          if (!result.ok && isTwilioConfigured()) {
+            console.warn(`[messaging] sent.dm WhatsApp failed (${result.error}); falling back to Twilio`);
+            const fallback = await sendTwilioWhatsApp(outbound);
+            if (fallback.ok) fallbackUsed = true;
+            result = fallback.ok
+              ? { ...fallback, providerRaw: { primary: result.providerRaw, fallback: fallback.providerRaw } }
+              : { ok: false, error: `sent.dm: ${result.error}; twilio: ${fallback.error}` };
+          }
+        } else {
+          result = isTwilioConfigured()
+            ? await sendTwilioWhatsApp(outbound)
+            : { ok: false, error: 'No WhatsApp provider configured (need sent.dm or Twilio)' };
+        }
       } else {
         result = isTelegramConfigured()
           ? await sendTelegramMessage({ channel, body: args.body, to, mediaUrls: args.mediaUrls })
@@ -123,6 +164,12 @@ export async function notifyPortalUser(args: NotifyArgs): Promise<NotifyResult> 
       result = { ok: false, error: err?.message || String(err) };
     }
     results[channel] = result;
+    if (fallbackUsed) {
+      // Tag the providerRaw so log readers can spot which channel
+      // ran through the fallback. Doesn't affect the SendResult ok
+      // flag — the message still got out.
+      result.providerRaw = { ...(typeof result.providerRaw === 'object' && result.providerRaw ? result.providerRaw : {}), _fallback: 'twilio' };
+    }
 
     // Persist the attempt regardless of success. Failed rows are
     // valuable for chasing up flaky channels and for re-send tooling.
