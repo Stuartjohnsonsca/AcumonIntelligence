@@ -94,6 +94,9 @@ function MyDetailsContent() {
             telegramOptIn: !!cd?.channels?.telegramOptIn,
             smsNumber: cd?.channels?.smsNumber ?? null,
             smsOptIn: !!cd?.channels?.smsOptIn,
+            wechatOpenId: cd?.channels?.wechatOpenId ?? null,
+            wechatNickname: cd?.channels?.wechatNickname ?? null,
+            wechatOptIn: !!cd?.channels?.wechatOptIn,
           });
         }
       } catch {}

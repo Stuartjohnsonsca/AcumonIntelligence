@@ -60,6 +60,7 @@ export async function PUT(req: Request, ctx: Ctx) {
   if (typeof body.telegramOptIn === 'boolean') patch.telegramOptIn = body.telegramOptIn;
   if ('smsNumber' in body) patch.smsNumber = normalisePhone(body.smsNumber);
   if (typeof body.smsOptIn === 'boolean') patch.smsOptIn = body.smsOptIn;
+  if (typeof body.wechatOptIn === 'boolean') patch.wechatOptIn = body.wechatOptIn;
 
   if (Object.keys(patch).length === 0) {
     return NextResponse.json({ error: 'No updatable fields provided' }, { status: 400 });
@@ -72,7 +73,7 @@ export async function PUT(req: Request, ctx: Ctx) {
   // very next portal request. We never set telegramChatId here — it
   // only flips on the bot's /start handshake.
   const channelPatch: Record<string, any> = {};
-  for (const k of ['whatsappNumber', 'whatsappOptIn', 'telegramHandle', 'telegramOptIn', 'smsNumber', 'smsOptIn'] as const) {
+  for (const k of ['whatsappNumber', 'whatsappOptIn', 'telegramHandle', 'telegramOptIn', 'smsNumber', 'smsOptIn', 'wechatOptIn'] as const) {
     if (k in patch) channelPatch[k] = patch[k];
   }
   if (row.portalUserId && Object.keys(channelPatch).length > 0) {

@@ -1155,6 +1155,17 @@ model ClientPortalUser {
   smsNumber          String?   @map("sms_number")
   smsOptIn           Boolean   @default(false) @map("sms_opt_in")
 
+  // WeChat — clients follow the firm's Official Account by scanning a
+  // QR. The Account's webhook fires when the scan happens with the
+  // user's OpenID (per-app identifier; the same person has different
+  // OpenIDs on different Accounts) which we then bind to this portal
+  // user via the one-time scene code below.
+  wechatOpenId          String?   @map("wechat_open_id")
+  wechatNickname        String?   @map("wechat_nickname")
+  wechatOptIn           Boolean   @default(false) @map("wechat_opt_in")
+  wechatLinkCode        String?   @unique @map("wechat_link_code")
+  wechatLinkExpiresAt   DateTime? @map("wechat_link_expires_at")
+
   createdAt          DateTime  @default(now()) @map("created_at")
   updatedAt          DateTime  @updatedAt @map("updated_at")
 
@@ -1171,6 +1182,7 @@ model ClientPortalUser {
   @@index([whatsappNumber])
   @@index([smsNumber])
   @@index([telegramChatId])
+  @@index([wechatOpenId])
   @@map("client_portal_users")
 }
 
@@ -1313,6 +1325,11 @@ model ClientPortalStaffMember {
   telegramOptIn  Boolean @default(false) @map("telegram_opt_in")
   smsNumber      String? @map("sms_number")
   smsOptIn       Boolean @default(false) @map("sms_opt_in")
+  // WeChat is openId-only — there's no phone-style "address" the
+  // Principal can pre-fill. We just track the opt-in flag here so the
+  // setup UI can show "WeChat: opted-in / not-opted-in". The actual
+  // openId is captured when the user scans the QR from the portal.
+  wechatOptIn    Boolean @default(false) @map("wechat_opt_in")
 
   createdAt                 DateTime @default(now()) @map("created_at")
   updatedAt                 DateTime @updatedAt @map("updated_at")

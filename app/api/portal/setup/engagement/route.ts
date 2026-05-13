@@ -67,6 +67,7 @@ export async function GET(req: Request) {
       telegramOptIn: true,
       smsNumber: true,
       smsOptIn: true,
+      wechatOptIn: true,
     },
     orderBy: [{ accessConfirmed: 'desc' }, { name: 'asc' }],
   }).catch(() => [] as any[]);

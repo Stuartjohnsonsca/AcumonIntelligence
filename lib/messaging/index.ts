@@ -33,6 +33,7 @@ import {
   sendSentDmSms,
   sendSentDmWhatsApp,
 } from './sent-dm';
+import { isWeChatConfigured, sendWeChatMessage } from './wechat';
 import type { MessageChannel, SendResult } from './types';
 
 export type { MessageChannel } from './types';
@@ -47,6 +48,12 @@ export {
   telegramBotUsername,
 } from './telegram';
 export { isSentDmConfigured } from './sent-dm';
+export {
+  isWeChatConfigured,
+  verifyWeChatSignature,
+  parseWeChatXml,
+  createWeChatLoginQr,
+} from './wechat';
 
 interface NotifyArgs {
   portalUserId: string;
@@ -84,6 +91,8 @@ export async function notifyPortalUser(args: NotifyArgs): Promise<NotifyResult> 
       telegramOptIn: true,
       smsNumber: true,
       smsOptIn: true,
+      wechatOpenId: true,
+      wechatOptIn: true,
     },
   });
   if (!user) {
@@ -102,6 +111,9 @@ export async function notifyPortalUser(args: NotifyArgs): Promise<NotifyResult> 
   if ((!filter || filter.has('sms')) && user.smsOptIn && user.smsNumber) {
     channels.push('sms');
   }
+  if ((!filter || filter.has('wechat')) && user.wechatOptIn && user.wechatOpenId) {
+    channels.push('wechat');
+  }
 
   const results: Partial<Record<MessageChannel, SendResult>> = {};
   for (const channel of channels) {
@@ -109,6 +121,7 @@ export async function notifyPortalUser(args: NotifyArgs): Promise<NotifyResult> 
     if (channel === 'whatsapp') to = user.whatsappNumber!;
     if (channel === 'telegram') to = user.telegramChatId!;
     if (channel === 'sms') to = user.smsNumber!;
+    if (channel === 'wechat') to = user.wechatOpenId!;
 
     // SMS + WhatsApp go through sent.dm first (unified messaging API,
     // template-based) and fall back to Twilio on any failure so a
@@ -155,10 +168,19 @@ export async function notifyPortalUser(args: NotifyArgs): Promise<NotifyResult> 
             ? await sendTwilioWhatsApp(outbound)
             : { ok: false, error: 'No WhatsApp provider configured (need sent.dm or Twilio)' };
         }
-      } else {
+      } else if (channel === 'telegram') {
         result = isTelegramConfigured()
           ? await sendTelegramMessage({ channel, body: args.body, to, mediaUrls: args.mediaUrls })
           : { ok: false, error: 'Telegram not configured' };
+      } else {
+        // wechat — sends customer-service text via the bound OpenID.
+        // Subject to WeChat's 48-hour-since-last-interaction rule;
+        // failures land as 'failed' rows in portal_messages so the
+        // firm can prompt the user to send any message to the Account
+        // first.
+        result = isWeChatConfigured()
+          ? await sendWeChatMessage({ channel, body: args.body, to, mediaUrls: args.mediaUrls })
+          : { ok: false, error: 'WeChat not configured' };
       }
     } catch (err: any) {
       result = { ok: false, error: err?.message || String(err) };
@@ -259,8 +281,11 @@ export async function findPortalUserByAddress(
   if (channel === 'sms') {
     return prisma.clientPortalUser.findFirst({ where: { smsNumber: from }, select: { id: true, clientId: true } });
   }
-  // Telegram — `from` is the numeric chat_id.
-  return prisma.clientPortalUser.findFirst({ where: { telegramChatId: from }, select: { id: true, clientId: true } });
+  if (channel === 'telegram') {
+    return prisma.clientPortalUser.findFirst({ where: { telegramChatId: from }, select: { id: true, clientId: true } });
+  }
+  // wechat — `from` is the user's OpenID.
+  return prisma.clientPortalUser.findFirst({ where: { wechatOpenId: from }, select: { id: true, clientId: true } });
 }
 
 /**
@@ -312,6 +337,56 @@ export async function redeemTelegramLinkCode(args: {
       telegramOptIn: true,
       telegramLinkCode: null,
       telegramLinkExpiresAt: null,
+    },
+  });
+  return { portalUserId: user.id, clientId: user.clientId };
+}
+
+/**
+ * Generate a one-time WeChat link code. The caller embeds it as the
+ * `sceneStr` on a parametric QR; when the user scans + follows, the
+ * Account's webhook fires with this code and the bound OpenID, at
+ * which point redeemWeChatLinkCode() turns it into a persistent
+ * binding. 30-minute expiry mirrors Telegram.
+ */
+export async function generateWeChatLinkCode(portalUserId: string): Promise<string> {
+  const code = randomCode();
+  const expiresAt = new Date(Date.now() + 30 * 60_000);
+  await prisma.clientPortalUser.update({
+    where: { id: portalUserId },
+    data: { wechatLinkCode: code, wechatLinkExpiresAt: expiresAt },
+  });
+  return code;
+}
+
+/**
+ * Resolve a WeChat `subscribe` / `SCAN` event's sceneStr to a portal
+ * user and persist their OpenID. Called from the WeChat webhook.
+ *
+ * On success: link-code fields cleared, OpenID stored, wechatOptIn
+ * flipped true, returns the bound user ids.
+ */
+export async function redeemWeChatLinkCode(args: {
+  code: string;
+  openId: string;
+  nickname?: string;
+}): Promise<{ portalUserId: string; clientId: string } | null> {
+  const user = await prisma.clientPortalUser.findUnique({
+    where: { wechatLinkCode: args.code },
+    select: { id: true, clientId: true, wechatLinkExpiresAt: true },
+  });
+  if (!user) return null;
+  if (user.wechatLinkExpiresAt && user.wechatLinkExpiresAt < new Date()) {
+    return null;
+  }
+  await prisma.clientPortalUser.update({
+    where: { id: user.id },
+    data: {
+      wechatOpenId: args.openId,
+      wechatNickname: args.nickname ?? undefined,
+      wechatOptIn: true,
+      wechatLinkCode: null,
+      wechatLinkExpiresAt: null,
     },
   });
   return { portalUserId: user.id, clientId: user.clientId };

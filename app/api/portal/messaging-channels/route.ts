@@ -31,6 +31,10 @@ export async function GET(req: Request) {
       telegramLinkExpiresAt: true,
       smsNumber: true,
       smsOptIn: true,
+      wechatOpenId: true,
+      wechatNickname: true,
+      wechatOptIn: true,
+      wechatLinkExpiresAt: true,
     },
   });
   return NextResponse.json({ channels: user });
@@ -58,6 +62,10 @@ export async function PUT(req: Request) {
     patch.smsNumber = normalisePhone(body.smsNumber);
   }
   if (typeof body.smsOptIn === 'boolean') patch.smsOptIn = body.smsOptIn;
+  // WeChat — only the opt-in is user-writeable. The OpenID is set
+  // exclusively by the bot webhook's /SCAN-handshake so nothing else
+  // can claim a chat by posting an OpenID directly.
+  if (typeof body.wechatOptIn === 'boolean') patch.wechatOptIn = body.wechatOptIn;
 
   if (Object.keys(patch).length === 0) {
     return NextResponse.json({ error: 'No writeable fields supplied' }, { status: 400 });
@@ -74,6 +82,9 @@ export async function PUT(req: Request) {
       telegramOptIn: true,
       smsNumber: true,
       smsOptIn: true,
+      wechatOpenId: true,
+      wechatNickname: true,
+      wechatOptIn: true,
     },
   });
   return NextResponse.json({ channels: user });

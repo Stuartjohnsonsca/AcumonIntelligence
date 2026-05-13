@@ -42,6 +42,7 @@ interface Staff {
   telegramOptIn?: boolean;
   smsNumber?: string | null;
   smsOptIn?: boolean;
+  wechatOptIn?: boolean;
 }
 interface Suggestion {
   sourceEngagementId: string | null;
@@ -94,7 +95,7 @@ export default function PortalSetupPage({ params }: { params: Promise<{ engageme
   // Optimistic merge: when the editor reports a channel change we
   // overlay the patch onto the staff row so the chip summary up the
   // page refreshes immediately, before the server roundtrips.
-  const mergeStaffChannels = useCallback((id: string, next: { whatsappNumber: string | null; whatsappOptIn: boolean; telegramHandle: string | null; telegramOptIn: boolean; smsNumber: string | null; smsOptIn: boolean }) => {
+  const mergeStaffChannels = useCallback((id: string, next: { whatsappNumber: string | null; whatsappOptIn: boolean; telegramHandle: string | null; telegramOptIn: boolean; smsNumber: string | null; smsOptIn: boolean; wechatOptIn?: boolean }) => {
     setState((prev: any) => {
       if (!prev) return prev;
       const updated = prev.staff?.map((s: Staff) =>
@@ -493,6 +494,12 @@ export default function PortalSetupPage({ params }: { params: Promise<{ engageme
                       if (s.whatsappNumber && s.whatsappOptIn) channelChips.push('WhatsApp');
                       if (s.telegramHandle && s.telegramOptIn) channelChips.push('Telegram');
                       if (s.smsNumber && s.smsOptIn) channelChips.push('SMS');
+                      // WeChat is opt-in-only at the staff-hint level —
+                      // the actual OpenID binding happens on the user
+                      // side. Showing the chip when they've ticked
+                      // opt-in flags "this user wants WeChat" even if
+                      // they haven't scanned yet.
+                      if (s.wechatOptIn) channelChips.push('WeChat');
                       return (
                         <Fragment key={s.id}>
                           <tr className="border-b border-slate-100 last:border-0">
@@ -548,6 +555,9 @@ export default function PortalSetupPage({ params }: { params: Promise<{ engageme
                                     telegramOptIn: !!s.telegramOptIn,
                                     smsNumber: s.smsNumber ?? null,
                                     smsOptIn: !!s.smsOptIn,
+                                    wechatOpenId: null,
+                                    wechatNickname: null,
+                                    wechatOptIn: !!s.wechatOptIn,
                                   }}
                                   onChange={(next: ChannelsState) => mergeStaffChannels(s.id, next)}
                                 />

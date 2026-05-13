@@ -9,7 +9,7 @@
  * exactly what was sent and what came back.
  */
 
-export type MessageChannel = 'whatsapp' | 'telegram' | 'sms';
+export type MessageChannel = 'whatsapp' | 'telegram' | 'sms' | 'wechat';
 export type MessageDirection = 'outbound' | 'inbound';
 export type MessageStatus = 'queued' | 'sent' | 'delivered' | 'read' | 'failed';
 

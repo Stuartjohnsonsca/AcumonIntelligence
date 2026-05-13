@@ -20,7 +20,7 @@
  */
 
 import { useState, useCallback } from 'react';
-import { MessageSquare, Phone, Send, Loader2, CheckCircle2, AlertTriangle, ExternalLink } from 'lucide-react';
+import { MessageSquare, Phone, Send, Loader2, CheckCircle2, AlertTriangle, ExternalLink, QrCode } from 'lucide-react';
 
 export interface ChannelsState {
   whatsappNumber: string | null;
@@ -30,6 +30,13 @@ export interface ChannelsState {
   telegramOptIn: boolean;
   smsNumber: string | null;
   smsOptIn: boolean;
+  // WeChat — OpenID is server-only (set by the bot webhook on /SCAN);
+  // nickname comes from the same handshake. The UI uses the opt-in
+  // flag + the linked flag (derived from openId presence) to decide
+  // when to show "Connect WeChat" vs "Connected".
+  wechatOpenId?: string | null;
+  wechatNickname?: string | null;
+  wechatOptIn: boolean;
 }
 
 type EditorMode = 'self' | 'staff';
@@ -58,6 +65,11 @@ export function MessagingChannelsEditor({
   const [telegramUrl, setTelegramUrl] = useState<string | null>(null);
   const [telegramCode, setTelegramCode] = useState<string | null>(null);
   const [linking, setLinking] = useState(false);
+  // WeChat connect flow — separate state from Telegram so a user can
+  // generate one QR per channel side-by-side without overwriting.
+  const [wechatQrUrl, setWechatQrUrl] = useState<string | null>(null);
+  const [wechatExpiresAt, setWechatExpiresAt] = useState<string | null>(null);
+  const [wechatLinking, setWechatLinking] = useState(false);
 
   // Build a server-side patch URL based on the mode. Self → talks to
   // /api/portal/messaging-channels; staff → talks to the existing
@@ -102,6 +114,9 @@ export function MessagingChannelsEditor({
           telegramOptIn: !!s.telegramOptIn,
           smsNumber: s.smsNumber ?? null,
           smsOptIn: !!s.smsOptIn,
+          wechatOpenId: value.wechatOpenId ?? null,
+          wechatNickname: value.wechatNickname ?? null,
+          wechatOptIn: !!s.wechatOptIn,
         });
       }
     } catch (e: any) {
@@ -110,6 +125,32 @@ export function MessagingChannelsEditor({
       setSaving(null);
     }
   }, [mode, token, staffId, value, onChange]);
+
+  const requestWeChatLink = useCallback(async () => {
+    if (!token) return;
+    setWechatLinking(true);
+    setError(null);
+    setWechatQrUrl(null);
+    setWechatExpiresAt(null);
+    try {
+      const res = await fetch('/api/portal/messaging-channels/wechat-link', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ token }),
+      });
+      if (!res.ok) {
+        const j = await res.json().catch(() => ({}));
+        throw new Error(j?.error || 'Could not generate WeChat QR');
+      }
+      const data = await res.json();
+      setWechatQrUrl(data.qrUrl);
+      setWechatExpiresAt(data.expiresAt || null);
+    } catch (e: any) {
+      setError(e?.message || 'WeChat link failed');
+    } finally {
+      setWechatLinking(false);
+    }
+  }, [token]);
 
   const requestTelegramLink = useCallback(async () => {
     if (!token) return;
@@ -159,7 +200,7 @@ export function MessagingChannelsEditor({
         </div>
       )}
 
-      <div className={compact ? 'grid grid-cols-1 sm:grid-cols-3 gap-3' : 'grid grid-cols-1 sm:grid-cols-3 gap-4'}>
+      <div className={compact ? 'grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3' : 'grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4'}>
         {/* WhatsApp */}
         <ChannelRow
           label="WhatsApp"
@@ -238,6 +279,77 @@ export function MessagingChannelsEditor({
           ) : (
             <span className={`mt-1 inline-block text-[10px] ${isLinked ? 'text-green-700' : 'text-slate-400'}`}>
               {isLinked ? 'Bot is linked' : 'User must press Start in the Telegram bot themselves'}
+            </span>
+          )}
+        </div>
+
+        {/* WeChat — binding works by QR scan, not phone number.
+            "Connect WeChat" mints a one-time scene code, asks the
+            Official Account API for a parametric QR, and displays
+            the QR image. The user scans + follows the Official
+            Account; the webhook handler binds their OpenID and
+            flips wechatOptIn = true. Same self-vs-staff split as
+            Telegram. */}
+        <div className="border border-slate-200 rounded-md p-2.5 bg-slate-50/40">
+          <div className="flex items-center justify-between mb-1.5">
+            <span className="text-[11px] font-semibold text-slate-700 inline-flex items-center gap-1">
+              <QrCode className="h-3.5 w-3.5" /> WeChat
+            </span>
+            <label className="inline-flex items-center gap-1 text-[10px] text-slate-500">
+              <input
+                type="checkbox"
+                checked={value.wechatOptIn}
+                onChange={(e) => persist({ wechatOptIn: e.target.checked })}
+                className="rounded border-slate-300"
+              />
+              Opt in
+            </label>
+          </div>
+          {/* Nickname placeholder — read-only; populated by the
+              Account webhook on /SCAN. Useful so the user can
+              eyeball "yes that's me". */}
+          <div className="text-[10px] text-slate-500 italic mb-1 min-h-[14px]">
+            {value.wechatNickname ? `Linked: ${value.wechatNickname}` : 'Bind a WeChat account by scanning a QR from your firm’s Official Account.'}
+          </div>
+          {mode === 'self' ? (
+            <div className="mt-1 space-y-1">
+              {value.wechatOpenId ? (
+                <span className="text-[10px] text-green-700 inline-flex items-center gap-1">
+                  <CheckCircle2 className="h-3 w-3" /> Connected
+                </span>
+              ) : (
+                <button
+                  onClick={requestWeChatLink}
+                  disabled={wechatLinking}
+                  className="text-[10px] px-2 py-0.5 bg-emerald-50 text-emerald-700 border border-emerald-200 rounded hover:bg-emerald-100 disabled:opacity-50 inline-flex items-center gap-1"
+                >
+                  {wechatLinking ? <Loader2 className="h-3 w-3 animate-spin" /> : <QrCode className="h-3 w-3" />}
+                  Connect WeChat
+                </button>
+              )}
+              {wechatQrUrl && (
+                <div className="text-[10px] text-slate-600">
+                  {/* QR image hosted by WeChat. We render it directly
+                      so users on mobile can long-press to save. */}
+                  <img
+                    src={wechatQrUrl}
+                    alt="WeChat QR — scan to link your account"
+                    className="w-32 h-32 mt-1 border border-slate-200 rounded bg-white"
+                  />
+                  <span className="block text-slate-400 mt-0.5">
+                    Open WeChat → Scan → follow the Official Account. QR expires in 30 min.
+                  </span>
+                  {wechatExpiresAt && (
+                    <span className="block text-slate-300 mt-0.5 text-[9px]">
+                      Expires: {new Date(wechatExpiresAt).toLocaleTimeString()}
+                    </span>
+                  )}
+                </div>
+              )}
+            </div>
+          ) : (
+            <span className={`mt-1 inline-block text-[10px] ${value.wechatOpenId ? 'text-green-700' : 'text-slate-400'}`}>
+              {value.wechatOpenId ? 'WeChat is linked' : 'User must scan the QR + follow the Official Account themselves'}
             </span>
           )}
         </div>
