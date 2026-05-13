@@ -24,6 +24,7 @@ import { buildTemplateContext } from '@/lib/template-context';
 import { askInterrogateBot } from '@/lib/interrogate-bot';
 import { sendEmail } from '@/lib/email';
 import { postToTeamsWebhook, renderMonitoringRunForTeams } from '@/lib/teams-webhook';
+import { resolvePortalPublicUrl } from '@/lib/portal-public-url';
 
 export type Frequency = 'manual' | 'daily' | 'weekly' | 'monthly';
 
@@ -239,7 +240,10 @@ export async function runMonitoringReport(
 
   if (wantsTeams && report.teamsWebhookUrl) {
     try {
-      const portalBase = (process.env.PORTAL_PUBLIC_URL || process.env.NEXT_PUBLIC_APP_URL || '').replace(/\/+$/, '');
+      // Dynamically resolved — picks up the deployed Vercel URL
+      // automatically once it's live, no env var required. Manual
+      // PORTAL_PUBLIC_URL still wins when set as an override.
+      const portalBase = resolvePortalPublicUrl();
       const portalUrl = portalBase ? `${portalBase}/methodology/engagements/${report.engagementId}` : undefined;
       const card = renderMonitoringRunForTeams({
         reportName: report.name,

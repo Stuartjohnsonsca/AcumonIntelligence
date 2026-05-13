@@ -17,11 +17,17 @@
 
 import { prisma } from '@/lib/db';
 import { notifyPortalUser } from './index';
+import { resolvePortalPublicUrl } from '@/lib/portal-public-url';
 
 interface NotifyOpts {
-  /** Override the portal URL embedded in the message. Defaults to
-   *  process.env.PORTAL_PUBLIC_URL. */
+  /** Override the portal URL embedded in the message. When omitted
+   *  we resolve dynamically (PORTAL_PUBLIC_URL env, then Vercel's
+   *  auto-set VERCEL_PROJECT_PRODUCTION_URL / VERCEL_URL, then null
+   *  for "no link"). See lib/portal-public-url.ts. */
   portalBaseUrl?: string;
+  /** Optional request host (e.g. req.headers.host) — when the caller
+   *  has request context this beats every env-var-derived fallback. */
+  requestHost?: string | null;
   /** Override the message body. When omitted, a short default is built
    *  from the request's section + question. */
   body?: string;
@@ -59,7 +65,9 @@ export async function notifyOnPortalRequestCreated(
   }
   if (!portalUserId) return;
 
-  const portalBase = (opts.portalBaseUrl || process.env.PORTAL_PUBLIC_URL || '').replace(/\/+$/, '');
+  const portalBase = opts.portalBaseUrl
+    ? opts.portalBaseUrl.replace(/\/+$/, '')
+    : resolvePortalPublicUrl({ requestHost: opts.requestHost });
   const link = portalBase
     ? `${portalBase}/portal/dashboard?clientId=${encodeURIComponent(req.clientId)}`
     : null;
