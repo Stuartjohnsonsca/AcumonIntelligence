@@ -22,7 +22,7 @@
 
 import { use, useCallback, useEffect, useMemo, useState, Fragment } from 'react';
 import { useSearchParams, useRouter } from 'next/navigation';
-import { ChevronDown, ChevronRight, UserPlus, UserX, CheckCircle2, AlertCircle, Loader2, Save, MessageSquare } from 'lucide-react';
+import { ChevronDown, ChevronRight, UserPlus, UserX, CheckCircle2, AlertCircle, Loader2, Save, MessageSquare, ArrowLeft, Shield } from 'lucide-react';
 import { MessagingChannelsEditor, type ChannelsState } from '@/components/portal/MessagingChannelsEditor';
 
 interface Staff {
@@ -318,6 +318,18 @@ export default function PortalSetupPage({ params }: { params: Promise<{ engageme
   return (
     <div className="min-h-screen bg-slate-50 p-6">
       <div className="max-w-5xl mx-auto space-y-5">
+        {/* Back to dashboard — outside the white header card so it's
+            visible the moment the page renders, regardless of how far
+            down the user has scrolled. Pushes the same /portal/dashboard
+            URL the page-error branch above uses, with the session
+            token preserved so the user lands logged-in. */}
+        <button
+          onClick={() => router.push('/portal/dashboard?token=' + token)}
+          className="inline-flex items-center gap-1.5 text-sm text-slate-600 hover:text-blue-700"
+        >
+          <ArrowLeft className="w-4 h-4" /> Back to dashboard
+        </button>
+
         {/* Header */}
         <div className="bg-white border border-slate-200 rounded-lg p-5">
           <div className="flex items-start justify-between gap-4">
@@ -355,6 +367,19 @@ export default function PortalSetupPage({ params }: { params: Promise<{ engageme
           {banner && <p className="text-xs text-emerald-700 mt-2 bg-emerald-50 border border-emerald-200 rounded p-2">{banner}</p>}
           {error && <p className="text-xs text-red-700 mt-2 bg-red-50 border border-red-200 rounded p-2">{error}</p>}
         </div>
+
+        {/* Security — 2FA trust-days setting. The Portal Principal
+            controls how long a previously-2FA'd browser can re-login
+            with just username + password before 2FA kicks back in. A
+            different machine has no trust cookie and always falls
+            back to 2FA, so a stolen password alone never gets the
+            attacker in. */}
+        <SecurityCard
+          engagementId={engagementId}
+          token={token}
+          initial={eng.portal2faTrustDays ?? null}
+          onSaved={() => { setBanner('2FA trust window updated.'); load(); }}
+        />
 
         {/* Collapsible: Staff */}
         <div className="bg-white border border-slate-200 rounded-lg">
@@ -703,6 +728,102 @@ export default function PortalSetupPage({ params }: { params: Promise<{ engageme
 
         <div className="text-xs text-slate-500 text-center py-2">
           Requests the audit team send will route to the leftmost assigned staff. If no response within the column&apos;s escalation days, the next column is notified. After all three, the request returns to you.
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── Security card (2FA trust window) ─────────────────────────────
+//
+// Lets the Principal pick how many days a browser stays trusted after
+// it completes 2FA. Stored on AuditEngagement.portal2faTrustDays —
+// 0 / null means "always require 2FA" (the safest default). A
+// different browser has no trust cookie and always falls through to
+// the email-code flow regardless of this value.
+
+function SecurityCard({
+  engagementId, token, initial, onSaved,
+}: {
+  engagementId: string;
+  token: string;
+  initial: number | null;
+  onSaved: () => void;
+}) {
+  const [value, setValue] = useState<string>(initial == null ? '' : String(initial));
+  const [saving, setSaving] = useState(false);
+  const [savedMsg, setSavedMsg] = useState<string | null>(null);
+  const [errMsg, setErrMsg] = useState<string | null>(null);
+
+  // Keep the input in sync if the parent reloads with a fresh value
+  // (e.g. after a successful save).
+  useEffect(() => {
+    setValue(initial == null ? '' : String(initial));
+  }, [initial]);
+
+  async function save() {
+    setSaving(true); setErrMsg(null); setSavedMsg(null);
+    try {
+      // Empty string normalises to null on the server; we send raw
+      // so the server's clamp + parse logic is the single source of
+      // truth for "what does X mean".
+      const res = await fetch(`/api/portal/setup/engagement?token=${encodeURIComponent(token)}&engagementId=${encodeURIComponent(engagementId)}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ portal2faTrustDays: value === '' ? null : Number(value) }),
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data?.error || `Save failed (${res.status})`);
+      }
+      setSavedMsg('Saved.');
+      onSaved();
+    } catch (e: any) {
+      setErrMsg(e?.message || 'Save failed');
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <div className="bg-white border border-slate-200 rounded-lg p-5">
+      <div className="flex items-start gap-3">
+        <Shield className="w-4 h-4 text-blue-600 mt-1" />
+        <div className="flex-1">
+          <h2 className="text-sm font-semibold text-slate-800">Two-factor authentication trust window</h2>
+          <p className="text-xs text-slate-600 mt-1 max-w-2xl">
+            How many days a browser stays trusted after passing 2FA. Inside the window the user can sign in with just username + password.
+            A different machine has no trust cookie and <strong>always</strong> falls back to 2FA, so a stolen password alone never gets in.
+            Leave blank or set to <code className="bg-slate-100 px-1 rounded">0</code> to <strong>always require 2FA</strong>.
+          </p>
+          <div className="mt-3 flex items-center gap-2 flex-wrap">
+            <input
+              type="number"
+              min={0}
+              max={365}
+              value={value}
+              onChange={e => setValue(e.target.value)}
+              className="w-24 border border-slate-300 rounded px-2 py-1.5 text-sm"
+              placeholder="0"
+            />
+            <span className="text-xs text-slate-600">days</span>
+            <button
+              onClick={() => void save()}
+              disabled={saving}
+              className="inline-flex items-center gap-1 text-xs px-3 py-1.5 bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50"
+            >
+              {saving ? <Loader2 className="w-3 h-3 animate-spin" /> : <Save className="w-3 h-3" />}
+              Save
+            </button>
+            {savedMsg && <span className="text-[11px] text-emerald-700">{savedMsg}</span>}
+            {errMsg && <span className="text-[11px] text-red-700">{errMsg}</span>}
+          </div>
+          <div className="mt-2 text-[11px] text-slate-500 space-x-3">
+            <button type="button" onClick={() => setValue('0')} className="hover:text-blue-700 hover:underline">Always 2FA</button>
+            <button type="button" onClick={() => setValue('7')} className="hover:text-blue-700 hover:underline">7 days</button>
+            <button type="button" onClick={() => setValue('30')} className="hover:text-blue-700 hover:underline">30 days</button>
+            <button type="button" onClick={() => setValue('90')} className="hover:text-blue-700 hover:underline">90 days</button>
+          </div>
         </div>
       </div>
     </div>

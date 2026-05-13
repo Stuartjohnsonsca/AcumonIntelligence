@@ -1164,6 +1164,7 @@ model ClientPortalUser {
   portalPrincipalEngagements AuditEngagement[]         @relation("PortalPrincipalForEngagement")
   portalStaffMemberships     ClientPortalStaffMember[] @relation("StaffMemberPortalUser")
   portalMessages             PortalMessage[]           @relation("PortalUserMessages")
+  trustedDevices             ClientPortalTrustedDevice[]
 
   @@unique([clientId, email])
   @@index([sessionToken])
@@ -1171,6 +1172,48 @@ model ClientPortalUser {
   @@index([smsNumber])
   @@index([telegramChatId])
   @@map("client_portal_users")
+}
+
+/// A device the user has previously passed 2FA on, so subsequent
+/// logins from the same browser can skip the email-code step until
+/// the trust window expires. The Portal Principal controls the trust
+/// duration per engagement via AuditEngagement.portal2faTrustDays;
+/// the resolution rule on login is "MIN of non-null trust-days across
+/// all engagements the user has access to, with null falling back to
+/// 0 — always 2FA — for safety".
+///
+/// The deviceToken is set as an httpOnly cookie on 2FA success and
+/// read back on the next login. A different browser has no cookie
+/// and always goes through 2FA.
+model ClientPortalTrustedDevice {
+  id          String    @id @default(uuid())
+  userId      String    @map("user_id")
+  /// Opaque token stored in the portal_device_token cookie. Random
+  /// 32 bytes hex-encoded so guessing one is computationally
+  /// infeasible.
+  deviceToken String    @unique @map("device_token")
+  /// Friendly label — falls back to the truncated User-Agent so the
+  /// "Manage trusted devices" UI shows something recognisable.
+  label       String?
+  userAgent   String?   @map("user_agent") @db.Text
+  ipAddress   String?   @map("ip_address")
+  trustedAt   DateTime  @default(now()) @map("trusted_at")
+  lastUsedAt  DateTime  @default(now()) @map("last_used_at")
+  /// Expiry computed from the engagement's portal_2fa_trust_days at
+  /// the moment 2FA was completed. After this point the next login
+  /// falls through to the email-code flow even if the cookie is
+  /// still present client-side.
+  expiresAt   DateTime  @map("expires_at")
+  /// Set when the user (or an admin) explicitly revokes trust. The
+  /// row stays for audit but stops counting as trusted.
+  revokedAt   DateTime? @map("revoked_at")
+
+  user ClientPortalUser @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([userId, expiresAt])
+  @@index([userId, revokedAt])
+  @@map("client_portal_trusted_devices")
 }
 
 model ClientPortalTwoFactor {
@@ -2123,6 +2166,17 @@ model AuditEngagement {
   portalEscalationDays1 Int? @map("portal_escalation_days_1")
   portalEscalationDays2 Int? @map("portal_escalation_days_2")
   portalEscalationDays3 Int? @map("portal_escalation_days_3")
+
+  // How long (days) a logged-in portal user can re-authenticate with
+  // just username + password from a previously-trusted device before
+  // 2FA kicks back in. Set by the Portal Principal during setup.
+  //   null / 0 — always require 2FA (safe default).
+  //   > 0      — once a device passes 2FA, it stays trusted for this
+  //              many days; a fresh login from that browser inside
+  //              the window skips the email-code step.
+  // A different machine has no trust cookie and always falls through
+  // to 2FA, so a stolen password alone never gets the attacker in.
+  portal2faTrustDays Int? @map("portal_2fa_trust_days")
 
   // When the Portal Principal completed their first-sign-in setup
   // (staff list + work allocation + per-staff access confirmation).

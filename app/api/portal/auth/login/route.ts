@@ -5,6 +5,7 @@ import crypto from 'crypto';
 import { sendPortalVerificationCode } from '@/lib/email-portal';
 import { issuePortalSessionToken } from '@/lib/portal-session';
 import { decidePortalAccess } from '@/lib/portal-principal';
+import { PORTAL_DEVICE_COOKIE, findActiveTrustedDevice } from '@/lib/portal-trusted-device';
 
 /**
  * POST /api/portal/auth/login
@@ -17,6 +18,14 @@ export async function POST(req: Request) {
     if (!email || !password) {
       return NextResponse.json({ error: 'Email and password are required' }, { status: 400 });
     }
+
+    // Read the device-trust cookie now so we can fast-path past 2FA
+    // for a returning browser. A different machine has no cookie and
+    // falls through to the standard email-code flow — a stolen
+    // password alone never gets the attacker in.
+    const cookieHeader = req.headers.get('cookie') || '';
+    const cookieMatch = cookieHeader.match(new RegExp(`(?:^|;\\s*)${PORTAL_DEVICE_COOKIE}=([^;]+)`));
+    const deviceToken = cookieMatch ? decodeURIComponent(cookieMatch[1]) : null;
 
     // Use explicit select so Prisma doesn't include the 2026-04-20
     // session_token / session_expires_at columns in the SELECT — that
@@ -81,6 +90,27 @@ export async function POST(req: Request) {
         user: { id: user.id, email: user.email, name: user.name, clientId: user.clientId },
         message: '2FA disabled — logged in directly',
       });
+    }
+
+    // Trusted-device fast path — when the user's browser carries a
+    // still-valid trust cookie minted by a previous 2FA success, skip
+    // straight to a session token. The Portal Principal controls the
+    // trust window per engagement (AuditEngagement.portal2faTrustDays);
+    // we resolve the MIN of that across all the user's engagements,
+    // and 0 / null means "always require 2FA".
+    if (deviceToken) {
+      const trusted = await findActiveTrustedDevice(user.id, deviceToken);
+      if (trusted) {
+        const issued = await issuePortalSessionToken(user.id);
+        return NextResponse.json({
+          skipVerify: true,
+          token: issued?.token,
+          userId: user.id,
+          user: { id: user.id, email: user.email, name: user.name, clientId: user.clientId },
+          trustedUntil: trusted.expiresAt.toISOString(),
+          message: 'Skipped 2FA — trusted device',
+        });
+      }
     }
 
     // Generate 6-digit code

@@ -39,6 +39,7 @@ export async function GET(req: Request) {
       firmId: true,
       portalPrincipalId: true,
       portalSetupCompletedAt: true,
+      portal2faTrustDays: true,
       auditType: true,
       client: { select: { clientName: true } },
       period: { select: { startDate: true, endDate: true } },
@@ -246,6 +247,7 @@ export async function GET(req: Request) {
       auditType: eng.auditType,
       setupCompletedAt: eng.portalSetupCompletedAt,
       portalPrincipalId: eng.portalPrincipalId,
+      portal2faTrustDays: eng.portal2faTrustDays,
     },
     staff,
     suggestions,
@@ -262,4 +264,59 @@ export async function GET(req: Request) {
       droppedUnclassifiedCount: droppedUnclassified.length,
     },
   });
+}
+
+/**
+ * PUT /api/portal/setup/engagement?token=X&engagementId=Y
+ *
+ * Update engagement-level Portal Principal settings. Currently
+ * supports `portal2faTrustDays` (number of days a previously-2FA'd
+ * device can re-login without 2FA; null/0 = always require 2FA).
+ *
+ * Same Principal gate as GET — only the engagement's named Portal
+ * Principal can change these settings.
+ */
+export async function PUT(req: Request) {
+  const { searchParams } = new URL(req.url);
+  const token = searchParams.get('token');
+  const engagementId = searchParams.get('engagementId');
+  if (!token || !engagementId) {
+    return NextResponse.json({ error: 'token and engagementId required' }, { status: 400 });
+  }
+  const user = await resolvePortalUserFromToken(token);
+  if (!user) return NextResponse.json({ error: 'Invalid or expired session' }, { status: 401 });
+  const guard = await assertPortalPrincipal(user.id, engagementId);
+  if (!guard.ok) return NextResponse.json({ error: guard.error }, { status: guard.status || 403 });
+
+  const body = await req.json().catch(() => ({}));
+  const patch: Record<string, any> = {};
+
+  // portal2faTrustDays — clamp to a sane range. 0 / null means
+  // "always require 2FA" (the safest default). Cap at 365 so a
+  // misclick can't accidentally grant a year of trust.
+  if ('portal2faTrustDays' in body) {
+    const raw = body.portal2faTrustDays;
+    if (raw === null || raw === undefined || raw === '') {
+      patch.portal2faTrustDays = null;
+    } else {
+      const n = Number(raw);
+      if (!Number.isFinite(n) || n < 0 || n > 365) {
+        return NextResponse.json({ error: 'portal2faTrustDays must be a number between 0 and 365' }, { status: 400 });
+      }
+      // 0 means "always 2FA" — store as null so the resolver treats
+      // it uniformly with "not set yet".
+      patch.portal2faTrustDays = n > 0 ? Math.floor(n) : null;
+    }
+  }
+
+  if (Object.keys(patch).length === 0) {
+    return NextResponse.json({ error: 'No writeable fields supplied' }, { status: 400 });
+  }
+
+  const updated = await prisma.auditEngagement.update({
+    where: { id: engagementId },
+    data: patch,
+    select: { id: true, portal2faTrustDays: true },
+  });
+  return NextResponse.json({ ok: true, engagement: updated });
 }

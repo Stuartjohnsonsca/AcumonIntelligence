@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/db';
 import { issuePortalSessionToken } from '@/lib/portal-session';
 import { decidePortalAccess } from '@/lib/portal-principal';
+import { PORTAL_DEVICE_COOKIE, mintTrustedDevice } from '@/lib/portal-trusted-device';
 
 /**
  * POST /api/portal/auth/verify
@@ -64,10 +65,26 @@ export async function POST(req: Request) {
     // active portal user's data.
     const issued = await issuePortalSessionToken(twoFactor.user.id);
 
-    return NextResponse.json({
+    // Mint a trusted-device row + cookie so subsequent logins from
+    // THIS browser can skip 2FA inside the Principal-configured
+    // window. mintTrustedDevice returns null when the user's effective
+    // trust window is 0 — in that case we simply don't set the
+    // cookie and the next login goes through 2FA as today.
+    const userAgent = req.headers.get('user-agent');
+    const forwarded = req.headers.get('x-forwarded-for') || '';
+    const ip = forwarded.split(',')[0]?.trim() || null;
+    const minted = await mintTrustedDevice({
+      userId: twoFactor.user.id,
+      userAgent,
+      ipAddress: ip,
+    });
+
+    const res = NextResponse.json({
       token: issued?.token,
       sessionPersisted: issued?.persisted ?? false,
       sessionError: issued?.error || null,
+      deviceTrusted: !!minted,
+      deviceTrustedUntil: minted?.expiresAt.toISOString() || null,
       user: {
         id: twoFactor.user.id,
         email: twoFactor.user.email,
@@ -75,6 +92,19 @@ export async function POST(req: Request) {
         clientId: twoFactor.user.clientId,
       },
     });
+    if (minted) {
+      const maxAge = Math.max(60, Math.floor((minted.expiresAt.getTime() - Date.now()) / 1000));
+      res.cookies.set({
+        name: PORTAL_DEVICE_COOKIE,
+        value: minted.token,
+        httpOnly: true,
+        secure: true,
+        sameSite: 'lax',
+        path: '/',
+        maxAge,
+      });
+    }
+    return res;
   } catch (error: any) {
     console.error('[Portal Verify] error:', {
       message: error?.message,

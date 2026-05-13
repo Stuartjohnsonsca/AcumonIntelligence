@@ -22,7 +22,7 @@
 import { use, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 import { useSearchParams } from 'next/navigation';
-import { AlertTriangle, Clock, CheckCircle2, TrendingUp, RefreshCw, Settings, Loader2, Filter, ChevronDown, ChevronRight, X, Users } from 'lucide-react';
+import { AlertTriangle, Clock, CheckCircle2, TrendingUp, RefreshCw, Settings, Loader2, Filter, ChevronDown, ChevronRight, X, Users, Building2, CheckSquare, Square } from 'lucide-react';
 
 interface PrincipalDashboardData {
   engagementId: string;
@@ -201,12 +201,12 @@ export default function PortalPrincipalDashboardPage({ params }: { params: Promi
     setSelectedEngagementIds(prev => {
       const next = new Set(prev);
       if (next.has(id)) {
-        // Don't allow deselecting the anchor engagement — the URL
-        // represents the caller's "home" dashboard. If they want a
-        // different anchor they can click its pill which routes to
-        // /portal/principal/<thatId>.
-        if (id === engagementId) return prev;
         next.delete(id);
+        // Keep at least the anchor selected so the API always has
+        // something to scope to (server requires the anchor to be in
+        // the list). Without this guard a "deselect all" would 403
+        // the dashboard.
+        if (next.size === 0) next.add(engagementId);
       } else {
         next.add(id);
       }
@@ -214,6 +214,22 @@ export default function PortalPrincipalDashboardPage({ params }: { params: Promi
     });
     setOffset(0);
   }
+
+  /** Multi-select helpers used by the new Company dropdown. selectAll
+   *  picks every engagement the Principal has access to;
+   *  deselectAll collapses back to the anchor (since fully empty
+   *  isn't a valid server-side state). */
+  function selectAllEngagements() {
+    setSelectedEngagementIds(new Set(principalEngagements.map(e => e.id)));
+    setOffset(0);
+  }
+  function deselectAllEngagements() {
+    setSelectedEngagementIds(new Set([engagementId]));
+    setOffset(0);
+  }
+  const allSelected =
+    principalEngagements.length > 0 &&
+    principalEngagements.every(e => selectedEngagementIds.has(e.id));
 
   const [filterStatus, setFilterStatus] = useState<string>('');
   // Multi-select: Sets of selected FS Line IDs + TB account codes.
@@ -360,39 +376,23 @@ export default function PortalPrincipalDashboardPage({ params }: { params: Promi
           );
         })()}
 
-        {/* Multi-select of clients — when the Portal Principal covers  */}
-        {/* more than one engagement they can tick multiple and the     */}
-        {/* dashboard aggregates: totals sum, filter options union,     */}
-        {/* list shows requests across every selected engagement. The   */}
-        {/* URL always carries a single anchor engagementId for         */}
-        {/* bookmark stability; the multi-select layers additional     */}
-        {/* engagements on top via a query param.                       */}
+        {/* Company / period multi-select — drives the underlying data
+            for every report on this dashboard. Picks from every
+            engagement where THIS user is the Portal Principal (loaded
+            from /api/portal/my-engagements with the Principal filter).
+            Select-all / deselect-all toggle in the header. The anchor
+            engagement (URL one) is preserved when the user deselects
+            everything — the server requires it to be in the list. */}
         {principalEngagements.length > 1 && (
-          <div className="bg-white border border-slate-200 rounded-lg p-3">
-            <div className="flex items-center gap-2 flex-wrap">
-              <span className="text-xs font-medium text-slate-600 mr-1">Clients:</span>
-              {principalEngagements.map(e => {
-                const isSelected = selectedEngagementIds.has(e.id);
-                return (
-                  <button
-                    key={e.id}
-                    type="button"
-                    onClick={() => toggleEngagement(e.id)}
-                    className={`inline-flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-full border transition-colors ${isSelected ? 'bg-emerald-600 border-emerald-600 text-white' : 'bg-slate-50 border-slate-300 text-slate-700 hover:bg-slate-100'}`}
-                    title={`${e.clientName} · ${e.auditType}`}
-                  >
-                    {isSelected && <span className="inline-block w-1.5 h-1.5 rounded-full bg-white" />}
-                    {e.clientName}
-                  </button>
-                );
-              })}
-              {selectedEngagementIds.size > 1 && (
-                <span className="text-[11px] text-slate-500 ml-2">
-                  Aggregating across {selectedEngagementIds.size} engagements
-                </span>
-              )}
-            </div>
-          </div>
+          <CompanyMultiSelect
+            engagements={principalEngagements}
+            anchorId={engagementId}
+            selectedIds={selectedEngagementIds}
+            onToggle={toggleEngagement}
+            onSelectAll={selectAllEngagements}
+            onDeselectAll={deselectAllEngagements}
+            allSelected={allSelected}
+          />
         )}
 
         {/* KPI tiles — each one is a click-through to the list with the */}
@@ -1287,6 +1287,158 @@ function FsLineTbMultiSelect({ fsLines, selectedFsLineIds, selectedTbCodes, onCh
               >Done</button>
             </div>
           </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─── Company multi-select dropdown ────────────────────────────────
+//
+// Replaces the previous toggle-pill row with a proper dropdown so the
+// Principal can pick which client / period engagements drive the
+// dashboard data. Only engagements where the caller is the Portal
+// Principal are listed (the parent component already filtered to
+// principalFor before passing in). Select-all / deselect-all are
+// surfaced as icon buttons in the header so multi-select stays
+// discoverable.
+
+interface CompanyMultiSelectProps {
+  engagements: PrincipalClientSummary[];
+  anchorId: string;
+  selectedIds: Set<string>;
+  onToggle: (id: string) => void;
+  onSelectAll: () => void;
+  onDeselectAll: () => void;
+  allSelected: boolean;
+}
+
+function CompanyMultiSelect({
+  engagements, anchorId, selectedIds, onToggle, onSelectAll, onDeselectAll, allSelected,
+}: CompanyMultiSelectProps) {
+  const [open, setOpen] = useState(false);
+  const popoverRef = useRef<HTMLDivElement | null>(null);
+  const buttonRef = useRef<HTMLButtonElement | null>(null);
+
+  // Close on click outside — same pattern as the FS-line popover lower
+  // in this file. Ignores clicks on the trigger itself so toggling
+  // works.
+  useEffect(() => {
+    if (!open) return;
+    function onDocClick(e: MouseEvent) {
+      const target = e.target as Node;
+      if (popoverRef.current?.contains(target)) return;
+      if (buttonRef.current?.contains(target)) return;
+      setOpen(false);
+    }
+    document.addEventListener('mousedown', onDocClick);
+    return () => document.removeEventListener('mousedown', onDocClick);
+  }, [open]);
+
+  // Build a short summary for the closed-state pill. "All" when every
+  // option is ticked, "Acme Ltd + 2 more" when there's a selection,
+  // "(anchor only)" when only the URL's engagement is ticked.
+  const selectedList = engagements.filter(e => selectedIds.has(e.id));
+  const summary = (() => {
+    if (allSelected) return `All ${engagements.length} engagements`;
+    if (selectedList.length === 0) return '(nothing selected)';
+    if (selectedList.length === 1) return selectedList[0].clientName;
+    return `${selectedList[0].clientName} + ${selectedList.length - 1} more`;
+  })();
+
+  return (
+    <div className="bg-white border border-slate-200 rounded-lg p-3">
+      <div className="flex items-center justify-between gap-2 flex-wrap">
+        <div className="flex items-center gap-2">
+          <Building2 className="w-4 h-4 text-slate-500" />
+          <span className="text-xs font-medium text-slate-700">Company / period</span>
+        </div>
+        <div className="relative inline-flex items-center gap-1.5">
+          {/* Select-all / deselect-all toggle. Single button that
+              flips state based on whether everything's already
+              ticked. Icon-only with a tooltip so it stays compact. */}
+          <button
+            type="button"
+            onClick={() => allSelected ? onDeselectAll() : onSelectAll()}
+            className="p-1.5 text-slate-500 hover:text-blue-700 hover:bg-blue-50 rounded"
+            title={allSelected ? 'Deselect all (keep anchor engagement only)' : 'Select all engagements'}
+          >
+            {allSelected
+              ? <CheckSquare className="w-4 h-4" />
+              : <Square className="w-4 h-4" />}
+          </button>
+          <button
+            ref={buttonRef}
+            type="button"
+            onClick={() => setOpen(o => !o)}
+            className="inline-flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-md border border-slate-300 bg-white hover:bg-slate-50"
+          >
+            <span className="text-slate-700 max-w-xs truncate">{summary}</span>
+            <ChevronDown className="w-3 h-3 text-slate-500" />
+          </button>
+        </div>
+      </div>
+      {selectedIds.size > 1 && (
+        <p className="text-[11px] text-slate-500 mt-1.5">
+          Aggregating across {selectedIds.size} engagements — totals, charts and the request list combine all selected.
+        </p>
+      )}
+
+      {open && (
+        <div
+          ref={popoverRef}
+          className="absolute right-3 mt-1 z-30 w-80 max-h-96 overflow-auto bg-white border border-slate-200 rounded-md shadow-lg"
+        >
+          <div className="sticky top-0 bg-white border-b border-slate-100 px-3 py-2 flex items-center justify-between">
+            <span className="text-[11px] uppercase tracking-wide font-semibold text-slate-500">
+              {selectedIds.size} of {engagements.length} selected
+            </span>
+            <div className="flex items-center gap-1">
+              <button
+                type="button"
+                onClick={onSelectAll}
+                className="text-[11px] text-blue-700 hover:underline"
+              >Select all</button>
+              <span className="text-slate-300">·</span>
+              <button
+                type="button"
+                onClick={onDeselectAll}
+                className="text-[11px] text-slate-600 hover:text-red-600"
+                title="Keeps the anchor engagement selected — the server requires it"
+              >Deselect all</button>
+            </div>
+          </div>
+          <ul>
+            {engagements.map(e => {
+              const isSelected = selectedIds.has(e.id);
+              const isAnchor = e.id === anchorId;
+              const periodStr = e.periodEnd
+                ? new Date(e.periodEnd).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })
+                : '';
+              return (
+                <li key={e.id}>
+                  <button
+                    type="button"
+                    onClick={() => onToggle(e.id)}
+                    className={`w-full text-left px-3 py-2 hover:bg-slate-50 flex items-start gap-2 border-b border-slate-50 last:border-0 ${isSelected ? 'bg-emerald-50/40' : ''}`}
+                  >
+                    {isSelected
+                      ? <CheckSquare className="w-3.5 h-3.5 text-emerald-600 mt-0.5 flex-shrink-0" />
+                      : <Square className="w-3.5 h-3.5 text-slate-400 mt-0.5 flex-shrink-0" />}
+                    <div className="flex-1 min-w-0">
+                      <div className="text-xs font-medium text-slate-800 truncate">
+                        {e.clientName}
+                        {isAnchor && <span className="ml-1 text-[10px] text-blue-600 font-normal">· anchor</span>}
+                      </div>
+                      <div className="text-[10px] text-slate-500">
+                        {e.auditType}{periodStr ? ` · ${periodStr}` : ''}
+                      </div>
+                    </div>
+                  </button>
+                </li>
+              );
+            })}
+          </ul>
         </div>
       )}
     </div>
