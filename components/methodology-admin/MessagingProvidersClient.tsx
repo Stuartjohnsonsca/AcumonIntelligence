@@ -298,65 +298,69 @@ function WeComFields({ config, setField, effective }: { config: Record<string, a
         </Field>
       )}
 
-      {mode === 'external_contact_pro' && (
-        <>
-          {/* Firm-run connector — for Model 3 you'll typically run a
-              separate service that talks to Tencent's APIs on
-              Acumon's behalf (handles access-token caching, Contact
-              Way generation, signing, etc.). Acumon POSTs to its URL
-              with the auth header below. Tencent credentials further
-              down stay available as a direct-call fallback for firms
-              that haven't built a connector yet. */}
-          <div className="border border-emerald-200 bg-emerald-50/30 rounded-lg p-3 mb-3">
-            <div className="text-[11px] font-semibold text-emerald-800 mb-2">
-              WeCom Pro connector (your service)
-            </div>
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-              <Field
-                label="Connector URL"
-                hint="HTTPS endpoint of the WeCom Pro connector you've built. Acumon POSTs here for Contact Way / send / webhook actions."
-              >
-                <Input
-                  value={config.proConnectorUrl || ''}
-                  onChange={e => setField('proConnectorUrl', e.target.value)}
-                  placeholder="https://your-wecom-connector.example.com"
-                />
-              </Field>
-              <Field
-                label="Auth header name"
-                hint="Header carrying the auth value. Defaults to Authorization when blank."
-              >
-                <Input
-                  value={config.proConnectorAuthHeader || ''}
-                  onChange={e => setField('proConnectorAuthHeader', e.target.value)}
-                  placeholder="Authorization"
-                />
-              </Field>
-              <Field
-                label="Auth value"
-                hint="Secret value placed in the header. e.g. 'Bearer eyJ…' or just the API key, depending on your connector."
-              >
-                <Input
-                  type="password"
-                  value={config.proConnectorAuthValue || ''}
-                  onChange={e => setField('proConnectorAuthValue', e.target.value)}
-                  placeholder={config.proConnectorAuthValue ? '••••••••' : 'Bearer or key value'}
-                />
-              </Field>
-              <Field label="Sender WeCom UserID" hint="The firm-side WeCom employee whose customer roster the connector binds clients to.">
-                <Input value={config.senderUserId || ''} onChange={e => setField('senderUserId', e.target.value)} placeholder={envPlaceholder(effective, 'senderUserId')} />
-              </Field>
-            </div>
-          </div>
+      {/* Firm-run connector — visible regardless of mode so the
+          SuperAdmin can paste connector creds without first having to
+          flip the radio to Pro. Only USED when mode = external_contact_pro,
+          but the fields stay editable in both modes so credentials
+          don't get wiped on a mode switch. */}
+      <div className="border border-emerald-200 bg-emerald-50/30 rounded-lg p-3">
+        <div className="text-[11px] font-semibold text-emerald-800 mb-1">
+          WeCom Pro connector (your service)
+        </div>
+        <p className="text-[10px] text-emerald-700/80 mb-3">
+          Used only when <strong>Mode = External Contact (Pro)</strong> above. Acumon POSTs to your connector URL with the auth header — your connector talks to Tencent on Acumon's behalf.
+          {mode !== 'external_contact_pro' && ' These fields are inactive in Group Robot mode but you can pre-fill them.'}
+        </p>
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+          <Field
+            label="Connector URL"
+            hint="HTTPS endpoint of the WeCom Pro connector you've built."
+          >
+            <Input
+              value={config.proConnectorUrl || ''}
+              onChange={e => setField('proConnectorUrl', e.target.value)}
+              placeholder="https://your-wecom-connector.example.com"
+            />
+          </Field>
+          <Field
+            label="Auth header name"
+            hint="Header carrying the auth value. Defaults to Authorization when blank."
+          >
+            <Input
+              value={config.proConnectorAuthHeader || ''}
+              onChange={e => setField('proConnectorAuthHeader', e.target.value)}
+              placeholder="Authorization"
+            />
+          </Field>
+          <Field
+            label="Auth value"
+            hint="Secret value placed in the header. e.g. 'Bearer eyJ…' or just the API key, depending on your connector."
+          >
+            <Input
+              type="password"
+              value={config.proConnectorAuthValue || ''}
+              onChange={e => setField('proConnectorAuthValue', e.target.value)}
+              placeholder={config.proConnectorAuthValue ? '••••••••' : 'Bearer or key value'}
+            />
+          </Field>
+          <Field label="Sender WeCom UserID" hint="The firm-side WeCom employee whose customer roster the connector binds clients to.">
+            <Input value={config.senderUserId || ''} onChange={e => setField('senderUserId', e.target.value)} placeholder={envPlaceholder(effective, 'senderUserId')} />
+          </Field>
+        </div>
+      </div>
 
-          {/* Tencent credentials — only needed if you DON'T have a
-              connector and want Acumon to hit WeCom directly. The
-              Group Robot path uses none of these; the External
-              Contact Pro path uses these only when Connector URL
-              above is blank. */}
-          <div className="text-[11px] font-semibold text-slate-600 mb-2">
-            Direct-to-Tencent fallback (only used when no connector URL is set)
+      {/* Tencent direct credentials — visible in Pro mode only, used
+          only when the connector URL above is empty. Hidden in Group
+          Robot mode because Group Robot uses a webhook URL only. */}
+      {mode === 'external_contact_pro' && (
+        <div className="border border-slate-200 rounded-lg p-3">
+          <div className="text-[11px] font-semibold text-slate-600 mb-1">
+            Direct-to-Tencent fallback
           </div>
+          <p className="text-[10px] text-slate-500 mb-3">
+            Used only when the Connector URL above is empty. Lets Acumon hit Tencent's WeCom APIs directly.
+            Most setups use the connector instead; keep these blank if you prefer.
+          </p>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
             <Field label="Corp ID" hint="WeCom → My Company → Corporation Info">
               <Input value={config.corpId || ''} onChange={e => setField('corpId', e.target.value)} placeholder={envPlaceholder(effective, 'corpId')} />
@@ -377,7 +381,7 @@ function WeComFields({ config, setField, effective }: { config: Record<string, a
               <Input value={config.apiBase || ''} onChange={e => setField('apiBase', e.target.value)} placeholder={envPlaceholder(effective, 'apiBase')} />
             </Field>
           </div>
-        </>
+        </div>
       )}
     </div>
   );
