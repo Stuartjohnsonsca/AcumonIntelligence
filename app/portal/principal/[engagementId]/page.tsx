@@ -22,7 +22,7 @@
 import { use, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 import { useSearchParams } from 'next/navigation';
-import { AlertTriangle, Clock, CheckCircle2, TrendingUp, RefreshCw, Settings, Loader2, Filter, ChevronDown, ChevronRight, X, Users, Building2, CheckSquare, Square } from 'lucide-react';
+import { AlertTriangle, Clock, CheckCircle2, TrendingUp, RefreshCw, Loader2, Filter, ChevronDown, ChevronRight, X, Users, Building2, CheckSquare, Square } from 'lucide-react';
 
 interface PrincipalDashboardData {
   engagementId: string;
@@ -353,20 +353,20 @@ export default function PortalPrincipalDashboardPage({ params }: { params: Promi
                 </p>
               </div>
               <div className="flex items-center gap-2">
-                {/* Direct shortcut to the FS-line × staff allocation
-                    grid. The setup page already opens that section
-                    by default; the #work-allocation hash scrolls it
-                    into view so the Principal lands on the grid
-                    rather than the staff list at the top. */}
+                {/* Work Allocation — direct route into the FS-line × staff
+                    allocation grid. The setup page hosts both the staff
+                    list and the allocation grid; the #work-allocation
+                    hash scrolls the grid into view. The redundant plain
+                    "Setup" button next to this was removed — both used
+                    to land on the same page, just at different scroll
+                    positions, which the Principal flagged as
+                    duplicate/confusing. */}
                 <Link
                   href={`/portal/setup/${engagementId}?token=${token}#work-allocation`}
                   className="inline-flex items-center gap-1 px-3 py-1.5 rounded-md bg-indigo-50 border border-indigo-200 text-indigo-700 text-sm hover:bg-indigo-100"
-                  title="Open the FS-line × staff Work Allocation grid"
+                  title="Open the Portal Principal Setup screen (staff list + Work Allocation grid)"
                 >
                   <Users className="w-4 h-4" />Work Allocation
-                </Link>
-                <Link href={`/portal/setup/${engagementId}?token=${token}`} className="inline-flex items-center gap-1 px-3 py-1.5 rounded-md border border-slate-300 text-sm hover:bg-slate-50">
-                  <Settings className="w-4 h-4" />Setup
                 </Link>
                 <button onClick={() => load()} className="inline-flex items-center gap-1 px-3 py-1.5 rounded-md bg-blue-600 text-white text-sm hover:bg-blue-700" disabled={loading}>
                   <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />Refresh
