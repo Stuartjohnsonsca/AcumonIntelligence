@@ -1338,6 +1338,8 @@ export function EngagementTabs({ engagement, auditType, clientName, periodEndDat
           pointType="management"
           title="Management Letter Points"
           userRole={teamMembers.find(m => m.userId === currentUserId)?.role}
+          userId={currentUserId}
+          teamMembers={teamMembers}
           onClose={() => { setOpenPanel(null); void refreshMgtCounts(); }}
         />
       )}
@@ -1347,6 +1349,8 @@ export function EngagementTabs({ engagement, auditType, clientName, periodEndDat
           pointType="representation"
           title="Representation Letter Points"
           userRole={teamMembers.find(m => m.userId === currentUserId)?.role}
+          userId={currentUserId}
+          teamMembers={teamMembers}
           onClose={() => { setOpenPanel(null); void refreshRepCounts(); }}
         />
       )}

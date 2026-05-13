@@ -7,15 +7,8 @@ import {
   AUDIT_POINT_SAFE_SELECT,
   AUDIT_POINT_MINIMAL_SELECT,
   isMissingMigrationColumn,
+  stripMigrationFields,
 } from '@/lib/audit-points-select';
-
-// Strip migration-only fields from a Prisma write payload when we
-// detect the 2026-04-22 migration hasn't been applied. Keeps the rest
-// of the create/update intact.
-function stripMigrationFields<T extends Record<string, any>>(data: T): T {
-  const { colour: _c, linkedFromType: _t, linkedFromId: _i, ...rest } = data;
-  return rest as T;
-}
 
 // Run a write with the FULL safe-select; on missing-column error, drop
 // migration-only fields from both data and projection and retry. Logs
@@ -139,7 +132,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ eng
   if (!await verifyAccess(engagementId, session.user.firmId, session.user.isSuperAdmin)) return NextResponse.json({ error: 'Not found' }, { status: 404 });
 
   const body = await req.json();
-  const { pointType, description, heading, body: bodyText, reference, attachments } = body;
+  const { pointType, description, heading, body: bodyText, reference, attachments, assignedToUserId } = body;
 
   if (!pointType || !description?.trim()) {
     return NextResponse.json({ error: 'pointType and description required' }, { status: 400 });
@@ -157,15 +150,37 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ eng
   });
   const chatNumber = (maxChat._max.chatNumber || 0) + 1;
 
+  // Resolve the assignee at create time when supplied — same lookup
+  // the 'assign' PATCH action uses so the role cache stays in sync.
+  let assignee: { id?: string; name?: string; role?: string } = {};
+  if (assignedToUserId) {
+    const member = await prisma.auditTeamMember.findFirst({
+      where: { engagementId, userId: String(assignedToUserId) },
+      select: { userId: true, role: true, user: { select: { name: true, email: true } } },
+    });
+    if (member) {
+      assignee = {
+        id: member.userId,
+        name: member.user?.name || member.user?.email || undefined,
+        role: member.role,
+      };
+    }
+  }
+
   // Explicit select on writes for the same reason as the GET handler:
-  // production Supabase may be missing `colour` / `linked_from_*`, and
-  // Prisma's default INSERT ... RETURNING * blows up on those columns.
+  // production Supabase may be missing migration-only columns
+  // (colour / linked_from_* / assignee fields / status_history).
   // writeWithFallback retries with the minimal projection if any of
   // those columns are missing, so the create still succeeds.
-  const createData = {
+  const createData: any = {
     engagementId,
     pointType,
     chatNumber,
+    // Default new points to the open workflow status. Legacy 'new'
+    // is retained for review_point / ri_matter back-compat but the
+    // management/representation flow starts with 'open' so the
+    // status dropdown matches the user-facing labels.
+    status: pointType === 'management' || pointType === 'representation' ? 'open' : 'new',
     description: description.trim(),
     heading: heading || null,
     body: bodyText || null,
@@ -173,10 +188,13 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ eng
     attachments: attachments || null,
     createdById: session.user.id,
     createdByName: session.user.name || session.user.email || '',
+    assignedToUserId: assignee.id || null,
+    assignedToName: assignee.name || null,
+    assignedToRole: assignee.role || null,
   };
   const point = await writeWithFallback(
     () => prisma.auditPoint.create({ data: createData, select: AUDIT_POINT_SAFE_SELECT }),
-    () => prisma.auditPoint.create({ data: createData, select: AUDIT_POINT_MINIMAL_SELECT }),
+    () => prisma.auditPoint.create({ data: stripMigrationFields(createData), select: AUDIT_POINT_MINIMAL_SELECT }),
     'POST create',
   );
 
@@ -265,6 +283,135 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ en
       }
       throw err;
     }
+  }
+
+  // Assign point to a team member. The caller may pass null/empty to
+  // unassign. Role is cached at assignment time so the status-change
+  // gate can compare ranks without a second hop. Anyone on the team
+  // can change the assignee — assignment is not a senior-only action.
+  if (action === 'assign') {
+    const { assignedToUserId, assignedToName } = body;
+    let role: string | null = null;
+    let resolvedName: string | null = assignedToName ? String(assignedToName).trim() : null;
+    if (assignedToUserId) {
+      const member = await prisma.auditTeamMember.findFirst({
+        where: { engagementId, userId: String(assignedToUserId) },
+        select: { role: true, userId: true, user: { select: { name: true, email: true } } },
+      });
+      if (!member) {
+        return NextResponse.json({ error: 'Assignee is not a member of this engagement team' }, { status: 400 });
+      }
+      role = member.role;
+      // Fill the name from the team-member record if the caller
+      // didn't supply one — saves the client a lookup.
+      if (!resolvedName) {
+        resolvedName = member.user?.name || member.user?.email || null;
+      }
+    }
+    const data = {
+      assignedToUserId: assignedToUserId ? String(assignedToUserId) : null,
+      assignedToName: resolvedName,
+      assignedToRole: role,
+    };
+    try {
+      const point = await prisma.auditPoint.update({
+        where: { id }, data, select: AUDIT_POINT_SAFE_SELECT,
+      });
+      return NextResponse.json({ point });
+    } catch (err: any) {
+      if (isMissingMigrationColumn(err)) {
+        return NextResponse.json({
+          error: 'Assignee requires a database migration. Run scripts/sql/audit-points-assignee-status-history.sql in Supabase.',
+        }, { status: 422 });
+      }
+      throw err;
+    }
+  }
+
+  // Status workflow — Open / Addressed / Reviewed / Closed.
+  //
+  // Each transition stamps the user + their role and appends an entry
+  // to status_history so the per-point timeline can render every
+  // change. The role-rank gate prevents a more-junior user from
+  // overriding a status set by a more senior team member: we look at
+  // the most recent status_history entry and require the caller's
+  // rank to be >= the previous setter's rank.
+  if (action === 'status') {
+    const { status: nextStatus } = body;
+    const allowed = new Set(['open', 'addressed', 'reviewed', 'closed']);
+    if (!nextStatus || !allowed.has(String(nextStatus))) {
+      return NextResponse.json({ error: 'Invalid status — use open | addressed | reviewed | closed' }, { status: 400 });
+    }
+    const callerRole = await resolveTeamRole(engagementId, session.user.id);
+    const callerRank = ROLE_RANK[callerRole] ?? 0;
+
+    // Look up the most recent status_history entry to compare ranks.
+    // Status history may be missing on legacy rows — treat as
+    // "no senior has set this", i.e. allow the change.
+    const history: Array<{ status?: string; byRole?: string; byId?: string; byName?: string; at?: string }> =
+      Array.isArray((existing as any).statusHistory) ? (existing as any).statusHistory : [];
+    const previous = history.length > 0 ? history[history.length - 1] : null;
+    const previousRank = previous?.byRole ? (ROLE_RANK[previous.byRole] ?? 0) : 0;
+    if (!session.user.isSuperAdmin && previous && callerRank < previousRank) {
+      return NextResponse.json({
+        error: `Status was last set to "${previous.status}" by ${previous.byName || 'a senior reviewer'} (${previous.byRole}). You need at least their authority to change it.`,
+      }, { status: 403 });
+    }
+
+    const stampedName = (session.user.name || session.user.email || 'Unknown') + ` (${callerRole})`;
+    const entry = {
+      status: nextStatus,
+      byId: session.user.id,
+      byName: session.user.name || session.user.email || 'Unknown',
+      byRole: callerRole,
+      at: new Date().toISOString(),
+    };
+    const nextHistory = [...history, entry];
+
+    // When the status is 'closed' we also stamp the legacy closedBy*
+    // fields so existing read paths (which only know about those
+    // columns) still surface "closed by X". For non-closed statuses
+    // we clear the legacy stamp so the row doesn't read as closed
+    // when it isn't.
+    const closeFields = nextStatus === 'closed'
+      ? { closedById: session.user.id, closedByName: stampedName, closedAt: new Date() }
+      : { closedById: null, closedByName: null, closedAt: null };
+
+    const data = {
+      status: nextStatus,
+      statusHistory: nextHistory as any,
+      ...closeFields,
+    };
+    let point;
+    try {
+      point = await prisma.auditPoint.update({
+        where: { id }, data, select: AUDIT_POINT_SAFE_SELECT,
+      });
+    } catch (err: any) {
+      if (isMissingMigrationColumn(err)) {
+        return NextResponse.json({
+          error: 'Status workflow requires a database migration. Run scripts/sql/audit-points-assignee-status-history.sql in Supabase.',
+        }, { status: 422 });
+      }
+      throw err;
+    }
+    // Audit-trail entry so the per-point history popover and the
+    // engagement-wide log both pick up the change.
+    const actor = await resolveActor(engagementId, session);
+    if (actor) {
+      await logEngagementAction({
+        engagementId,
+        firmId: actor.firmId,
+        actorUserId: actor.actorUserId,
+        actorName: stampedName,
+        action: `audit-point.status-${nextStatus}`,
+        summary: `Set ${existing.pointType.replace(/_/g, ' ')} #${existing.chatNumber} status to ${nextStatus}: ${(existing.description || '').slice(0, 120)}${(existing.description || '').length > 120 ? '…' : ''}`,
+        targetType: 'audit_point',
+        targetId: id,
+        metadata: { pointType: existing.pointType, chatNumber: existing.chatNumber, role: callerRole, previousStatus: existing.status },
+      });
+    }
+    return NextResponse.json({ point });
   }
 
   // Close point — RI only for ri_matter (user requirement). Other

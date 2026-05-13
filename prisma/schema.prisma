@@ -3962,7 +3962,15 @@ model AuditPoint {
   engagementId String  @map("engagement_id")
   pointType    String  @map("point_type") // review_point | management | representation | ri_matter
   chatNumber   Int     @map("chat_number")
-  status       String  @default("new") // new | open | closed | committed | cancelled
+  // Lifecycle status. Existing values (review_point / ri_matter):
+  //   new | open | closed
+  // Management / Representation workflow:
+  //   open | addressed | reviewed | closed
+  // Legacy values still in production data:
+  //   committed | cancelled — both display as Closed in the new UI;
+  //   the underlying string is preserved so old audits read back
+  //   unchanged.
+  status       String  @default("new")
   // Traffic-light colour set by the user. null = no colour picked.
   // Kept as a free-text string rather than an enum so firms can add
   // their own tones later without a migration. Canonical values the
@@ -3980,6 +3988,21 @@ model AuditPoint {
   createdByName String   @map("created_by_name")
   createdAt     DateTime @default(now()) @map("created_at")
   updatedAt     DateTime @updatedAt @map("updated_at")
+
+  // Assignment — team member responsible for actioning the point.
+  // Role is cached at assignment time so the status-change authority
+  // gate can compare ranks without a second DB hop. Cleared (set
+  // back to null) when the assignee is removed.
+  assignedToUserId String? @map("assigned_to_user_id")
+  assignedToName   String? @map("assigned_to_name")
+  assignedToRole   String? @map("assigned_to_role")
+
+  // Status history — append-only audit trail of every status change.
+  // Shape: [{ status, byId, byName, byRole, at }]. Used by the UI to
+  // surface a per-point timeline and by the authority gate to find
+  // the most-senior-role-that-set-this-status when deciding whether
+  // a more junior user is allowed to override.
+  statusHistory Json? @map("status_history")
 
   // Closure / Commit
   closedById   String?   @map("closed_by_id")
@@ -4005,6 +4028,7 @@ model AuditPoint {
 
   @@index([engagementId, pointType])
   @@index([engagementId, pointType, status])
+  @@index([engagementId, assignedToUserId])
   @@index([linkedFromId])
   @@map("audit_points")
 }
