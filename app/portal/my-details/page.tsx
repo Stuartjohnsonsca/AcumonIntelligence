@@ -52,6 +52,11 @@ function MyDetailsContent() {
   // the editor reports a save so the UI reflects server-side
   // normalisation (e.g. phone-number cleaning).
   const [channels, setChannels] = useState<ChannelsState | null>(null);
+  // Best-effort WeCom join URL from any engagement the user is on.
+  // We pick the first non-null wecomJoinUrl across the user's
+  // engagements (Principal or Staff) so the WeChat row in the
+  // MessagingChannelsEditor can render the firm's invite QR.
+  const [wecomJoinUrl, setWecomJoinUrl] = useState<string | null>(null);
   const [pwLoading, setPwLoading] = useState(false);
   const [pwMessage, setPwMessage] = useState('');
   const [pwError, setPwError] = useState('');
@@ -82,6 +87,22 @@ function MyDetailsContent() {
       // Channels live on a separate endpoint so my-details stays
       // lean; load them in parallel-ish so the messaging section
       // doesn't keep the rest of the page waiting.
+      // Pick a WeCom join URL from any of the user's engagements. We
+      // ask /api/portal/my-engagements (which already filters to the
+      // user's clients) and take the first non-null wecomJoinUrl —
+      // when a user is on multiple engagements with different join
+      // URLs, the first one wins. Most setups have one URL per
+      // client, so this is rarely an issue.
+      try {
+        const er = await fetch(`/api/portal/my-engagements?token=${token}`);
+        if (er.ok) {
+          const ed = await er.json();
+          const candidates = [...(ed?.principalFor || []), ...(ed?.staffOn || [])];
+          const firstUrl = candidates.map((c: any) => c.wecomJoinUrl).find((u: any) => typeof u === 'string' && u);
+          if (firstUrl) setWecomJoinUrl(firstUrl);
+        }
+      } catch {}
+
       try {
         const cr = await fetch(`/api/portal/messaging-channels?token=${token}`);
         if (cr.ok) {
@@ -341,6 +362,7 @@ function MyDetailsContent() {
             value={channels}
             onChange={setChannels}
             title="How would you like to be notified?"
+            wecomJoinUrl={wecomJoinUrl}
           />
         </div>
       )}

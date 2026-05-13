@@ -27,6 +27,7 @@ export async function GET(req: Request) {
       id: true,
       auditType: true,
       portalSetupCompletedAt: true,
+      wecomJoinUrl: true,
       client: { select: { clientName: true } },
       period: { select: { startDate: true, endDate: true } },
     },
@@ -50,6 +51,7 @@ export async function GET(req: Request) {
           id: true,
           auditType: true,
           portalSetupCompletedAt: true,
+          wecomJoinUrl: true,
           client: { select: { clientName: true } },
           period: { select: { startDate: true, endDate: true } },
         },
@@ -66,6 +68,7 @@ export async function GET(req: Request) {
       periodStart: e.period?.startDate,
       periodEnd: e.period?.endDate,
       setupCompletedAt: e.portalSetupCompletedAt,
+      wecomJoinUrl: e.wecomJoinUrl,
     })),
     staffOn: staffEngagements.map(s => s.engagement ? ({
       id: s.engagement.id,
@@ -74,6 +77,7 @@ export async function GET(req: Request) {
       periodStart: s.engagement.period?.startDate,
       periodEnd: s.engagement.period?.endDate,
       setupCompletedAt: s.engagement.portalSetupCompletedAt,
+      wecomJoinUrl: s.engagement.wecomJoinUrl,
     }) : null).filter(Boolean),
   });
 }

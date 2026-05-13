@@ -2241,6 +2241,17 @@ model AuditEngagement {
   // Null = no WeCom group configured; the channel is skipped.
   wecomGroupWebhookUrl String? @map("wecom_group_webhook_url")
 
+  // Client-facing WeCom group JOIN URL or invite QR. Pasted by the
+  // Portal Principal during Setup, after the audit firm shares it
+  // out-of-band (email, kickoff meeting). Distinct from the webhook
+  // URL above:
+  //   wecomGroupWebhookUrl — backend POSTs messages into the group.
+  //   wecomJoinUrl         — clients tap this to JOIN the group.
+  // Surfaced read-only on /portal/my-details so staff can scan to
+  // join. Only the Portal Principal can write it (assertPortal
+  // Principal gate on the PUT endpoint).
+  wecomJoinUrl String? @map("wecom_join_url") @db.Text
+
   // How long (days) a logged-in portal user can re-authenticate with
   // just username + password from a previously-trusted device before
   // 2FA kicks back in. Set by the Portal Principal during setup.

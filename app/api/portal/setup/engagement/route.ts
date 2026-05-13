@@ -40,6 +40,7 @@ export async function GET(req: Request) {
       portalPrincipalId: true,
       portalSetupCompletedAt: true,
       portal2faTrustDays: true,
+      wecomJoinUrl: true,
       auditType: true,
       client: { select: { clientName: true } },
       period: { select: { startDate: true, endDate: true } },
@@ -249,6 +250,7 @@ export async function GET(req: Request) {
       setupCompletedAt: eng.portalSetupCompletedAt,
       portalPrincipalId: eng.portalPrincipalId,
       portal2faTrustDays: eng.portal2faTrustDays,
+      wecomJoinUrl: eng.wecomJoinUrl,
     },
     staff,
     suggestions,
@@ -292,6 +294,26 @@ export async function PUT(req: Request) {
   const body = await req.json().catch(() => ({}));
   const patch: Record<string, any> = {};
 
+  // wecomJoinUrl — the client-facing WeCom group invite URL or QR
+  // image URL. We're permissive about the host (different WeCom
+  // accounts/regions use different hosts: work.weixin.qq.com,
+  // wework.qpic.cn for QR images, qrcode.work.weixin.qq.com, etc.)
+  // but require HTTPS to catch typos.
+  if ('wecomJoinUrl' in body) {
+    if (body.wecomJoinUrl === null || body.wecomJoinUrl === '') {
+      patch.wecomJoinUrl = null;
+    } else if (typeof body.wecomJoinUrl === 'string') {
+      const trimmed = body.wecomJoinUrl.trim();
+      if (!trimmed) {
+        patch.wecomJoinUrl = null;
+      } else if (/^https:\/\//i.test(trimmed)) {
+        patch.wecomJoinUrl = trimmed;
+      } else {
+        return NextResponse.json({ error: 'WeCom join URL must start with https://' }, { status: 400 });
+      }
+    }
+  }
+
   // portal2faTrustDays — clamp to a sane range. 0 / null means
   // "always require 2FA" (the safest default). Cap at 365 so a
   // misclick can't accidentally grant a year of trust.
@@ -317,7 +339,7 @@ export async function PUT(req: Request) {
   const updated = await prisma.auditEngagement.update({
     where: { id: engagementId },
     data: patch,
-    select: { id: true, portal2faTrustDays: true },
+    select: { id: true, portal2faTrustDays: true, wecomJoinUrl: true },
   });
   return NextResponse.json({ ok: true, engagement: updated });
 }

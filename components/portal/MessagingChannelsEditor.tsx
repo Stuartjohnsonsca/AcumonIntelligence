@@ -62,10 +62,17 @@ interface Props {
   compact?: boolean;
   /** Render with a leading title block. */
   title?: string;
+  /** Optional WeCom group invite URL or QR-image URL from the
+   *  engagement (pasted by the Portal Principal during Setup).
+   *  When present, the WeChat row renders it as a tap-to-join
+   *  link or QR preview so staff don't need a separate
+   *  "Connect WeChat" gesture. Read-only — only the Principal can
+   *  change it. */
+  wecomJoinUrl?: string | null;
 }
 
 export function MessagingChannelsEditor({
-  mode, token, staffId, value, onChange, compact, title,
+  mode, token, staffId, value, onChange, compact, title, wecomJoinUrl,
 }: Props) {
   const [saving, setSaving] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -307,6 +314,40 @@ export function MessagingChannelsEditor({
             <p className="text-[11px] text-slate-500">
               Scan a QR with the WeChat app to link your account. The audit firm sends messages via its WeCom (企业微信) Official Account — you read and reply in regular WeChat.
             </p>
+
+            {/* When the Portal Principal has pasted a WeCom join URL
+                / QR for this engagement, surface it inline so the
+                user can tap (mobile) or scan (desktop). Image URLs
+                preview as a QR; non-image URLs render as a "Tap to
+                join in WeChat" link. Read-only — staff can't edit. */}
+            {wecomJoinUrl && (
+              <div className="rounded border border-emerald-200 bg-emerald-50/40 p-2.5 space-y-1.5">
+                <p className="text-[11px] font-medium text-emerald-800">
+                  Your audit firm's WeCom group invite:
+                </p>
+                {/^https:\/\/.+(\.png|\.jpg|\.jpeg|qpic\.cn)/i.test(wecomJoinUrl) ? (
+                  <>
+                    <img
+                      src={wecomJoinUrl}
+                      alt="WeCom group join QR"
+                      className="w-40 h-40 border border-emerald-200 rounded bg-white"
+                    />
+                    <p className="text-[10px] text-emerald-700">
+                      Open WeChat → Scan → Join group.
+                    </p>
+                  </>
+                ) : (
+                  <a
+                    href={wecomJoinUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-flex items-center gap-1 text-[11px] px-2 py-1 bg-emerald-600 text-white rounded hover:bg-emerald-700"
+                  >
+                    <QrCode className="h-3 w-3" /> Tap to open in WeChat
+                  </a>
+                )}
+              </div>
+            )}
             {mode === 'self' ? (
               <div className="space-y-1">
                 {value.wechatOpenId ? (

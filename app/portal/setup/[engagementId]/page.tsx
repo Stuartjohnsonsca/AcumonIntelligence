@@ -382,6 +382,22 @@ export default function PortalSetupPage({ params }: { params: Promise<{ engageme
           onSaved={() => { setBanner('2FA trust window updated.'); load(); }}
         />
 
+        {/* WeCom group join URL — paste-once setting. The audit firm
+            sends the Principal a WeCom group invite (URL or QR image
+            URL) out-of-band (email / kickoff meeting). Principal
+            pastes it here once. Staff see it read-only on their
+            My Details page when they pick WeChat preference and can
+            scan to join. Only the Portal Principal can edit; the
+            audit firm controls the WeCom group itself (admin rights),
+            so other client users can't kick the firm out or remove
+            content. */}
+        <WeComJoinCard
+          engagementId={engagementId}
+          token={token}
+          initial={eng.wecomJoinUrl ?? null}
+          onSaved={() => { setBanner('WeCom join URL updated.'); load(); }}
+        />
+
         {/* Collapsible: Staff */}
         <div className="bg-white border border-slate-200 rounded-lg">
           <button
@@ -897,6 +913,121 @@ function AllocationRow({ label, staffOptions, principalOption, alloc, onChange, 
           </select>
         );
       })}
+    </div>
+  );
+}
+
+// ─── WeCom Join URL card ──────────────────────────────────────────
+//
+// The Principal pastes the audit firm's WeCom group invite URL or QR
+// image URL once. Staff see it read-only on their My Details page
+// when they pick WeChat as their preferred channel; they scan to
+// join. We don't validate the host strictly because WeCom QR URLs
+// can come from several Tencent hosts (work.weixin.qq.com,
+// wework.qpic.cn, qrcode.work.weixin.qq.com) — we just require
+// HTTPS to catch typos.
+
+function WeComJoinCard({
+  engagementId, token, initial, onSaved,
+}: {
+  engagementId: string;
+  token: string;
+  initial: string | null;
+  onSaved: () => void;
+}) {
+  const [value, setValue] = useState(initial ?? '');
+  const [saving, setSaving] = useState(false);
+  const [savedMsg, setSavedMsg] = useState<string | null>(null);
+  const [errMsg, setErrMsg] = useState<string | null>(null);
+
+  useEffect(() => { setValue(initial ?? ''); }, [initial]);
+
+  async function save() {
+    setSaving(true); setErrMsg(null); setSavedMsg(null);
+    try {
+      const trimmed = value.trim();
+      if (trimmed && !/^https:\/\//i.test(trimmed)) {
+        setErrMsg('Must start with https://');
+        return;
+      }
+      const res = await fetch(`/api/portal/setup/engagement?token=${encodeURIComponent(token)}&engagementId=${encodeURIComponent(engagementId)}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ wecomJoinUrl: trimmed || null }),
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data?.error || `Save failed (${res.status})`);
+      }
+      setSavedMsg('Saved.');
+      onSaved();
+    } catch (e: any) {
+      setErrMsg(e?.message || 'Save failed');
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  // Best-effort: when the pasted value looks like a QR image URL
+  // (.jpg / .png / qpic.cn host), preview it so the Principal can
+  // eyeball that they pasted the right thing.
+  const looksLikeImage = !!value && /(\.png|\.jpg|\.jpeg|qpic\.cn)/i.test(value);
+
+  return (
+    <div className="bg-white border border-slate-200 rounded-lg p-5">
+      <div className="flex items-start gap-3">
+        <MessageSquare className="w-4 h-4 text-emerald-600 mt-1" />
+        <div className="flex-1">
+          <h2 className="text-sm font-semibold text-slate-800">WeCom group — join URL or QR</h2>
+          <p className="text-xs text-slate-600 mt-1 max-w-2xl">
+            The audit firm will send you a WeCom group invite URL or QR image (by email or at kickoff).
+            Paste it here once. Your staff will see it read-only and can scan it from WeChat to join the group.
+            Only you (the Portal Principal) can change this — staff cannot edit or clear it.
+          </p>
+          <p className="text-[11px] text-slate-500 mt-1.5">
+            <strong>The audit firm stays in control of the WeCom group.</strong> Clients join as regular members and cannot remove the firm or its pinned content.
+          </p>
+          <div className="mt-3 space-y-2">
+            <input
+              type="url"
+              value={value}
+              onChange={e => setValue(e.target.value)}
+              placeholder="https://work.weixin.qq.com/… or QR image URL"
+              className="w-full border border-slate-300 rounded px-3 py-1.5 text-sm font-mono focus:outline-none focus:border-emerald-300"
+            />
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => void save()}
+                disabled={saving}
+                className="inline-flex items-center gap-1 text-xs px-3 py-1.5 bg-emerald-600 text-white rounded hover:bg-emerald-700 disabled:opacity-50"
+              >
+                {saving ? <Loader2 className="w-3 h-3 animate-spin" /> : <Save className="w-3 h-3" />}
+                Save
+              </button>
+              {value && (
+                <button
+                  type="button"
+                  onClick={() => setValue('')}
+                  className="text-[11px] text-slate-500 hover:text-red-600 underline"
+                >Clear</button>
+              )}
+              {savedMsg && <span className="text-[11px] text-emerald-700">{savedMsg}</span>}
+              {errMsg && <span className="text-[11px] text-red-700">{errMsg}</span>}
+            </div>
+            {looksLikeImage && value && (
+              <div className="mt-2">
+                <p className="text-[10px] text-slate-500 mb-1">Preview (so you can check before saving):</p>
+                <img
+                  src={value}
+                  alt="WeCom join QR"
+                  className="w-40 h-40 border border-slate-200 rounded bg-white"
+                  onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }}
+                />
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
     </div>
   );
 }
