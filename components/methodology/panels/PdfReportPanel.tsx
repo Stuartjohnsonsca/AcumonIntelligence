@@ -1,8 +1,9 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { FileText, Loader2, Eye, Download, X, MessageSquare } from 'lucide-react';
+import { FileText, Loader2, Eye, Download, X, MessageSquare, Sparkles } from 'lucide-react';
 import { InterrogateBotModal } from './InterrogateBotModal';
+import { MonitoringReportsModal } from './MonitoringReportsModal';
 
 interface ReportRow {
   id: string;
@@ -41,6 +42,10 @@ export function PdfReportPanel({ engagementId }: { engagementId: string }) {
   const [error, setError] = useState<string | null>(null);
   const [viewing, setViewing] = useState<ReportRow | null>(null);
   const [interrogating, setInterrogating] = useState(false);
+  // Monitoring Reports — saved questions the InterrogateBot answers
+  // on a schedule (e.g. weekly status digest). Sits next to
+  // InterrogateBot since they share the same Q&A surface.
+  const [monitoring, setMonitoring] = useState(false);
 
   async function refresh() {
     try {
@@ -100,6 +105,17 @@ export function PdfReportPanel({ engagementId }: { engagementId: string }) {
             title="Ask questions about this audit file — answers are strictly from the file content"
           >
             <MessageSquare className="h-3 w-3" /> InterrogateBot
+          </button>
+          {/* Monitoring Reports — saved question lists the
+              InterrogateBot re-answers on a schedule (e.g. weekly
+              status digest) so the team gets a recurring report
+              without having to open the bot every Monday morning. */}
+          <button
+            onClick={() => setMonitoring(true)}
+            className="inline-flex items-center gap-1 text-xs px-3 py-1 bg-purple-600 text-white rounded hover:bg-purple-700"
+            title="Define questions that run on a schedule and produce a recurring report"
+          >
+            <Sparkles className="h-3 w-3" /> Monitoring Reports
           </button>
           {list?.canGenerate && (
             <button
@@ -188,6 +204,10 @@ export function PdfReportPanel({ engagementId }: { engagementId: string }) {
 
       {interrogating && (
         <InterrogateBotModal engagementId={engagementId} onClose={() => setInterrogating(false)} />
+      )}
+
+      {monitoring && (
+        <MonitoringReportsModal engagementId={engagementId} onClose={() => setMonitoring(false)} />
       )}
     </div>
   );

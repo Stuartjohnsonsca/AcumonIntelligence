@@ -15,6 +15,10 @@
     {
       "path": "/api/cron/portal-escalation",
       "schedule": "0 * * * *"
+    },
+    {
+      "path": "/api/cron/audit-file-monitoring",
+      "schedule": "15 * * * *"
     }
   ]
 }

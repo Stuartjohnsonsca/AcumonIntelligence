@@ -2205,6 +2205,8 @@ model AuditEngagement {
   importProposals       ImportExtractionProposal[]
   importHandoffSessions ImportHandoffSession[]
   interrogateInteractions InterrogateInteraction[]
+  monitoringReports     AuditFileMonitoringReport[]
+  monitoringRuns        AuditFileMonitoringRun[]
 
   @@unique([clientId, periodId, auditType])
   @@index([firmId])
@@ -2371,6 +2373,83 @@ model InterrogateInteraction {
   @@index([rating])
   @@index([userId])
   @@map("interrogate_interactions")
+}
+
+/// Saved set of questions that the firm wants the InterrogateBot to
+/// re-answer on a regular cadence. Sits behind the "Monitoring
+/// Reports" button on the Opening tab's Audit File panel — auditors
+/// configure a name, a list of questions ("How quickly is the client
+/// responding?", "Which tests have no execution rows yet?", etc.) and
+/// a frequency. A cron sweeps due reports, runs each question through
+/// /interrogate, and stores the answers as an AuditFileMonitoringRun.
+///
+/// Manual runs are supported — the auditor can click "Run now" and
+/// get an immediate report without waiting for the schedule.
+model AuditFileMonitoringReport {
+  id           String   @id @default(uuid())
+  engagementId String   @map("engagement_id")
+  firmId       String   @map("firm_id")
+  name         String
+  /// Array of plain-text questions, e.g. ["How fast are the client
+  /// responding to portal requests on average?",
+  /// "Which methodology tests have no executions recorded yet?"]
+  questions    Json     @default("[]")
+  /// 'manual' | 'daily' | 'weekly' | 'monthly'. Manual reports skip
+  /// the cron and only fire on the Run-now button.
+  frequency    String   @default("weekly")
+  /// When the next scheduled run is due. Null on manual reports.
+  /// Updated to the next slot after each successful cron-run.
+  nextRunAt    DateTime? @map("next_run_at")
+  lastRunAt    DateTime? @map("last_run_at")
+  /// Optional list of email addresses that get the report after each
+  /// run. JSON array of strings. Empty / null means in-app only.
+  emailRecipients Json?  @map("email_recipients")
+  /// Soft-disable so a report can be paused without losing its
+  /// question list.
+  isActive     Boolean  @default(true) @map("is_active")
+  createdById  String   @map("created_by_id")
+  createdByName String? @map("created_by_name")
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
+
+  engagement AuditEngagement              @relation(fields: [engagementId], references: [id], onDelete: Cascade)
+  runs       AuditFileMonitoringRun[]
+
+  @@index([engagementId])
+  @@index([firmId, isActive, nextRunAt])
+  @@map("audit_file_monitoring_reports")
+}
+
+/// One row per execution of an AuditFileMonitoringReport. Holds the
+/// snapshot of answers as they were at run time so the auditor can
+/// compare trends across runs (e.g. "Client response time was 2.3
+/// days last week, 4.1 days this week").
+model AuditFileMonitoringRun {
+  id           String   @id @default(uuid())
+  reportId     String   @map("report_id")
+  engagementId String   @map("engagement_id")
+  /// 'manual' | 'scheduled' — useful for filtering ad-hoc runs out
+  /// of the trend chart.
+  trigger      String   @default("scheduled")
+  runAt        DateTime @default(now()) @map("run_at")
+  /// Array of { question, answer, citations? } in the same order as
+  /// the parent report's questions array at the time the run fired.
+  answers      Json     @default("[]")
+  /// Free-text status — 'ok', 'partial', 'failed'. Partial when some
+  /// questions answered and others didn't (e.g. quota exhausted
+  /// mid-run).
+  status       String   @default("ok")
+  errorMessage String?  @map("error_message") @db.Text
+  /// Recipients the run was emailed to, if any. Captured at run time
+  /// so changes to the report's recipient list don't rewrite history.
+  emailedTo    Json?    @map("emailed_to")
+
+  report     AuditFileMonitoringReport @relation(fields: [reportId], references: [id], onDelete: Cascade)
+  engagement AuditEngagement           @relation(fields: [engagementId], references: [id], onDelete: Cascade)
+
+  @@index([reportId, runAt])
+  @@index([engagementId, runAt])
+  @@map("audit_file_monitoring_runs")
 }
 
 /// Phase 3: AuditDocument content chunked and embedded for retrieval-
