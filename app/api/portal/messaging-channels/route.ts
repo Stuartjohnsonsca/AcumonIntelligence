@@ -35,6 +35,7 @@ export async function GET(req: Request) {
       wechatNickname: true,
       wechatOptIn: true,
       wechatLinkExpiresAt: true,
+      preferredCommunicationChannel: true,
     },
   });
   return NextResponse.json({ channels: user });
@@ -67,6 +68,22 @@ export async function PUT(req: Request) {
   // can claim a chat by posting an OpenID directly.
   if (typeof body.wechatOptIn === 'boolean') patch.wechatOptIn = body.wechatOptIn;
 
+  // Preferred channel — single-select radio. Whitelisted values so
+  // the column never holds something the orchestrator doesn't know
+  // how to route. Null clears the preference (notifications fall
+  // back to email).
+  const ALLOWED_PREFS = ['whatsapp', 'telegram', 'sms', 'wechat', 'email', 'none'];
+  if ('preferredCommunicationChannel' in body) {
+    const raw = body.preferredCommunicationChannel;
+    if (raw === null || raw === '' || raw === undefined) {
+      patch.preferredCommunicationChannel = null;
+    } else if (typeof raw === 'string' && ALLOWED_PREFS.includes(raw)) {
+      patch.preferredCommunicationChannel = raw;
+    } else {
+      return NextResponse.json({ error: `preferredCommunicationChannel must be one of ${ALLOWED_PREFS.join(', ')}.` }, { status: 400 });
+    }
+  }
+
   if (Object.keys(patch).length === 0) {
     return NextResponse.json({ error: 'No writeable fields supplied' }, { status: 400 });
   }
@@ -85,6 +102,7 @@ export async function PUT(req: Request) {
       wechatOpenId: true,
       wechatNickname: true,
       wechatOptIn: true,
+      preferredCommunicationChannel: true,
     },
   });
   return NextResponse.json({ channels: user });

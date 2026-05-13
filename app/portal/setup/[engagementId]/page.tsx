@@ -558,6 +558,12 @@ export default function PortalSetupPage({ params }: { params: Promise<{ engageme
                                     wechatOpenId: null,
                                     wechatNickname: null,
                                     wechatOptIn: !!s.wechatOptIn,
+                                    // Principal-side hints don't carry the staff
+                                    // member's preferred channel — that's their
+                                    // own /portal/my-details choice. Show null
+                                    // here; the staff editor branch of the
+                                    // component ignores the preference UI.
+                                    preferredCommunicationChannel: null,
                                   }}
                                   onChange={(next: ChannelsState) => mergeStaffChannels(s.id, next)}
                                 />

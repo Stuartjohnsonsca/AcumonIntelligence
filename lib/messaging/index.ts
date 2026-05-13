@@ -101,26 +101,47 @@ export async function notifyPortalUser(args: NotifyArgs): Promise<NotifyResult> 
       smsOptIn: true,
       wechatOpenId: true,
       wechatOptIn: true,
+      preferredCommunicationChannel: true,
     },
   });
   if (!user) {
     return { attempted: [], results: {} };
   }
 
-  // Compute the active channel set as (filter ∩ opted-in ∩ has contact).
+  // Single-select preferred channel — the radio button on the user's
+  // /portal/my-details page drives this. Fallback when null is
+  // 'email' (a no-op here — email is sent by the request creator,
+  // not by this orchestrator). 'none' explicitly suppresses chat
+  // notifications entirely.
+  const pref = user.preferredCommunicationChannel || 'email';
   const channels: MessageChannel[] = [];
+
+  // Filter (args.channels) lets callers force a specific channel
+  // regardless of preference (e.g. a "send a test WhatsApp" admin
+  // action). When the filter excludes the user's preferred channel
+  // we fall back to fanning out to every channel the user has the
+  // contact for + opted in to — mirrors the pre-preference
+  // behaviour. Without an args.channels filter we just send to the
+  // single preferred channel.
   const filter = args.channels ? new Set(args.channels) : null;
-  if ((!filter || filter.has('whatsapp')) && user.whatsappOptIn && user.whatsappNumber) {
-    channels.push('whatsapp');
-  }
-  if ((!filter || filter.has('telegram')) && user.telegramOptIn && user.telegramChatId) {
-    channels.push('telegram');
-  }
-  if ((!filter || filter.has('sms')) && user.smsOptIn && user.smsNumber) {
-    channels.push('sms');
-  }
-  if ((!filter || filter.has('wechat')) && user.wechatOptIn && user.wechatOpenId) {
-    channels.push('wechat');
+  if (filter) {
+    if (filter.has('whatsapp') && user.whatsappOptIn && user.whatsappNumber) channels.push('whatsapp');
+    if (filter.has('telegram') && user.telegramOptIn && user.telegramChatId) channels.push('telegram');
+    if (filter.has('sms') && user.smsOptIn && user.smsNumber) channels.push('sms');
+    if (filter.has('wechat') && user.wechatOptIn && user.wechatOpenId) channels.push('wechat');
+  } else {
+    // Single-channel mode driven by the user's preference. We still
+    // require the contact value to be present — otherwise the send
+    // would error immediately. When the contact is missing we log a
+    // 'failed' portal_messages row with a helpful error so the firm
+    // can prompt the user to complete setup.
+    if (pref === 'whatsapp' && user.whatsappNumber) channels.push('whatsapp');
+    else if (pref === 'telegram' && user.telegramChatId) channels.push('telegram');
+    else if (pref === 'sms' && user.smsNumber) channels.push('sms');
+    else if (pref === 'wechat' && user.wechatOpenId) channels.push('wechat');
+    // pref === 'email' / 'none' / null with no contact → channels stays
+    // empty. notifyPortalUser's caller fires email separately so the
+    // user still gets reached; 'none' is the explicit opt-out.
   }
 
   const results: Partial<Record<MessageChannel, SendResult>> = {};

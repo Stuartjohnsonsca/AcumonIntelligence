@@ -1,5 +1,17 @@
 # WeCom (企业微信 / WeChat Work) setup walkthrough
 
+> **Updated 2026-05-13.** The previous version of this doc had the audit team
+> paste a per-engagement WeCom Group Robot URL on the Opening tab. That
+> field is gone — clients now self-serve their notification preference
+> via a single-select radio button on `/portal/my-details`, reached via
+> a one-click "Send communication preferences invite" button on the
+> engagement's Opening tab. WeCom is still the backend; clients still
+> use consumer WeChat. The Group Robot URL is now a firm-wide fallback
+> in `WECOM_GROUP_WEBHOOK_URL` env, used only when a client picks
+> WeChat preference but the External Contact path (paid follow-up)
+> isn't yet wired.
+
+
 You've signed up for WeCom — good. The console **has an English UI**
 (toggle in the top-right corner if it's defaulted to Chinese), so
 this guide is more about which menu to click than about translating

@@ -97,6 +97,7 @@ function MyDetailsContent() {
             wechatOpenId: cd?.channels?.wechatOpenId ?? null,
             wechatNickname: cd?.channels?.wechatNickname ?? null,
             wechatOptIn: !!cd?.channels?.wechatOptIn,
+            preferredCommunicationChannel: cd?.channels?.preferredCommunicationChannel ?? null,
           });
         }
       } catch {}
@@ -325,17 +326,21 @@ function MyDetailsContent() {
         </div>
       )}
 
-      {/* Messaging channels — WhatsApp / Telegram / SMS opt-in.
+      {/* Messaging channels — single-select preferred channel.
           Loaded once on mount; the editor itself talks to the server
-          and re-emits the canonicalised state via onChange. */}
+          and re-emits the canonicalised state via onChange.
+          The id="communication" anchor lets the comms-preference
+          invite email deep-link straight to this card. scroll-mt-20
+          accounts for the sticky portal nav so the heading lands
+          below the chrome rather than under it. */}
       {channels && (
-        <div className="bg-white rounded-xl border border-slate-200 p-5">
+        <div id="communication" className="bg-white rounded-xl border border-slate-200 p-5 scroll-mt-20">
           <MessagingChannelsEditor
             mode="self"
             token={token}
             value={channels}
             onChange={setChannels}
-            title="Notify me by WhatsApp, Telegram or SMS"
+            title="How would you like to be notified?"
           />
         </div>
       )}

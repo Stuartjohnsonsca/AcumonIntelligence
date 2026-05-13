@@ -1166,6 +1166,14 @@ model ClientPortalUser {
   wechatLinkCode        String?   @unique @map("wechat_link_code")
   wechatLinkExpiresAt   DateTime? @map("wechat_link_expires_at")
 
+  // Single preferred outbound channel. The user (or the Portal
+  // Principal on their behalf) picks ONE of these in /portal/my-details;
+  // notifyPortalUser uses it instead of fanning out to every channel
+  // the user happens to have credentials for. Falls back to 'email'
+  // when null so notifications still land somewhere reasonable.
+  //   'whatsapp' | 'telegram' | 'sms' | 'wechat' | 'email' | 'none'
+  preferredCommunicationChannel String? @map("preferred_communication_channel")
+
   createdAt          DateTime  @default(now()) @map("created_at")
   updatedAt          DateTime  @updatedAt @map("updated_at")
 

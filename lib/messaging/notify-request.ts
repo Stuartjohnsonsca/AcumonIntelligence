@@ -51,13 +51,14 @@ export async function notifyOnPortalRequestCreated(
   });
   if (!req) return;
 
-  // Engagement-level lookup happens once and is reused for the two
-  // delivery channels:
-  //   1. Per-user notifyPortalUser (SMS / WhatsApp / Telegram / WeChat
-  //      via per-user opt-ins).
-  //   2. The engagement's WeCom Group Robot, when configured. Posts
-  //      the same body so every group member (audit team + clients
-  //      added via External Contact) sees the alert.
+  // Engagement-level lookup is still here so we can resolve the
+  // Portal Principal as a fallback assignee. The previous per-
+  // engagement WeCom Group Robot URL field is intentionally not
+  // surfaced anymore — clients self-serve their notification
+  // preference via /portal/my-details now. We still read the column
+  // (kept in the schema) as a firm-wide-fallback only when the
+  // single-channel send path inside notifyPortalUser needs a WeChat
+  // outlet and no other provider is configured.
   const engagement = req.engagementId
     ? await prisma.auditEngagement.findUnique({
         where: { id: req.engagementId },

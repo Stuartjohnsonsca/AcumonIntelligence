@@ -22,6 +22,8 @@
 import { useState, useCallback } from 'react';
 import { MessageSquare, Phone, Send, Loader2, CheckCircle2, AlertTriangle, ExternalLink, QrCode } from 'lucide-react';
 
+export type PreferredChannel = 'whatsapp' | 'telegram' | 'sms' | 'wechat' | 'email' | 'none';
+
 export interface ChannelsState {
   whatsappNumber: string | null;
   whatsappOptIn: boolean;
@@ -37,6 +39,11 @@ export interface ChannelsState {
   wechatOpenId?: string | null;
   wechatNickname?: string | null;
   wechatOptIn: boolean;
+  // Single preferred channel for outbound notifications. The radio
+  // button drives this; existing contact details on the other
+  // channels are kept on the record (so users can re-pick without
+  // re-entering their phone) but only the preferred channel fires.
+  preferredCommunicationChannel?: PreferredChannel | null;
 }
 
 type EditorMode = 'self' | 'staff';
@@ -200,211 +207,240 @@ export function MessagingChannelsEditor({
         </div>
       )}
 
-      <div className={compact ? 'grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3' : 'grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4'}>
-        {/* WhatsApp */}
-        <ChannelRow
+      {/* Single-select radio list. The user picks ONE preferred
+          channel; notifyPortalUser uses it instead of fanning out.
+          Contact-detail inputs appear under the selected option so
+          the user only fills in what they actually use. Previously-
+          entered numbers on the other channels stay on the record
+          (the user can re-select WhatsApp later without retyping). */}
+      <div className="space-y-2">
+        <PreferenceRow
+          channel="whatsapp"
           label="WhatsApp"
-          icon={<MessageSquare className="h-3.5 w-3.5" />}
-          placeholder="+44 7700 900123"
-          number={value.whatsappNumber}
-          optIn={value.whatsappOptIn}
-          onNumber={(v) => persist({ whatsappNumber: v })}
-          onOptIn={(v) => persist({ whatsappOptIn: v })}
-          saving={saving === 'whatsappNumber' || saving === 'whatsappOptIn'}
-        />
-
-        {/* SMS */}
-        <ChannelRow
-          label="SMS"
-          icon={<Phone className="h-3.5 w-3.5" />}
-          placeholder="+44 7700 900123"
-          number={value.smsNumber}
-          optIn={value.smsOptIn}
-          onNumber={(v) => persist({ smsNumber: v })}
-          onOptIn={(v) => persist({ smsOptIn: v })}
-          saving={saving === 'smsNumber' || saving === 'smsOptIn'}
-        />
-
-        {/* Telegram — handle field for display only; chat_id is set by
-            the bot's /start handshake. Connect button is only shown to
-            the self editor; for staff rows we display whether the user
-            has linked yet. */}
-        <div className="border border-slate-200 rounded-md p-2.5 bg-slate-50/40">
-          <div className="flex items-center justify-between mb-1.5">
-            <span className="text-[11px] font-semibold text-slate-700 inline-flex items-center gap-1">
-              <Send className="h-3.5 w-3.5" /> Telegram
-            </span>
-            <label className="inline-flex items-center gap-1 text-[10px] text-slate-500">
-              <input
-                type="checkbox"
-                checked={value.telegramOptIn}
-                onChange={(e) => persist({ telegramOptIn: e.target.checked })}
-                className="rounded border-slate-300"
-              />
-              Opt in
-            </label>
-          </div>
-          <input
-            type="text"
-            value={value.telegramHandle || ''}
-            onChange={(e) => onChange({ ...value, telegramHandle: e.target.value })}
-            onBlur={(e) => persist({ telegramHandle: e.target.value })}
-            placeholder="@yourhandle"
-            className="w-full border border-slate-200 rounded px-2 py-1 text-xs focus:outline-none focus:border-blue-300 bg-white"
+          icon={<MessageSquare className="h-4 w-4 text-emerald-600" />}
+          selected={value.preferredCommunicationChannel === 'whatsapp'}
+          onSelect={() => persist({ preferredCommunicationChannel: 'whatsapp' })}
+          summary={value.whatsappNumber || 'No number set'}
+        >
+          <ChannelContact
+            placeholder="+44 7700 900123"
+            number={value.whatsappNumber}
+            onNumber={(v) => persist({ whatsappNumber: v, whatsappOptIn: true })}
+            saving={saving === 'whatsappNumber'}
           />
-          {mode === 'self' ? (
-            <div className="mt-1.5 space-y-1">
-              {isLinked ? (
-                <span className="text-[10px] text-green-700 inline-flex items-center gap-1">
-                  <CheckCircle2 className="h-3 w-3" /> Connected
-                </span>
-              ) : (
-                <button
-                  onClick={requestTelegramLink}
-                  disabled={linking}
-                  className="text-[10px] px-2 py-0.5 bg-blue-50 text-blue-700 border border-blue-200 rounded hover:bg-blue-100 disabled:opacity-50 inline-flex items-center gap-1"
-                >
-                  {linking ? <Loader2 className="h-3 w-3 animate-spin" /> : <ExternalLink className="h-3 w-3" />}
-                  Connect Telegram
-                </button>
-              )}
-              {telegramUrl && (
-                <div className="text-[10px] text-slate-600">
-                  Open in Telegram and press Start:{' '}
-                  <a href={telegramUrl} target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:underline break-all">{telegramUrl}</a>
-                  {telegramCode && <span className="block text-slate-400 mt-0.5">Code expires in 30 min.</span>}
-                </div>
-              )}
-            </div>
-          ) : (
-            <span className={`mt-1 inline-block text-[10px] ${isLinked ? 'text-green-700' : 'text-slate-400'}`}>
-              {isLinked ? 'Bot is linked' : 'User must press Start in the Telegram bot themselves'}
-            </span>
-          )}
-        </div>
+        </PreferenceRow>
 
-        {/* WeChat — binding works by QR scan, not phone number.
-            "Connect WeChat" mints a one-time scene code, asks the
-            Official Account API for a parametric QR, and displays
-            the QR image. The user scans + follows the Official
-            Account; the webhook handler binds their OpenID and
-            flips wechatOptIn = true. Same self-vs-staff split as
-            Telegram. */}
-        <div className="border border-slate-200 rounded-md p-2.5 bg-slate-50/40">
-          <div className="flex items-center justify-between mb-1.5">
-            <span className="text-[11px] font-semibold text-slate-700 inline-flex items-center gap-1">
-              <QrCode className="h-3.5 w-3.5" /> WeChat
-            </span>
-            <label className="inline-flex items-center gap-1 text-[10px] text-slate-500">
-              <input
-                type="checkbox"
-                checked={value.wechatOptIn}
-                onChange={(e) => persist({ wechatOptIn: e.target.checked })}
-                className="rounded border-slate-300"
-              />
-              Opt in
-            </label>
-          </div>
-          {/* Nickname placeholder — read-only; populated by the
-              Account webhook on /SCAN. Useful so the user can
-              eyeball "yes that's me". */}
-          <div className="text-[10px] text-slate-500 italic mb-1 min-h-[14px]">
-            {value.wechatNickname ? `Linked: ${value.wechatNickname}` : 'Bind a WeChat account by scanning a QR from your firm’s Official Account.'}
-          </div>
-          {mode === 'self' ? (
-            <div className="mt-1 space-y-1">
-              {value.wechatOpenId ? (
-                <span className="text-[10px] text-green-700 inline-flex items-center gap-1">
-                  <CheckCircle2 className="h-3 w-3" /> Connected
-                </span>
-              ) : (
-                <button
-                  onClick={requestWeChatLink}
-                  disabled={wechatLinking}
-                  className="text-[10px] px-2 py-0.5 bg-emerald-50 text-emerald-700 border border-emerald-200 rounded hover:bg-emerald-100 disabled:opacity-50 inline-flex items-center gap-1"
-                >
-                  {wechatLinking ? <Loader2 className="h-3 w-3 animate-spin" /> : <QrCode className="h-3 w-3" />}
-                  Connect WeChat
-                </button>
-              )}
-              {wechatQrUrl && (
-                <div className="text-[10px] text-slate-600">
-                  {/* QR image hosted by WeChat. We render it directly
-                      so users on mobile can long-press to save. */}
-                  <img
-                    src={wechatQrUrl}
-                    alt="WeChat QR — scan to link your account"
-                    className="w-32 h-32 mt-1 border border-slate-200 rounded bg-white"
-                  />
-                  <span className="block text-slate-400 mt-0.5">
-                    Open WeChat → Scan → follow the Official Account. QR expires in 30 min.
+        <PreferenceRow
+          channel="telegram"
+          label="Telegram"
+          icon={<Send className="h-4 w-4 text-blue-600" />}
+          selected={value.preferredCommunicationChannel === 'telegram'}
+          onSelect={() => persist({ preferredCommunicationChannel: 'telegram' })}
+          summary={isLinked ? `Connected${value.telegramHandle ? ' · ' + value.telegramHandle : ''}` : 'Not yet connected'}
+        >
+          <div className="space-y-2">
+            <input
+              type="text"
+              value={value.telegramHandle || ''}
+              onChange={(e) => onChange({ ...value, telegramHandle: e.target.value })}
+              onBlur={(e) => persist({ telegramHandle: e.target.value, telegramOptIn: true })}
+              placeholder="@yourhandle (optional)"
+              className="w-full border border-slate-200 rounded px-2.5 py-1.5 text-xs focus:outline-none focus:border-blue-300 bg-white"
+            />
+            {mode === 'self' ? (
+              <div className="space-y-1">
+                {isLinked ? (
+                  <span className="text-[11px] text-emerald-700 inline-flex items-center gap-1">
+                    <CheckCircle2 className="h-3 w-3" /> Connected — replies route back to the portal
                   </span>
-                  {wechatExpiresAt && (
-                    <span className="block text-slate-300 mt-0.5 text-[9px]">
-                      Expires: {new Date(wechatExpiresAt).toLocaleTimeString()}
+                ) : (
+                  <button
+                    onClick={requestTelegramLink}
+                    disabled={linking}
+                    className="text-[11px] px-2.5 py-1 bg-blue-50 text-blue-700 border border-blue-200 rounded hover:bg-blue-100 disabled:opacity-50 inline-flex items-center gap-1"
+                  >
+                    {linking ? <Loader2 className="h-3 w-3 animate-spin" /> : <ExternalLink className="h-3 w-3" />}
+                    Connect Telegram
+                  </button>
+                )}
+                {telegramUrl && (
+                  <div className="text-[11px] text-slate-600">
+                    Open in Telegram and press Start:{' '}
+                    <a href={telegramUrl} target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:underline break-all">{telegramUrl}</a>
+                    {telegramCode && <span className="block text-slate-400 mt-0.5">Code expires in 30 min.</span>}
+                  </div>
+                )}
+              </div>
+            ) : (
+              <span className={`inline-block text-[11px] ${isLinked ? 'text-emerald-700' : 'text-slate-400'}`}>
+                {isLinked ? 'Bot is linked' : 'User must press Start in the Telegram bot themselves'}
+              </span>
+            )}
+          </div>
+        </PreferenceRow>
+
+        <PreferenceRow
+          channel="sms"
+          label="SMS"
+          icon={<Phone className="h-4 w-4 text-slate-600" />}
+          selected={value.preferredCommunicationChannel === 'sms'}
+          onSelect={() => persist({ preferredCommunicationChannel: 'sms' })}
+          summary={value.smsNumber || 'No number set'}
+        >
+          <ChannelContact
+            placeholder="+44 7700 900123"
+            number={value.smsNumber}
+            onNumber={(v) => persist({ smsNumber: v, smsOptIn: true })}
+            saving={saving === 'smsNumber'}
+          />
+        </PreferenceRow>
+
+        <PreferenceRow
+          channel="wechat"
+          label="WeChat"
+          icon={<QrCode className="h-4 w-4 text-green-700" />}
+          selected={value.preferredCommunicationChannel === 'wechat'}
+          onSelect={() => persist({ preferredCommunicationChannel: 'wechat' })}
+          summary={value.wechatOpenId ? (value.wechatNickname ? `Connected · ${value.wechatNickname}` : 'Connected') : 'Not yet connected — scan QR'}
+        >
+          <div className="space-y-2">
+            <p className="text-[11px] text-slate-500">
+              Scan a QR with the WeChat app to link your account. The audit firm sends messages via its WeCom (企业微信) Official Account — you read and reply in regular WeChat.
+            </p>
+            {mode === 'self' ? (
+              <div className="space-y-1">
+                {value.wechatOpenId ? (
+                  <span className="text-[11px] text-emerald-700 inline-flex items-center gap-1">
+                    <CheckCircle2 className="h-3 w-3" /> Connected
+                  </span>
+                ) : (
+                  <button
+                    onClick={requestWeChatLink}
+                    disabled={wechatLinking}
+                    className="text-[11px] px-2.5 py-1 bg-emerald-50 text-emerald-700 border border-emerald-200 rounded hover:bg-emerald-100 disabled:opacity-50 inline-flex items-center gap-1"
+                  >
+                    {wechatLinking ? <Loader2 className="h-3 w-3 animate-spin" /> : <QrCode className="h-3 w-3" />}
+                    Connect WeChat
+                  </button>
+                )}
+                {wechatQrUrl && (
+                  <div className="text-[11px] text-slate-600">
+                    <img
+                      src={wechatQrUrl}
+                      alt="WeChat QR — scan to link your account"
+                      className="w-40 h-40 mt-1 border border-slate-200 rounded bg-white"
+                    />
+                    <span className="block text-slate-400 mt-0.5">
+                      Open WeChat → Scan → follow the Official Account. QR expires in 30 min.
                     </span>
-                  )}
-                </div>
-              )}
-            </div>
-          ) : (
-            <span className={`mt-1 inline-block text-[10px] ${value.wechatOpenId ? 'text-green-700' : 'text-slate-400'}`}>
-              {value.wechatOpenId ? 'WeChat is linked' : 'User must scan the QR + follow the Official Account themselves'}
-            </span>
-          )}
-        </div>
+                    {wechatExpiresAt && (
+                      <span className="block text-slate-300 mt-0.5 text-[9px]">
+                        Expires: {new Date(wechatExpiresAt).toLocaleTimeString()}
+                      </span>
+                    )}
+                  </div>
+                )}
+              </div>
+            ) : (
+              <span className={`inline-block text-[11px] ${value.wechatOpenId ? 'text-emerald-700' : 'text-slate-400'}`}>
+                {value.wechatOpenId ? 'WeChat is linked' : 'User must scan the QR + follow the Official Account themselves'}
+              </span>
+            )}
+          </div>
+        </PreferenceRow>
+
+        <PreferenceRow
+          channel="email"
+          label="Email only"
+          icon={<MessageSquare className="h-4 w-4 text-slate-500" />}
+          selected={value.preferredCommunicationChannel === 'email'}
+          onSelect={() => persist({ preferredCommunicationChannel: 'email' })}
+          summary="Use the email on file — no chat-app notifications"
+        />
+
+        <PreferenceRow
+          channel="none"
+          label="No notifications"
+          icon={<AlertTriangle className="h-4 w-4 text-amber-500" />}
+          selected={value.preferredCommunicationChannel === 'none'}
+          onSelect={() => persist({ preferredCommunicationChannel: 'none' })}
+          summary="You'll only see requests by logging into the portal — choose this only if you check often"
+        />
       </div>
     </div>
   );
 }
 
-function ChannelRow({
-  label, icon, placeholder, number, optIn, onNumber, onOptIn, saving,
+/** Single radio-row in the preferred-channel list. Header shows the
+ *  channel name + a one-line summary; selected rows expand to show
+ *  the contact-detail inputs / connect actions. */
+function PreferenceRow({
+  channel, label, icon, selected, onSelect, summary, children,
 }: {
+  channel: PreferredChannel;
   label: string;
   icon: React.ReactNode;
+  selected: boolean;
+  onSelect: () => void;
+  summary: string;
+  children?: React.ReactNode;
+}) {
+  return (
+    <div className={`border rounded-lg transition-colors ${selected ? 'border-blue-300 bg-blue-50/40' : 'border-slate-200 bg-white hover:bg-slate-50'}`}>
+      <label className="flex items-start gap-3 px-3 py-2.5 cursor-pointer">
+        <input
+          type="radio"
+          name={`preferred-channel-${channel.charAt(0)}`}
+          checked={selected}
+          onChange={() => onSelect()}
+          className="mt-1 text-blue-600"
+        />
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center gap-2 text-sm font-medium text-slate-800">
+            {icon}
+            {label}
+          </div>
+          <p className={`text-[11px] mt-0.5 ${selected ? 'text-blue-700' : 'text-slate-500'}`}>
+            {summary}
+          </p>
+        </div>
+      </label>
+      {selected && children && (
+        <div className="px-4 pb-3 pl-10 -mt-1">
+          {children}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** Phone-number input used by WhatsApp + SMS rows. Save-on-blur. */
+function ChannelContact({
+  placeholder, number, onNumber, saving,
+}: {
   placeholder: string;
   number: string | null;
-  optIn: boolean;
   onNumber: (v: string) => void;
-  onOptIn: (v: boolean) => void;
   saving: boolean;
 }) {
   const [draft, setDraft] = useState(number || '');
-  // Keep local draft in sync if parent overwrites the value (e.g.
-  // after a save returns the normalised number).
   if (draft !== (number || '') && !saving && document.activeElement?.tagName !== 'INPUT') {
     setDraft(number || '');
   }
   return (
-    <div className="border border-slate-200 rounded-md p-2.5 bg-slate-50/40">
-      <div className="flex items-center justify-between mb-1.5">
-        <span className="text-[11px] font-semibold text-slate-700 inline-flex items-center gap-1">
-          {icon} {label}
-        </span>
-        <label className="inline-flex items-center gap-1 text-[10px] text-slate-500">
-          <input
-            type="checkbox"
-            checked={optIn}
-            onChange={(e) => onOptIn(e.target.checked)}
-            className="rounded border-slate-300"
-          />
-          Opt in
-        </label>
-      </div>
-      <div className="relative">
-        <input
-          type="tel"
-          value={draft}
-          onChange={(e) => setDraft(e.target.value)}
-          onBlur={() => { if (draft !== (number || '')) onNumber(draft); }}
-          placeholder={placeholder}
-          className="w-full border border-slate-200 rounded px-2 py-1 text-xs focus:outline-none focus:border-blue-300 bg-white"
-        />
-        {saving && (
-          <Loader2 className="h-3 w-3 animate-spin text-slate-400 absolute right-2 top-1/2 -translate-y-1/2" />
-        )}
-      </div>
+    <div className="relative">
+      <input
+        type="tel"
+        value={draft}
+        onChange={(e) => setDraft(e.target.value)}
+        onBlur={() => { if (draft !== (number || '')) onNumber(draft); }}
+        placeholder={placeholder}
+        className="w-full border border-slate-200 rounded px-2.5 py-1.5 text-xs focus:outline-none focus:border-blue-300 bg-white"
+      />
+      {saving && (
+        <Loader2 className="h-3 w-3 animate-spin text-slate-400 absolute right-2 top-1/2 -translate-y-1/2" />
+      )}
     </div>
   );
 }
+
