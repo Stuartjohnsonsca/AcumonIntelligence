@@ -6,6 +6,7 @@ import { sendPortalVerificationCode } from '@/lib/email-portal';
 import { issuePortalSessionToken } from '@/lib/portal-session';
 import { decidePortalAccess } from '@/lib/portal-principal';
 import { PORTAL_DEVICE_COOKIE, findActiveTrustedDevice } from '@/lib/portal-trusted-device';
+import { logUserAction } from '@/lib/user-action-log';
 
 /**
  * POST /api/portal/auth/login
@@ -53,12 +54,33 @@ export async function POST(req: Request) {
     // same generic 401.
     if (!user) {
       console.warn('[Portal Login] no active portal user for email', { email: email.toLowerCase() });
+      // Record the attempt against a null userId so the audit trail
+      // captures brute-force probes against unknown emails.
+      void logUserAction({
+        userKind: 'portal',
+        userId: null,
+        userName: String(email).toLowerCase(),
+        action: 'portal.login.failed',
+        summary: `Portal login failed — no active user for ${String(email).toLowerCase()}`,
+        request: req as any,
+        metadata: { reason: 'unknown_email' },
+      });
       return NextResponse.json({ error: 'Invalid email or password' }, { status: 401 });
     }
 
     const valid = await bcrypt.compare(password, user.passwordHash);
     if (!valid) {
       console.warn('[Portal Login] wrong password', { email: user.email, userId: user.id, clientId: user.clientId });
+      void logUserAction({
+        userKind: 'portal',
+        userId: user.id,
+        userName: user.name,
+        clientId: user.clientId,
+        action: 'portal.login.failed',
+        summary: `Portal login failed — wrong password for ${user.email}`,
+        request: req as any,
+        metadata: { reason: 'wrong_password' },
+      });
       return NextResponse.json({ error: 'Invalid email or password' }, { status: 401 });
     }
 
@@ -102,6 +124,16 @@ export async function POST(req: Request) {
       const trusted = await findActiveTrustedDevice(user.id, deviceToken);
       if (trusted) {
         const issued = await issuePortalSessionToken(user.id);
+        void logUserAction({
+          userKind: 'portal',
+          userId: user.id,
+          userName: user.name,
+          clientId: user.clientId,
+          action: 'portal.login.trusted_device',
+          summary: `Portal login by ${user.email} skipped 2FA via trusted device`,
+          request: req as any,
+          metadata: { trustedUntil: trusted.expiresAt.toISOString() },
+        });
         return NextResponse.json({
           skipVerify: true,
           token: issued?.token,
@@ -132,6 +164,16 @@ export async function POST(req: Request) {
     } catch (emailErr) {
       console.error('Failed to send portal 2FA email:', emailErr);
     }
+
+    void logUserAction({
+      userKind: 'portal',
+      userId: user.id,
+      userName: user.name,
+      clientId: user.clientId,
+      action: 'portal.login.code_sent',
+      summary: `Portal 2FA code sent to ${user.email}`,
+      request: req as any,
+    });
 
     return NextResponse.json({
       sessionToken,

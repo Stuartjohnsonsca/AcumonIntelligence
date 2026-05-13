@@ -833,7 +833,64 @@ model EngagementActionLog {
   @@index([engagementId, occurredAt])
   @@index([firmId, occurredAt])
   @@index([action])
+  // Time-range scans for the SuperAdmin Audit Trail spanning years.
+  // The composite (firmId, occurredAt) indexes above handle per-firm
+  // queries; this one supports cross-firm reads on a date window.
+  @@index([occurredAt])
+  // Per-actor history pages. Without this, filtering by an actor in
+  // a table with millions of rows degrades to a sequential scan.
+  @@index([actorUserId, occurredAt])
   @@map("engagement_action_logs")
+}
+
+/// Platform-wide user action log. Captures actions that aren't tied
+/// to a specific engagement: login, 2FA verify, password reset,
+/// profile edit, role change, plus client-portal counterparts. The
+/// existing `EngagementActionLog` table requires an engagement and
+/// keeps that focus; this parallel table fills the gap so the
+/// SuperAdmin Audit Trail can show "every action by every user"
+/// in one place going back years.
+///
+/// Designed for indefinite retention — there's no cron that purges
+/// it. Indexed for time-range scans across millions of rows.
+model UserActionLog {
+  id          String   @id @default(uuid())
+  /// 'firm' = internal User; 'portal' = ClientPortalUser. Distinct
+  /// kinds because the IDs come from different tables. We don't FK
+  /// either to keep the log durable when a user is hard-deleted.
+  userKind    String   @map("user_kind")
+  userId      String?  @map("user_id")
+  userName    String   @map("user_name")
+  /// Firm scope when known. Null for cross-firm SuperAdmin actions
+  /// or portal-side actions where the firm context isn't established
+  /// at the action point. The SuperAdmin UI filters by this when
+  /// present.
+  firmId      String?  @map("firm_id")
+  /// Optional clientId — set for client-portal actions so the trail
+  /// is filterable by client end-to-end.
+  clientId    String?  @map("client_id")
+  /// Slug like 'login.success', 'login.failed', 'password.reset',
+  /// 'two_factor.verified', 'profile.update', 'role.change',
+  /// 'portal.login', 'portal.session.refresh', etc. Free text — the
+  /// UI groups by prefix.
+  action      String
+  /// Human-readable single-line summary surfaced in the table.
+  summary     String   @db.Text
+  /// IP address captured from the request when available. Stored
+  /// as text (handles IPv4 + IPv6) — not normalised.
+  ipAddress   String?  @map("ip_address")
+  userAgent   String?  @map("user_agent") @db.Text
+  /// Free-form structured payload for whatever the action wants to
+  /// stash (e.g. role-change before/after, failed-login reason).
+  metadata    Json?
+  occurredAt  DateTime @default(now()) @map("occurred_at")
+
+  @@index([userKind, userId, occurredAt])
+  @@index([firmId, occurredAt])
+  @@index([clientId, occurredAt])
+  @@index([action])
+  @@index([occurredAt])
+  @@map("user_action_logs")
 }
 
 model ErrorLog {

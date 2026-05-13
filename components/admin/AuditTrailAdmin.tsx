@@ -11,7 +11,7 @@
  */
 
 import { Fragment, useEffect, useMemo, useState } from 'react';
-import { Loader2, RefreshCcw, Search } from 'lucide-react';
+import { Loader2, RefreshCcw, Download } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 
 interface ClientOption { id: string; name: string }
@@ -20,23 +20,31 @@ interface ActionOption { slug: string; count: number }
 
 interface AuditRow {
   id: string;
+  /// 'engagement' = engagement_action_logs row (existing); 'user' =
+  /// user_action_logs row (new — login, 2FA, password reset, etc.).
+  source: 'engagement' | 'user';
   occurredAt: string;
   actorName: string;
   actorUserId: string | null;
+  /// 'firm' / 'portal' for user rows; null for engagement rows.
+  userKind: 'firm' | 'portal' | null;
   action: string;
   summary: string;
   targetType: string | null;
   targetId: string | null;
   metadata: any;
-  engagementId: string;
-  firmId: string;
+  engagementId: string | null;
+  firmId: string | null;
   client: { id: string; name: string } | null;
   period: { id: string; startDate: string | null; endDate: string | null } | null;
   auditType: string | null;
+  ipAddress: string | null;
 }
 
 interface ApiResponse {
   total: number;
+  engagementTotal?: number;
+  userTotal?: number;
   rows: AuditRow[];
   clients: ClientOption[];
   periods: PeriodOption[];
@@ -72,7 +80,43 @@ export function AuditTrailAdmin() {
   const [actorFilter, setActorFilter] = useState('');
   const [startDate, setStartDate] = useState('');
   const [endDate, setEndDate] = useState('');
+  const [source, setSource] = useState<'' | 'engagement' | 'user'>('');
   const [offset, setOffset] = useState(0);
+
+  /** Range presets — set startDate without touching endDate so "Last
+   *  7 days" means "today and the previous 6 days." Useful for super
+   *  admins reviewing patterns over standard windows. */
+  function applyRangePreset(days: number | 'all') {
+    if (days === 'all') {
+      setStartDate(''); setEndDate(''); setOffset(0); return;
+    }
+    const now = new Date();
+    const from = new Date(now); from.setDate(now.getDate() - (days - 1));
+    setStartDate(from.toISOString().slice(0, 10));
+    setEndDate(now.toISOString().slice(0, 10));
+    setOffset(0);
+  }
+
+  function downloadCsv() {
+    const params = new URLSearchParams();
+    if (clientId) params.set('clientId', clientId);
+    if (periodId) params.set('periodId', periodId);
+    if (actionFilter) params.set('action', actionFilter);
+    if (actorFilter) params.set('actor', actorFilter);
+    if (startDate) params.set('startDate', startDate);
+    if (endDate) params.set('endDate', endDate);
+    if (source) params.set('source', source);
+    params.set('format', 'csv');
+    // Trigger the download via a hidden anchor so the browser uses
+    // the Content-Disposition filename the API sends.
+    const url = `/api/admin/audit-log?${params.toString()}`;
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = ''; // server sets the filename
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+  }
 
   // Detail row expansion (click row to see metadata JSON)
   const [expandedId, setExpandedId] = useState<string | null>(null);
@@ -88,6 +132,7 @@ export function AuditTrailAdmin() {
       if (actorFilter) params.set('actor', actorFilter);
       if (startDate) params.set('startDate', startDate);
       if (endDate) params.set('endDate', endDate);
+      if (source) params.set('source', source);
       params.set('limit', String(DEFAULT_LIMIT));
       params.set('offset', String(offset));
       const res = await fetch(`/api/admin/audit-log?${params.toString()}`);
@@ -108,7 +153,7 @@ export function AuditTrailAdmin() {
   useEffect(() => {
     void load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [clientId, periodId, actionFilter, actorFilter, startDate, endDate, offset]);
+  }, [clientId, periodId, actionFilter, actorFilter, startDate, endDate, source, offset]);
 
   // Reset Period when Client changes — server's period list is
   // scoped per client and would otherwise carry a stale id.
@@ -130,9 +175,33 @@ export function AuditTrailAdmin() {
       <div>
         <h2 className="text-lg font-semibold text-slate-800">Audit Trail</h2>
         <p className="text-xs text-slate-500 mt-0.5">
-          Every recorded action across the platform — schedule actions firing chats, portal messages, document
-          requests, emails, template generation. Read-only. Filter by Client and Period to scope a review.
+          Every recorded action across the platform, for every user, going back years.
+          Engagement-level actions (portal messages, document requests, audit-point commits, schedule actions)
+          and user-level actions (login, 2FA, password reset, profile edits) are shown together.
+          Read-only. Filter and export to CSV for offline review.
         </p>
+      </div>
+
+      {/* Range presets — quick scopes for the most common reviews.
+          "All time" clears both startDate + endDate so years-old
+          actions surface. */}
+      <div className="flex items-center gap-2 flex-wrap text-xs">
+        <span className="text-slate-500">Range:</span>
+        {[
+          { label: 'Last 24h', days: 1 },
+          { label: 'Last 7 days', days: 7 },
+          { label: 'Last 30 days', days: 30 },
+          { label: 'Last 90 days', days: 90 },
+          { label: 'Last year', days: 365 },
+          { label: 'All time', days: 'all' as const },
+        ].map(preset => (
+          <button
+            key={preset.label}
+            type="button"
+            onClick={() => applyRangePreset(preset.days as any)}
+            className="px-2.5 py-1 bg-white border border-slate-300 rounded hover:bg-slate-50"
+          >{preset.label}</button>
+        ))}
       </div>
 
       {/* Filter bar */}
@@ -203,6 +272,21 @@ export function AuditTrailAdmin() {
             className="w-full text-xs border border-slate-300 rounded px-2 py-1.5"
           />
         </div>
+        {/* Source — engagement actions, user actions, or both. The
+            default is the merged feed so the SuperAdmin sees
+            everything in chronological order. */}
+        <div>
+          <label className="block text-[10px] font-medium text-slate-600 mb-1">Source</label>
+          <select
+            value={source}
+            onChange={e => setSource(e.target.value as any)}
+            className="w-full text-xs border border-slate-300 rounded px-2 py-1.5 bg-white"
+          >
+            <option value="">Both</option>
+            <option value="engagement">Engagement actions</option>
+            <option value="user">User actions (login / 2FA / etc.)</option>
+          </select>
+        </div>
       </div>
 
       {/* Status row */}
@@ -215,6 +299,12 @@ export function AuditTrailAdmin() {
           ) : (
             <span>
               {filteredCount.toLocaleString()} action{filteredCount === 1 ? '' : 's'}
+              {/* Show the breakdown when both sources are in the
+                  result. Helps the SuperAdmin spot e.g. an unusual
+                  burst of failed logins vs engagement traffic. */}
+              {typeof data?.engagementTotal === 'number' && typeof data?.userTotal === 'number' && data.engagementTotal > 0 && data.userTotal > 0 && (
+                <> · {data.engagementTotal.toLocaleString()} engagement / {data.userTotal.toLocaleString()} user</>
+              )}
               {totalPages > 1 && <> · page {currentPage} of {totalPages}</>}
             </span>
           )}
@@ -229,11 +319,21 @@ export function AuditTrailAdmin() {
           >
             <RefreshCcw className="h-3 w-3 mr-1" /> Refresh
           </Button>
-          {(clientId || periodId || actionFilter || actorFilter || startDate || endDate) && (
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={downloadCsv}
+            disabled={loading}
+            className="text-xs"
+            title="Download up to 10,000 matching rows as CSV"
+          >
+            <Download className="h-3 w-3 mr-1" /> Export CSV
+          </Button>
+          {(clientId || periodId || actionFilter || actorFilter || startDate || endDate || source) && (
             <Button
               variant="outline"
               size="sm"
-              onClick={() => { setClientId(''); setPeriodId(''); setActionFilter(''); setActorFilter(''); setStartDate(''); setEndDate(''); setOffset(0); }}
+              onClick={() => { setClientId(''); setPeriodId(''); setActionFilter(''); setActorFilter(''); setStartDate(''); setEndDate(''); setSource(''); setOffset(0); }}
               className="text-xs"
             >
               Clear filters
@@ -248,6 +348,7 @@ export function AuditTrailAdmin() {
           <thead className="bg-slate-100">
             <tr className="text-left text-slate-600">
               <th className="px-2 py-1.5 font-semibold">When</th>
+              <th className="px-2 py-1.5 font-semibold">Source</th>
               <th className="px-2 py-1.5 font-semibold">Actor</th>
               <th className="px-2 py-1.5 font-semibold">Action</th>
               <th className="px-2 py-1.5 font-semibold">Summary</th>
@@ -258,18 +359,33 @@ export function AuditTrailAdmin() {
           <tbody className="divide-y divide-slate-100">
             {(data?.rows || []).length === 0 && !loading && (
               <tr>
-                <td colSpan={6} className="px-2 py-6 text-center text-slate-400 italic">
+                <td colSpan={7} className="px-2 py-6 text-center text-slate-400 italic">
                   No actions match the current filters.
                 </td>
               </tr>
             )}
             {(data?.rows || []).map(r => (
-              <Fragment key={r.id}>
+              <Fragment key={`${r.source}-${r.id}`}>
                 <tr
                   className={`hover:bg-slate-50 cursor-pointer ${expandedId === r.id ? 'bg-blue-50/40' : ''}`}
                   onClick={() => setExpandedId(prev => prev === r.id ? null : r.id)}
                 >
                   <td className="px-2 py-1.5 text-slate-700 whitespace-nowrap">{formatDateTime(r.occurredAt)}</td>
+                  <td className="px-2 py-1.5 whitespace-nowrap">
+                    {/* Visual hint at a glance: engagement actions are
+                        the bulk of activity; user actions (login, 2FA,
+                        etc.) get a distinct chip colour so the
+                        SuperAdmin can spot auth anomalies quickly. */}
+                    {r.source === 'engagement' ? (
+                      <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-blue-100 text-blue-700">
+                        Engagement
+                      </span>
+                    ) : (
+                      <span className={`text-[10px] px-1.5 py-0.5 rounded-full ${r.userKind === 'portal' ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-700'}`}>
+                        {r.userKind === 'portal' ? 'Portal user' : 'Firm user'}
+                      </span>
+                    )}
+                  </td>
                   <td className="px-2 py-1.5 text-slate-700 whitespace-nowrap">{r.actorName}</td>
                   <td className="px-2 py-1.5">
                     <code className="bg-slate-100 px-1 py-0.5 rounded text-[10px]">{r.action}</code>
@@ -280,10 +396,11 @@ export function AuditTrailAdmin() {
                 </tr>
                 {expandedId === r.id && (
                   <tr className="bg-slate-50">
-                    <td colSpan={6} className="px-3 py-2 text-[11px] text-slate-700 space-y-1">
-                      <div><strong>Engagement:</strong> <code className="bg-white px-1 rounded">{r.engagementId}</code></div>
+                    <td colSpan={7} className="px-3 py-2 text-[11px] text-slate-700 space-y-1">
+                      {r.engagementId && <div><strong>Engagement:</strong> <code className="bg-white px-1 rounded">{r.engagementId}</code></div>}
                       {r.targetType && <div><strong>Target:</strong> {r.targetType} <code className="bg-white px-1 rounded">{r.targetId}</code></div>}
-                      <div><strong>Audit type:</strong> {r.auditType || '—'}</div>
+                      {r.auditType && <div><strong>Audit type:</strong> {r.auditType}</div>}
+                      {r.ipAddress && <div><strong>IP:</strong> <code className="bg-white px-1 rounded">{r.ipAddress}</code></div>}
                       {r.metadata && (
                         <div>
                           <strong>Metadata:</strong>

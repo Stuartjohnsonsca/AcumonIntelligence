@@ -3,6 +3,7 @@ import { prisma } from '@/lib/db';
 import { issuePortalSessionToken } from '@/lib/portal-session';
 import { decidePortalAccess } from '@/lib/portal-principal';
 import { PORTAL_DEVICE_COOKIE, mintTrustedDevice } from '@/lib/portal-trusted-device';
+import { logUserAction } from '@/lib/user-action-log';
 
 /**
  * POST /api/portal/auth/verify
@@ -104,6 +105,16 @@ export async function POST(req: Request) {
         maxAge,
       });
     }
+    void logUserAction({
+      userKind: 'portal',
+      userId: twoFactor.user.id,
+      userName: twoFactor.user.name,
+      clientId: twoFactor.user.clientId,
+      action: 'portal.login.success',
+      summary: `Portal login by ${twoFactor.user.email}`,
+      request: req as any,
+      metadata: { deviceTrusted: !!minted, ip },
+    });
     return res;
   } catch (error: any) {
     console.error('[Portal Verify] error:', {
