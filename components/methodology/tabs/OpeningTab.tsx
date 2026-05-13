@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect, useCallback } from 'react';
+import { Loader2 } from 'lucide-react';
 import type { AuditType } from '@/types/methodology';
 import { AUDIT_TYPE_LABELS } from '@/types/methodology';
 import type { EngagementData } from '@/hooks/useEngagement';
@@ -470,6 +471,18 @@ export function OpeningTab({ engagement, auditType, clientName, periodEndDate, o
               <span className="text-xs font-medium text-blue-600 bg-blue-100 px-2 py-1 rounded">Enabled</span>
             </div>
           )}
+
+          {/* WeCom Group Robot webhook URL — paste-once setting for this
+              engagement. The audit team creates a WeCom group, adds
+              their clients (mainland China users join via External
+              Contact), adds the Group Robot, and pastes its webhook
+              URL here. Every portal request alert mirrors into that
+              group alongside email + per-user channels. */}
+          <WeComGroupSetting
+            engagementId={engagement.id}
+            initial={engagement.wecomGroupWebhookUrl ?? null}
+            onSaved={(next) => onEngagementUpdate?.({ ...engagement, wecomGroupWebhookUrl: next })}
+          />
         </div>
       </div>
 
@@ -626,6 +639,103 @@ export function OpeningTab({ engagement, auditType, clientName, periodEndDate, o
         enabledSystems={enabledSystems}
         onConnected={handleConnectorSetupComplete}
       />
+    </div>
+  );
+}
+
+// ─── WeCom group webhook setting ──────────────────────────────────
+//
+// Audit team setting: paste the per-engagement WeCom Group Robot
+// webhook URL. Validates the URL against the canonical
+// qyapi.weixin.qq.com /cgi-bin/webhook/send?key=... shape so a paste
+// of an unrelated link fails loudly. Save-on-blur — no explicit
+// Save button needed because the URL is the only field and it's
+// either valid HTTPS or it isn't.
+
+function WeComGroupSetting({
+  engagementId, initial, onSaved,
+}: {
+  engagementId: string;
+  initial: string | null;
+  onSaved: (next: string | null) => void;
+}) {
+  const [value, setValue] = useState(initial ?? '');
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [savedAt, setSavedAt] = useState<number | null>(null);
+
+  // Keep the input in sync if the parent reloads with a fresh value.
+  useEffect(() => { setValue(initial ?? ''); }, [initial]);
+
+  async function persist() {
+    const trimmed = value.trim();
+    if (trimmed && !/^https:\/\/qyapi\.weixin\.qq\.com\/.+key=/.test(trimmed)) {
+      setError('WeCom URL must start with https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=…');
+      return;
+    }
+    setError(null);
+    setSaving(true);
+    try {
+      const res = await fetch(`/api/engagements/${engagementId}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ wecomGroupWebhookUrl: trimmed || null }),
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data?.error || `Save failed (${res.status})`);
+      }
+      onSaved(trimmed || null);
+      setSavedAt(Date.now());
+      setTimeout(() => setSavedAt(null), 2_500);
+    } catch (e: any) {
+      setError(e?.message || 'Save failed');
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <div className="p-3 bg-slate-50 rounded-lg col-span-2">
+      <div className="flex items-start justify-between gap-3">
+        <div className="flex-1 min-w-0">
+          <p className="text-sm font-medium text-slate-700">
+            WeCom group webhook (per engagement)
+          </p>
+          <p className="text-xs text-slate-500 mt-0.5">
+            Paste the Group Robot webhook URL from the WeCom group you created for this engagement.
+            Portal request alerts will land in that group alongside email + per-user channels.
+            Leave blank to skip WeCom for this engagement.
+          </p>
+          <p className="text-[10px] text-slate-400 mt-1">
+            In WeCom: open the group → ⋯ → <strong>Group Robots</strong> (群机器人) → <strong>Add Robot</strong> → copy the Webhook URL.
+          </p>
+          <div className="mt-2 flex items-center gap-2">
+            <input
+              type="url"
+              value={value}
+              onChange={(e) => setValue(e.target.value)}
+              onBlur={() => { if (value.trim() !== (initial ?? '').trim()) void persist(); }}
+              placeholder="https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=…"
+              className="flex-1 min-w-0 bg-white border border-slate-300 rounded px-3 py-1.5 text-xs font-mono focus:outline-none focus:border-emerald-300"
+            />
+            {value && (
+              <button
+                type="button"
+                onClick={() => { setValue(''); }}
+                className="text-[10px] text-slate-500 hover:text-red-600 underline"
+              >Clear</button>
+            )}
+            {saving && <Loader2 className="h-3.5 w-3.5 animate-spin text-slate-400" />}
+            {savedAt && !saving && (
+              <span className="text-[11px] text-emerald-700">Saved.</span>
+            )}
+          </div>
+          {error && (
+            <p className="text-[11px] text-red-700 mt-1">{error}</p>
+          )}
+        </div>
+      </div>
     </div>
   );
 }

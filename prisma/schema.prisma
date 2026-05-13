@@ -2184,6 +2184,14 @@ model AuditEngagement {
   portalEscalationDays2 Int? @map("portal_escalation_days_2")
   portalEscalationDays3 Int? @map("portal_escalation_days_3")
 
+  // WeCom (企业微信) Group Robot webhook URL for THIS engagement's
+  // notification group. Set by the audit team on the Opening tab.
+  // When populated, notifyOnPortalRequestCreated mirrors the message
+  // into the group so every client / firm member added to it sees
+  // the request alert alongside email + per-user channels.
+  // Null = no WeCom group configured; the channel is skipped.
+  wecomGroupWebhookUrl String? @map("wecom_group_webhook_url")
+
   // How long (days) a logged-in portal user can re-authenticate with
   // just username + password from a previously-trusted device before
   // 2FA kicks back in. Set by the Portal Principal during setup.

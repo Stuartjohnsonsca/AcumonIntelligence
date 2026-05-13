@@ -17,6 +17,7 @@
 
 import { prisma } from '@/lib/db';
 import { notifyPortalUser } from './index';
+import { sendWeComGroupMessage } from './wecom';
 import { resolvePortalPublicUrl } from '@/lib/portal-public-url';
 
 interface NotifyOpts {
@@ -50,20 +51,26 @@ export async function notifyOnPortalRequestCreated(
   });
   if (!req) return;
 
-  // Resolution rule:
+  // Engagement-level lookup happens once and is reused for the two
+  // delivery channels:
+  //   1. Per-user notifyPortalUser (SMS / WhatsApp / Telegram / WeChat
+  //      via per-user opt-ins).
+  //   2. The engagement's WeCom Group Robot, when configured. Posts
+  //      the same body so every group member (audit team + clients
+  //      added via External Contact) sees the alert.
+  const engagement = req.engagementId
+    ? await prisma.auditEngagement.findUnique({
+        where: { id: req.engagementId },
+        select: { portalPrincipalId: true, wecomGroupWebhookUrl: true },
+      })
+    : null;
+
+  // Resolution rule for the per-user channels:
   //   1. Use the assigned portal user if set (work-allocation routing
   //      will have written this for FS-line-tagged requests).
   //   2. Else fall back to the engagement's Portal Principal so
   //      someone gets a heads-up.
-  let portalUserId = req.assignedPortalUserId;
-  if (!portalUserId && req.engagementId) {
-    const eng = await prisma.auditEngagement.findUnique({
-      where: { id: req.engagementId },
-      select: { portalPrincipalId: true },
-    });
-    portalUserId = eng?.portalPrincipalId ?? null;
-  }
-  if (!portalUserId) return;
+  const portalUserId = req.assignedPortalUserId || engagement?.portalPrincipalId || null;
 
   const portalBase = opts.portalBaseUrl
     ? opts.portalBaseUrl.replace(/\/+$/, '')
@@ -83,11 +90,35 @@ export async function notifyOnPortalRequestCreated(
     return lines.join('\n\n');
   })();
 
-  await notifyPortalUser({
-    portalUserId,
-    body,
-    relatedRequestId: req.id,
-  });
+  // Per-user channels (fires only when we resolved a user).
+  if (portalUserId) {
+    await notifyPortalUser({
+      portalUserId,
+      body,
+      relatedRequestId: req.id,
+    });
+  }
+
+  // Per-engagement WeCom Group Robot — independent of per-user
+  // resolution so the audit firm + client group sees the alert even
+  // when nobody is assigned yet. Failures are logged; never throw
+  // (the email + per-user channels above are the user-facing
+  // contract).
+  if (engagement?.wecomGroupWebhookUrl) {
+    try {
+      const result = await sendWeComGroupMessage({
+        channel: 'wechat',
+        to: engagement.wecomGroupWebhookUrl,
+        webhookUrl: engagement.wecomGroupWebhookUrl,
+        body,
+      });
+      if (!result.ok) {
+        console.error('[notifyOnPortalRequestCreated] WeCom post failed', result.error);
+      }
+    } catch (err) {
+      console.error('[notifyOnPortalRequestCreated] WeCom post threw', err);
+    }
+  }
 }
 
 function sectionToLabel(section: string): string {

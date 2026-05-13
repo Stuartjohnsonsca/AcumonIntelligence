@@ -176,39 +176,53 @@ After verification: unlimited.
 
 ## Part 4 — Paste the webhook into Acumon (2 min)
 
-Two places use the WeCom Group Robot webhook URL:
+Two places use the WeCom Group Robot webhook URL. **The Opening-tab
+field is the per-engagement one you'll use most often.**
 
-### 4.1 — Monitoring Reports (the existing pattern from Teams)
+### 4.1 — Per-engagement portal notifications (Opening tab)
 
-Open the audit tool → an engagement → Opening tab → **Monitoring
-Reports** button → New report (or edit existing).
+Open the audit tool → the engagement → **Opening tab** → scroll to
+**Audit File Settings** → **WeCom group webhook (per engagement)**.
 
-In the **Delivery** section, tick **WeCom (企业微信)**. A URL input
-appears below it — paste the webhook URL from step 3.3. Save.
+Paste the URL from step 3.3. The field saves on blur — a small
+"Saved." appears next to it.
 
-From now on every run of that monitoring report (manual or
-scheduled) posts the digest into the engagement's WeCom group.
+From now on, every portal request alert fires both:
+- **Per-user channels** (SMS / WhatsApp / Telegram / WeChat — based
+  on each portal user's opt-ins), AND
+- **The engagement's WeCom group** — same message body lands in the
+  group so the audit team + clients you've added via External
+  Contact see the alert in WeCom alongside their personal channels.
 
-### 4.2 — Per-engagement portal notifications (optional, firm-wide)
+The two delivery paths are independent. The WeCom post fires even
+when no portal user is assigned yet — useful for the gap between
+"audit team raised a request" and "Principal allocated it to a
+staff member."
 
-If you want **every portal request** routed via WeCom rather than
-just monitoring reports, set the firm-wide default in Vercel:
+### 4.2 — Monitoring Reports (per-report WeCom URL)
+
+Same shape, different audience. Use this when you want the
+**weekly digest** going to a specific group that may differ from
+the alert group (e.g. partner-only group for monitoring reports,
+audit team + client for portal alerts).
+
+Open the audit tool → the engagement → Opening tab → **Monitoring
+Reports** → New report (or edit existing) → **Delivery** → tick
+**WeCom (企业微信)** → paste URL → Save.
+
+### 4.3 — Firm-wide fallback (optional)
+
+If most engagements share the same group you can set a firm-wide
+default in Vercel:
 
 ```
 WECOM_GROUP_WEBHOOK_URL=https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=...
 ```
 
-This becomes the fallback target for the WeChat channel in
-`notifyPortalUser` whenever the user has `wechatOptIn=true` but no
-bound OpenID. The orchestrator already prefers WeCom over the
-WeChat Official Account when both are configured (see
-`lib/messaging/index.ts`).
-
-If you want per-engagement WeCom URLs (rather than one firm-wide
-URL), that's a small follow-up — let me know and I'll add a
-`wecomGroupWebhookUrl` field to `AuditEngagement` and a control in
-Portal Principal Setup. For now Monitoring Reports already has
-per-report WeCom URLs, which probably covers most actual use cases.
+This is the last-resort target for the WeChat channel in
+`notifyPortalUser` whenever neither the user nor the engagement has
+its own WeCom URL. Most setups will configure per-engagement URLs
+on the Opening tab and leave this unset.
 
 ---
 

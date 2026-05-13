@@ -19,6 +19,10 @@ export interface EngagementData {
   hardCloseDate: string | null;
   isGroupAudit: boolean;
   isNewClient?: boolean | null;
+  /** WeCom (企业微信) Group Robot webhook URL for this engagement's
+   *  notification group. Audit team pastes it on the Opening tab
+   *  after creating the per-engagement WeCom group. */
+  wecomGroupWebhookUrl?: string | null;
   /** FK into the firm's MethodologyIndustry catalogue. Set on the
    *  Opening tab; null = unspecified. */
   methodologyIndustryId?: string | null;

@@ -89,7 +89,7 @@ export async function PUT(
 
   try {
     const body = await req.json();
-    const { status, infoRequestType, hardCloseDate, isGroupAudit, planCreated, isNewClient, methodologyIndustryId } = body;
+    const { status, infoRequestType, hardCloseDate, isGroupAudit, planCreated, isNewClient, methodologyIndustryId, wecomGroupWebhookUrl } = body;
 
     // Verify ownership
     const existing = await prisma.auditEngagement.findUnique({
@@ -126,6 +126,26 @@ export async function PUT(
     // string from the dropdown is normalised the same way.
     if (methodologyIndustryId !== undefined) {
       updateData.methodologyIndustryId = methodologyIndustryId === '' ? null : methodologyIndustryId;
+    }
+    // WeCom Group Robot webhook URL — validate against the canonical
+    // qyapi.weixin.qq.com /cgi-bin/webhook/send?key=... shape so a
+    // paste of an unrelated link doesn't silently never deliver.
+    // Null / empty string clears the value.
+    if (wecomGroupWebhookUrl !== undefined) {
+      if (wecomGroupWebhookUrl === null || wecomGroupWebhookUrl === '') {
+        updateData.wecomGroupWebhookUrl = null;
+      } else if (typeof wecomGroupWebhookUrl === 'string') {
+        const trimmed = wecomGroupWebhookUrl.trim();
+        if (!trimmed) {
+          updateData.wecomGroupWebhookUrl = null;
+        } else if (/^https:\/\/qyapi\.weixin\.qq\.com\/.+key=/.test(trimmed)) {
+          updateData.wecomGroupWebhookUrl = trimmed;
+        } else {
+          return NextResponse.json({
+            error: 'WeCom webhook URL must be the qyapi.weixin.qq.com/cgi-bin/webhook/send?key=... URL from the WeCom Group Robot screen.',
+          }, { status: 400 });
+        }
+      }
     }
 
     const engagement = await prisma.auditEngagement.update({
