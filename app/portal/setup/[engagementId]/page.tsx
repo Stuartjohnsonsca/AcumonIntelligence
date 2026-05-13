@@ -20,9 +20,10 @@
  *   └─────────────────────────────────────────────────────────────┘
  */
 
-import { use, useCallback, useEffect, useMemo, useState } from 'react';
+import { use, useCallback, useEffect, useMemo, useState, Fragment } from 'react';
 import { useSearchParams, useRouter } from 'next/navigation';
-import { ChevronDown, ChevronRight, UserPlus, UserX, CheckCircle2, AlertCircle, Loader2, Save } from 'lucide-react';
+import { ChevronDown, ChevronRight, UserPlus, UserX, CheckCircle2, AlertCircle, Loader2, Save, MessageSquare } from 'lucide-react';
+import { MessagingChannelsEditor, type ChannelsState } from '@/components/portal/MessagingChannelsEditor';
 
 interface Staff {
   id: string;
@@ -32,6 +33,15 @@ interface Staff {
   accessConfirmed: boolean;
   portalUserId: string | null;
   inheritedFromEngagementId: string | null;
+  // Channel hints — pre-filled by the Portal Principal during setup,
+  // mirrored through to the linked ClientPortalUser on the server so
+  // outbound notifyPortalUser() calls see them right away.
+  whatsappNumber?: string | null;
+  whatsappOptIn?: boolean;
+  telegramHandle?: string | null;
+  telegramOptIn?: boolean;
+  smsNumber?: string | null;
+  smsOptIn?: boolean;
 }
 interface Suggestion {
   sourceEngagementId: string | null;
@@ -71,6 +81,28 @@ export default function PortalSetupPage({ params }: { params: Promise<{ engageme
   const [openStaff, setOpenStaff] = useState(true);
   const [openAlloc, setOpenAlloc] = useState(true);
   const [expandedFs, setExpandedFs] = useState<Set<string>>(new Set());
+  // Per-row expand state for the messaging channel editor on the
+  // staff table. Defaults to closed so the row stays compact.
+  const [expandedStaffChannels, setExpandedStaffChannels] = useState<Set<string>>(new Set());
+  const toggleStaffChannels = useCallback((id: string) => {
+    setExpandedStaffChannels(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  }, []);
+  // Optimistic merge: when the editor reports a channel change we
+  // overlay the patch onto the staff row so the chip summary up the
+  // page refreshes immediately, before the server roundtrips.
+  const mergeStaffChannels = useCallback((id: string, next: { whatsappNumber: string | null; whatsappOptIn: boolean; telegramHandle: string | null; telegramOptIn: boolean; smsNumber: string | null; smsOptIn: boolean }) => {
+    setState((prev: any) => {
+      if (!prev) return prev;
+      const updated = prev.staff?.map((s: Staff) =>
+        s.id === id ? { ...s, ...next } : s,
+      ) || [];
+      return { ...prev, staff: updated };
+    });
+  }, []);
 
   const [addName, setAddName] = useState('');
   const [addEmail, setAddEmail] = useState('');
@@ -417,6 +449,7 @@ export default function PortalSetupPage({ params }: { params: Promise<{ engageme
                 <table className="w-full text-sm">
                   <thead>
                     <tr className="text-xs text-slate-500 border-b border-slate-200">
+                      <th className="text-left font-medium py-2 w-8"></th>
                       <th className="text-left font-medium py-2">Name</th>
                       <th className="text-left font-medium">Email</th>
                       <th className="text-left font-medium">Role</th>
@@ -425,27 +458,80 @@ export default function PortalSetupPage({ params }: { params: Promise<{ engageme
                     </tr>
                   </thead>
                   <tbody>
-                    {state.staff.map((s: Staff) => (
-                      <tr key={s.id} className="border-b border-slate-100 last:border-0">
-                        <td className="py-2 text-slate-800">{s.name}</td>
-                        <td className="text-slate-600">{s.email}</td>
-                        <td className="text-slate-500">{s.role || '—'}</td>
-                        <td className="text-center">
-                          <button
-                            onClick={() => updateStaff(s.id, { accessConfirmed: !s.accessConfirmed })}
-                            className={`inline-flex items-center gap-1 px-2.5 py-1 text-xs rounded-full border ${s.accessConfirmed ? 'bg-emerald-50 border-emerald-200 text-emerald-700 hover:bg-emerald-100' : 'bg-amber-50 border-amber-200 text-amber-700 hover:bg-amber-100'}`}
-                            title={s.accessConfirmed ? 'Access confirmed — click to revoke' : 'Click to confirm access'}
-                          >
-                            {s.accessConfirmed ? <><CheckCircle2 className="w-3 h-3" />Confirmed</> : 'Click to confirm'}
-                          </button>
-                        </td>
-                        <td className="text-right">
-                          <button onClick={() => removeStaff(s.id)} className="text-slate-400 hover:text-red-600 p-1" title="Remove">
-                            <UserX className="w-4 h-4" />
-                          </button>
-                        </td>
-                      </tr>
-                    ))}
+                    {state.staff.map((s: Staff) => {
+                      const isExpanded = expandedStaffChannels.has(s.id);
+                      // Quick visual signal — coloured pill summarising
+                      // which of the three channels the staff has any
+                      // contact value AND opt-in for. Cheaper than
+                      // re-rendering the whole editor in the row.
+                      const channelChips: string[] = [];
+                      if (s.whatsappNumber && s.whatsappOptIn) channelChips.push('WhatsApp');
+                      if (s.telegramHandle && s.telegramOptIn) channelChips.push('Telegram');
+                      if (s.smsNumber && s.smsOptIn) channelChips.push('SMS');
+                      return (
+                        <Fragment key={s.id}>
+                          <tr className="border-b border-slate-100 last:border-0">
+                            <td className="py-2 align-top">
+                              <button
+                                onClick={() => toggleStaffChannels(s.id)}
+                                className="p-1 text-slate-400 hover:text-blue-600"
+                                title={isExpanded ? 'Hide messaging channels' : 'Edit messaging channels'}
+                              >
+                                {isExpanded ? <ChevronDown className="w-3.5 h-3.5" /> : <ChevronRight className="w-3.5 h-3.5" />}
+                              </button>
+                            </td>
+                            <td className="py-2 text-slate-800 align-top">
+                              <div>{s.name}</div>
+                              {channelChips.length > 0 && (
+                                <div className="text-[10px] text-blue-700 inline-flex items-center gap-1 mt-0.5">
+                                  <MessageSquare className="h-3 w-3" />
+                                  {channelChips.join(' · ')}
+                                </div>
+                              )}
+                            </td>
+                            <td className="text-slate-600 align-top">{s.email}</td>
+                            <td className="text-slate-500 align-top">{s.role || '—'}</td>
+                            <td className="text-center align-top">
+                              <button
+                                onClick={() => updateStaff(s.id, { accessConfirmed: !s.accessConfirmed })}
+                                className={`inline-flex items-center gap-1 px-2.5 py-1 text-xs rounded-full border ${s.accessConfirmed ? 'bg-emerald-50 border-emerald-200 text-emerald-700 hover:bg-emerald-100' : 'bg-amber-50 border-amber-200 text-amber-700 hover:bg-amber-100'}`}
+                                title={s.accessConfirmed ? 'Access confirmed — click to revoke' : 'Click to confirm access'}
+                              >
+                                {s.accessConfirmed ? <><CheckCircle2 className="w-3 h-3" />Confirmed</> : 'Click to confirm'}
+                              </button>
+                            </td>
+                            <td className="text-right align-top">
+                              <button onClick={() => removeStaff(s.id)} className="text-slate-400 hover:text-red-600 p-1" title="Remove">
+                                <UserX className="w-4 h-4" />
+                              </button>
+                            </td>
+                          </tr>
+                          {isExpanded && (
+                            <tr className="bg-slate-50/60 border-b border-slate-100">
+                              <td></td>
+                              <td colSpan={5} className="py-3 pr-3">
+                                <MessagingChannelsEditor
+                                  mode="staff"
+                                  token={token}
+                                  staffId={s.id}
+                                  compact
+                                  value={{
+                                    whatsappNumber: s.whatsappNumber ?? null,
+                                    whatsappOptIn: !!s.whatsappOptIn,
+                                    telegramHandle: s.telegramHandle ?? null,
+                                    telegramChatId: null,
+                                    telegramOptIn: !!s.telegramOptIn,
+                                    smsNumber: s.smsNumber ?? null,
+                                    smsOptIn: !!s.smsOptIn,
+                                  }}
+                                  onChange={(next: ChannelsState) => mergeStaffChannels(s.id, next)}
+                                />
+                              </td>
+                            </tr>
+                          )}
+                        </Fragment>
+                      );
+                    })}
                   </tbody>
                 </table>
               )}

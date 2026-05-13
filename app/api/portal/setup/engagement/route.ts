@@ -46,7 +46,9 @@ export async function GET(req: Request) {
   });
   if (!eng) return NextResponse.json({ error: 'Engagement not found' }, { status: 404 });
 
-  // Current staff members
+  // Current staff members — channel fields included so the Manage
+  // Staff UI can render per-row WhatsApp / Telegram / SMS opt-in
+  // controls without a second hop.
   const staff = await prisma.clientPortalStaffMember.findMany({
     where: { engagementId, isActive: true },
     select: {
@@ -58,6 +60,12 @@ export async function GET(req: Request) {
       portalUserId: true,
       inheritedFromEngagementId: true,
       createdAt: true,
+      whatsappNumber: true,
+      whatsappOptIn: true,
+      telegramHandle: true,
+      telegramOptIn: true,
+      smsNumber: true,
+      smsOptIn: true,
     },
     orderBy: [{ accessConfirmed: 'desc' }, { name: 'asc' }],
   }).catch(() => [] as any[]);

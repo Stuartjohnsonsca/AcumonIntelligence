@@ -283,6 +283,7 @@ model Client {
   resourceJobs           ResourceJob[]
   resourceClientSetting  ResourceClientSetting?
   portalRequests         PortalRequest[]
+  portalMessages         PortalMessage[]
   // Team familiarity (Part H)
   teamFamiliarityEntries TeamFamiliarityEntry[]
 
@@ -1134,6 +1135,26 @@ model ClientPortalUser {
   // see another's details.
   sessionToken       String?   @unique @map("session_token")
   sessionExpiresAt   DateTime? @map("session_expires_at")
+
+  // ── Messaging channels (WhatsApp / Telegram / SMS) ──────────────
+  // E.164 phone numbers ("+44..."), Telegram numeric chat_id (set
+  // once the user has connected via the bot), and per-channel
+  // opt-in flags. A request goes out on a channel only when the
+  // contact field is populated AND the opt-in flag is true. All
+  // optional — channels degrade gracefully to email-only.
+  whatsappNumber     String?   @map("whatsapp_number")
+  whatsappOptIn      Boolean   @default(false) @map("whatsapp_opt_in")
+  telegramHandle     String?   @map("telegram_handle") // informational, e.g. @username
+  telegramChatId     String?   @map("telegram_chat_id") // numeric chat id from /start handshake
+  telegramOptIn      Boolean   @default(false) @map("telegram_opt_in")
+  // One-time code we generate when the user clicks "Connect Telegram".
+  // The bot sees `/start <code>` and looks up the user by this column.
+  // Cleared on successful link. Time-boxed by telegramLinkExpiresAt.
+  telegramLinkCode      String?   @unique @map("telegram_link_code")
+  telegramLinkExpiresAt DateTime? @map("telegram_link_expires_at")
+  smsNumber          String?   @map("sms_number")
+  smsOptIn           Boolean   @default(false) @map("sms_opt_in")
+
   createdAt          DateTime  @default(now()) @map("created_at")
   updatedAt          DateTime  @updatedAt @map("updated_at")
 
@@ -1142,9 +1163,13 @@ model ClientPortalUser {
   evidenceUploads            EvidenceUpload[]
   portalPrincipalEngagements AuditEngagement[]         @relation("PortalPrincipalForEngagement")
   portalStaffMemberships     ClientPortalStaffMember[] @relation("StaffMemberPortalUser")
+  portalMessages             PortalMessage[]           @relation("PortalUserMessages")
 
   @@unique([clientId, email])
   @@index([sessionToken])
+  @@index([whatsappNumber])
+  @@index([smsNumber])
+  @@index([telegramChatId])
   @@map("client_portal_users")
 }
 
@@ -1232,6 +1257,20 @@ model ClientPortalStaffMember {
   isActive                  Boolean  @default(true) @map("is_active")
   inheritedFromEngagementId String?  @map("inherited_from_engagement_id") // prior period / sibling group carry-forward
   addedByPortalUserId       String?  @map("added_by_portal_user_id")
+
+  // Messaging channel hints captured during staff setup, before the
+  // staff member has registered a ClientPortalUser. Once they
+  // register and accept the invite, these values copy through to
+  // the ClientPortalUser row and start being authoritative there.
+  // Kept on the staff member so the Portal Principal can pre-fill
+  // contact details when they invite people.
+  whatsappNumber String? @map("whatsapp_number")
+  whatsappOptIn  Boolean @default(false) @map("whatsapp_opt_in")
+  telegramHandle String? @map("telegram_handle")
+  telegramOptIn  Boolean @default(false) @map("telegram_opt_in")
+  smsNumber      String? @map("sms_number")
+  smsOptIn       Boolean @default(false) @map("sms_opt_in")
+
   createdAt                 DateTime @default(now()) @map("created_at")
   updatedAt                 DateTime @updatedAt @map("updated_at")
 
@@ -1321,6 +1360,61 @@ model PortalSearchLog {
   @@index([engagementId])
   @@index([savedByPortalUserId])
   @@map("portal_search_logs")
+}
+
+// ─── Portal Messaging (WhatsApp / Telegram / SMS) ─────────────────────────────
+//
+// Outbound and inbound messages across the three external channels.
+// Outbound rows are created when the firm sends a notification (e.g.
+// "new portal request available"); inbound rows are created by the
+// webhook handler when a client replies. The relatedRequestId links a
+// message to a specific PortalRequest where applicable so the audit
+// trail on the request shows every nudge that was sent + every reply
+// that came back. Free-floating messages (e.g. broadcasts, or replies
+// we couldn't auto-route) live with relatedRequestId = null.
+model PortalMessage {
+  id               String  @id @default(uuid())
+  clientId         String  @map("client_id")
+  // The portal user this message is to/from. Nullable because inbound
+  // messages from numbers we can't recognise still need to be logged
+  // for triage (we resolve them later when the user links the number).
+  portalUserId     String? @map("portal_user_id")
+  // Optional link to a PortalRequest so the request UI can render the
+  // message thread alongside the email history.
+  relatedRequestId String? @map("related_request_id")
+
+  direction        String  // 'outbound' | 'inbound'
+  channel          String  // 'whatsapp' | 'telegram' | 'sms'
+  // Provider's message id (Twilio MessageSid for SMS/WhatsApp,
+  // Telegram message_id stringified). Indexed so webhook status
+  // callbacks can look up the row to update its delivery status.
+  providerMessageId String? @map("provider_message_id")
+  // E.164 phone or telegram chat id, depending on channel.
+  fromAddress       String? @map("from_address")
+  toAddress         String? @map("to_address")
+  body              String  @db.Text
+  // Array of { url, mimeType, name } — Twilio MediaUrls or Telegram file_ids
+  mediaJson         Json?   @map("media_json")
+  // Lifecycle status. queued → sent → delivered → read (where the
+  // provider supports it) → failed if undeliverable. Inbound rows
+  // skip straight to 'delivered'.
+  status            String  @default("queued")
+  errorMessage      String? @map("error_message") @db.Text
+  // Full provider payload, kept verbatim for debugging + audit.
+  providerRaw       Json?   @map("provider_raw")
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  client     Client            @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  portalUser ClientPortalUser? @relation("PortalUserMessages", fields: [portalUserId], references: [id], onDelete: SetNull)
+
+  @@index([clientId])
+  @@index([clientId, channel, createdAt])
+  @@index([portalUserId])
+  @@index([relatedRequestId])
+  @@index([providerMessageId])
+  @@map("portal_messages")
 }
 
 // ─── Audit Evidence Requests ──────────────────────────────────────────────────

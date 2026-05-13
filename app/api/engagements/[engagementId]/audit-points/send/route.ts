@@ -5,6 +5,7 @@ import { sendEmail } from '@/lib/email';
 import { logEngagementAction, resolveActor } from '@/lib/engagement-action-log';
 import { AUDIT_POINT_SAFE_SELECT } from '@/lib/audit-points-select';
 import { buildRoutingForNewRequest } from '@/lib/portal-request-routing';
+import { notifyOnPortalRequestCreated } from '@/lib/messaging/notify-request';
 
 /**
  * POST /api/engagements/[engagementId]/audit-points/send
@@ -120,6 +121,13 @@ export async function POST(req: NextRequest, ctx: Ctx) {
         chatHistory: initialChat as any,
         ...routing,
       } as any,
+    });
+
+    // Fire WhatsApp / Telegram / SMS notification on whichever
+    // channels the assigned portal user (or Portal Principal) has
+    // opted into. Best-effort, non-blocking.
+    notifyOnPortalRequestCreated(created.id).catch(err => {
+      console.error('[audit-points/send] notifyOnPortalRequestCreated failed', err);
     });
 
     if (actor) {

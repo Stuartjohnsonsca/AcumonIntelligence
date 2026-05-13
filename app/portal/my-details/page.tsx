@@ -3,6 +3,7 @@
 import { useState, useEffect, Suspense } from 'react';
 import { useSearchParams } from 'next/navigation';
 import { Loader2, Plus, Trash2, Lock, Users, Building2, Check, Calendar, UserPlus } from 'lucide-react';
+import { MessagingChannelsEditor, type ChannelsState } from '@/components/portal/MessagingChannelsEditor';
 
 interface ClientInfo {
   id: string;
@@ -45,6 +46,12 @@ function MyDetailsContent() {
   const [currentPassword, setCurrentPassword] = useState('');
   const [newPassword, setNewPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
+
+  // Messaging channels (WhatsApp / Telegram / SMS) for this user.
+  // Loaded once via /api/portal/messaging-channels and re-read after
+  // the editor reports a save so the UI reflects server-side
+  // normalisation (e.g. phone-number cleaning).
+  const [channels, setChannels] = useState<ChannelsState | null>(null);
   const [pwLoading, setPwLoading] = useState(false);
   const [pwMessage, setPwMessage] = useState('');
   const [pwError, setPwError] = useState('');
@@ -70,6 +77,24 @@ function MyDetailsContent() {
           setUserName(data.user.name);
           setUserEmail(data.user.email);
           setClients(data.clients || []);
+        }
+      } catch {}
+      // Channels live on a separate endpoint so my-details stays
+      // lean; load them in parallel-ish so the messaging section
+      // doesn't keep the rest of the page waiting.
+      try {
+        const cr = await fetch(`/api/portal/messaging-channels?token=${token}`);
+        if (cr.ok) {
+          const cd = await cr.json();
+          setChannels({
+            whatsappNumber: cd?.channels?.whatsappNumber ?? null,
+            whatsappOptIn: !!cd?.channels?.whatsappOptIn,
+            telegramHandle: cd?.channels?.telegramHandle ?? null,
+            telegramChatId: cd?.channels?.telegramChatId ?? null,
+            telegramOptIn: !!cd?.channels?.telegramOptIn,
+            smsNumber: cd?.channels?.smsNumber ?? null,
+            smsOptIn: !!cd?.channels?.smsOptIn,
+          });
         }
       } catch {}
       setLoading(false);
@@ -294,6 +319,21 @@ function MyDetailsContent() {
             {userError && <p className="text-xs text-red-500 mt-1">{userError}</p>}
             {userSuccess && <p className="text-xs text-green-600 mt-1 flex items-center gap-1"><Check className="h-3 w-3" />{userSuccess}</p>}
           </div>
+        </div>
+      )}
+
+      {/* Messaging channels — WhatsApp / Telegram / SMS opt-in.
+          Loaded once on mount; the editor itself talks to the server
+          and re-emits the canonicalised state via onChange. */}
+      {channels && (
+        <div className="bg-white rounded-xl border border-slate-200 p-5">
+          <MessagingChannelsEditor
+            mode="self"
+            token={token}
+            value={channels}
+            onChange={setChannels}
+            title="Notify me by WhatsApp, Telegram or SMS"
+          />
         </div>
       )}
 

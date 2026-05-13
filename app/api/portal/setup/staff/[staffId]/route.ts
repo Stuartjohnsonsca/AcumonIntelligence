@@ -49,12 +49,51 @@ export async function PUT(req: Request, ctx: Ctx) {
   if (typeof body.role === 'string' || body.role === null) patch.role = body.role || null;
   if (typeof body.name === 'string' && body.name.trim()) patch.name = body.name.trim();
 
+  // Messaging channel hints — captured by the Principal during
+  // staff setup so a user logging in for the first time already has
+  // sensible defaults to confirm. Mirror-written through to the
+  // linked ClientPortalUser when one exists so subsequent
+  // notifyPortalUser() calls see them right away.
+  if ('whatsappNumber' in body) patch.whatsappNumber = normalisePhone(body.whatsappNumber);
+  if (typeof body.whatsappOptIn === 'boolean') patch.whatsappOptIn = body.whatsappOptIn;
+  if ('telegramHandle' in body) patch.telegramHandle = body.telegramHandle ? String(body.telegramHandle).trim() : null;
+  if (typeof body.telegramOptIn === 'boolean') patch.telegramOptIn = body.telegramOptIn;
+  if ('smsNumber' in body) patch.smsNumber = normalisePhone(body.smsNumber);
+  if (typeof body.smsOptIn === 'boolean') patch.smsOptIn = body.smsOptIn;
+
   if (Object.keys(patch).length === 0) {
     return NextResponse.json({ error: 'No updatable fields provided' }, { status: 400 });
   }
 
   const row = await prisma.clientPortalStaffMember.update({ where: { id: g.staffId }, data: patch });
+
+  // Mirror the channel patch through to the linked ClientPortalUser
+  // (when one exists) so notifyPortalUser sees the new values on the
+  // very next portal request. We never set telegramChatId here — it
+  // only flips on the bot's /start handshake.
+  const channelPatch: Record<string, any> = {};
+  for (const k of ['whatsappNumber', 'whatsappOptIn', 'telegramHandle', 'telegramOptIn', 'smsNumber', 'smsOptIn'] as const) {
+    if (k in patch) channelPatch[k] = patch[k];
+  }
+  if (row.portalUserId && Object.keys(channelPatch).length > 0) {
+    try {
+      await prisma.clientPortalUser.update({ where: { id: row.portalUserId }, data: channelPatch });
+    } catch (err) {
+      // Don't fail the staff update if the mirror write blows up —
+      // the staff row is still the source of truth for setup.
+      console.error('[portal staff PUT] failed to mirror channels to portal user', err);
+    }
+  }
+
   return NextResponse.json({ ok: true, staff: row });
+}
+
+function normalisePhone(value: unknown): string | null {
+  if (value === null || value === undefined) return null;
+  if (typeof value !== 'string') return null;
+  const trimmed = value.replace(/[\s\-()]/g, '').trim();
+  if (!trimmed) return null;
+  return trimmed;
 }
 
 export async function DELETE(req: Request, ctx: Ctx) {

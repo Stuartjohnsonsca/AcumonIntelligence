@@ -9,6 +9,7 @@
 import { prisma } from '@/lib/db';
 import type { InputFieldDef, OutputFieldDef } from './action-registry';
 import { resolveActionInputs } from './action-registry';
+import { notifyOnPortalRequestCreated } from '@/lib/messaging/notify-request';
 import {
   extractAddressesFromPortalResponse,
   runBatch,
@@ -210,6 +211,14 @@ async function handleRequestDocuments(ctx: ActionHandlerContext): Promise<Action
         testName: ctx.config.testDescription,
         portalRequestId: portalRequest.id,
       },
+    });
+
+    // Fire WhatsApp / Telegram / SMS notification on whichever
+    // channels the recipient has opted into. Best-effort — failures
+    // land as 'failed' rows in portal_messages so the firm can chase
+    // up flaky channels, but never block the action result.
+    notifyOnPortalRequestCreated(portalRequest.id).catch(err => {
+      console.error('[action-handlers] notifyOnPortalRequestCreated failed', err);
     });
 
     return {
