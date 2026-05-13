@@ -299,26 +299,85 @@ function WeComFields({ config, setField, effective }: { config: Record<string, a
       )}
 
       {mode === 'external_contact_pro' && (
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-          <Field label="Corp ID" hint="WeCom → My Company → Corporation Info">
-            <Input value={config.corpId || ''} onChange={e => setField('corpId', e.target.value)} placeholder={envPlaceholder(effective, 'corpId')} />
-          </Field>
-          <Field label="Agent ID" hint="WeCom → App Management → your app → AgentId">
-            <Input value={config.agentId || ''} onChange={e => setField('agentId', e.target.value)} placeholder={envPlaceholder(effective, 'agentId')} />
-          </Field>
-          <Field label="App secret">
-            <Input type="password" value={config.appSecret || ''} onChange={e => setField('appSecret', e.target.value)} placeholder={effective.appSecret ? '••••••••' : 'app secret'} />
-          </Field>
-          <Field label="External Contact secret" hint="Distinct from the App secret; under External Contact → Permissions in the WeCom dashboard">
-            <Input type="password" value={config.externalContactSecret || ''} onChange={e => setField('externalContactSecret', e.target.value)} placeholder={effective.externalContactSecret ? '••••••••' : 'external-contact secret'} />
-          </Field>
-          <Field label="Webhook token">
-            <Input type="password" value={config.token || ''} onChange={e => setField('token', e.target.value)} placeholder={effective.token ? '••••••••' : 'webhook token'} />
-          </Field>
-          <Field label="API base override (optional)" hint="For mainland proxies; leave blank for default api.weixin.qq.com">
-            <Input value={config.apiBase || ''} onChange={e => setField('apiBase', e.target.value)} placeholder={envPlaceholder(effective, 'apiBase')} />
-          </Field>
-        </div>
+        <>
+          {/* Firm-run connector — for Model 3 you'll typically run a
+              separate service that talks to Tencent's APIs on
+              Acumon's behalf (handles access-token caching, Contact
+              Way generation, signing, etc.). Acumon POSTs to its URL
+              with the auth header below. Tencent credentials further
+              down stay available as a direct-call fallback for firms
+              that haven't built a connector yet. */}
+          <div className="border border-emerald-200 bg-emerald-50/30 rounded-lg p-3 mb-3">
+            <div className="text-[11px] font-semibold text-emerald-800 mb-2">
+              WeCom Pro connector (your service)
+            </div>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+              <Field
+                label="Connector URL"
+                hint="HTTPS endpoint of the WeCom Pro connector you've built. Acumon POSTs here for Contact Way / send / webhook actions."
+              >
+                <Input
+                  value={config.proConnectorUrl || ''}
+                  onChange={e => setField('proConnectorUrl', e.target.value)}
+                  placeholder="https://your-wecom-connector.example.com"
+                />
+              </Field>
+              <Field
+                label="Auth header name"
+                hint="Header carrying the auth value. Defaults to Authorization when blank."
+              >
+                <Input
+                  value={config.proConnectorAuthHeader || ''}
+                  onChange={e => setField('proConnectorAuthHeader', e.target.value)}
+                  placeholder="Authorization"
+                />
+              </Field>
+              <Field
+                label="Auth value"
+                hint="Secret value placed in the header. e.g. 'Bearer eyJ…' or just the API key, depending on your connector."
+              >
+                <Input
+                  type="password"
+                  value={config.proConnectorAuthValue || ''}
+                  onChange={e => setField('proConnectorAuthValue', e.target.value)}
+                  placeholder={config.proConnectorAuthValue ? '••••••••' : 'Bearer or key value'}
+                />
+              </Field>
+              <Field label="Sender WeCom UserID" hint="The firm-side WeCom employee whose customer roster the connector binds clients to.">
+                <Input value={config.senderUserId || ''} onChange={e => setField('senderUserId', e.target.value)} placeholder={envPlaceholder(effective, 'senderUserId')} />
+              </Field>
+            </div>
+          </div>
+
+          {/* Tencent credentials — only needed if you DON'T have a
+              connector and want Acumon to hit WeCom directly. The
+              Group Robot path uses none of these; the External
+              Contact Pro path uses these only when Connector URL
+              above is blank. */}
+          <div className="text-[11px] font-semibold text-slate-600 mb-2">
+            Direct-to-Tencent fallback (only used when no connector URL is set)
+          </div>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+            <Field label="Corp ID" hint="WeCom → My Company → Corporation Info">
+              <Input value={config.corpId || ''} onChange={e => setField('corpId', e.target.value)} placeholder={envPlaceholder(effective, 'corpId')} />
+            </Field>
+            <Field label="Agent ID" hint="WeCom → App Management → your app → AgentId">
+              <Input value={config.agentId || ''} onChange={e => setField('agentId', e.target.value)} placeholder={envPlaceholder(effective, 'agentId')} />
+            </Field>
+            <Field label="App secret">
+              <Input type="password" value={config.appSecret || ''} onChange={e => setField('appSecret', e.target.value)} placeholder={effective.appSecret ? '••••••••' : 'app secret'} />
+            </Field>
+            <Field label="External Contact secret" hint="Distinct from the App secret; under External Contact → Permissions in the WeCom dashboard">
+              <Input type="password" value={config.externalContactSecret || ''} onChange={e => setField('externalContactSecret', e.target.value)} placeholder={effective.externalContactSecret ? '••••••••' : 'external-contact secret'} />
+            </Field>
+            <Field label="Webhook token">
+              <Input type="password" value={config.token || ''} onChange={e => setField('token', e.target.value)} placeholder={effective.token ? '••••••••' : 'webhook token'} />
+            </Field>
+            <Field label="API base override (optional)" hint="For mainland proxies; leave blank for default api.weixin.qq.com">
+              <Input value={config.apiBase || ''} onChange={e => setField('apiBase', e.target.value)} placeholder={envPlaceholder(effective, 'apiBase')} />
+            </Field>
+          </div>
+        </>
       )}
     </div>
   );

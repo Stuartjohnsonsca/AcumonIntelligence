@@ -54,8 +54,32 @@ export interface WeComConfig {
   /// External Contact API uses its own secret distinct from the main
   /// app secret. Optional — falls back to appSecret if unset.
   externalContactSecret?: string;
+  /// The WeCom UserID of the firm-side employee whose customer roster
+  /// holds all bound external contacts. With `skip_verify=true` on
+  /// Contact Way generation, this user auto-accepts every client
+  /// add — no in-app gesture required.
+  senderUserId?: string;
   token?: string;
   apiBase?: string;
+
+  // ── WeCom Pro connector (external service the firm runs) ─────────
+  //
+  // For Model 3 the firm runs a separate service that talks to
+  // Tencent's WeCom Pro APIs. Acumon POSTs to it instead of calling
+  // Tencent directly. The connector handles access-token caching,
+  // Contact Way generation, sending, webhook decoding, etc. These
+  // fields are how Acumon finds and authenticates with the firm's
+  // connector. Concrete request/response shape is defined by the
+  // firm's connector implementation — Acumon just stores the URL +
+  // auth and uses them at send time.
+  proConnectorUrl?: string;
+  /// HTTP header name carrying the connector auth. Defaults to
+  /// `Authorization` when unset; some connectors prefer
+  /// `X-Api-Key` or a custom header.
+  proConnectorAuthHeader?: string;
+  /// The value placed in the header above. Treat as a secret — the
+  /// SuperAdmin UI renders this as a password input.
+  proConnectorAuthValue?: string;
 }
 
 export interface ProviderConfig<T = unknown> {
@@ -166,6 +190,7 @@ function readEnvConfig(provider: ProviderKey): Record<string, unknown> {
       agentId: process.env.WECOM_AGENT_ID,
       appSecret: process.env.WECOM_APP_SECRET,
       externalContactSecret: process.env.WECOM_EXTERNAL_CONTACT_SECRET,
+      senderUserId: process.env.WECOM_SENDER_USER_ID,
       token: process.env.WECOM_TOKEN,
       apiBase: process.env.WECHAT_API_BASE,
     } satisfies WeComConfig;

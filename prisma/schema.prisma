@@ -1172,6 +1172,18 @@ model ClientPortalUser {
   /// (externalcontact/send_welcome_msg / add_msg_template) for true
   /// 1:1 messaging without a shared group.
   wecomExternalUserId   String?   @map("wecom_external_user_id")
+  /// One-time bind code we pass as the `state` parameter when
+  /// generating a Contact Way QR (WeCom Pro path). The change_external_contact
+  /// webhook fires with this value when the client taps + auto-accept
+  /// succeeds; we use it to match the inbound External Contact ID
+  /// back to this portal user. Cleared on successful bind.
+  wecomBindCode         String?   @unique @map("wecom_bind_code")
+  wecomBindCodeExpiresAt DateTime? @map("wecom_bind_code_expires_at")
+  /// WeCom-issued `config_id` returned by add_contact_way. Kept so
+  /// the admin can delete or update the Contact Way later (e.g.
+  /// when the portal user is deactivated). Optional — nice to have
+  /// but not load-bearing.
+  wecomConfigId         String?   @map("wecom_config_id")
 
   // Single preferred outbound channel. The user (or the Portal
   // Principal on their behalf) picks ONE of these in /portal/my-details;

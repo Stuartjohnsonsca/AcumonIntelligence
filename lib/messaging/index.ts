@@ -59,8 +59,13 @@ export {
   isWeComConfigured,
   isWeComRobotConfigured,
   isWeComAppConfigured,
+  isWeComExternalContactConfigured,
+  getWeComMode,
   sendWeComGroupMessage,
   sendWeComAppMessage,
+  createWeComExternalContactWay,
+  sendWeComWelcomeMessage,
+  sendWeComExternalTemplate,
 } from './wecom';
 
 interface NotifyArgs {
@@ -386,6 +391,79 @@ export async function redeemTelegramLinkCode(args: {
     },
   });
   return { portalUserId: user.id, clientId: user.clientId };
+}
+
+/**
+ * Generate a one-time WeCom Pro bind code for the External Contact
+ * flow. The caller passes it as the `state` parameter on a Contact
+ * Way QR; WeCom echoes it back in the change_external_contact
+ * webhook so we can match the inbound external_userid to this portal
+ * user. 30-minute TTL.
+ *
+ * Used by the Pro mode of /api/portal/messaging-channels/wechat-link.
+ * The Group Robot / Official Account modes use generateWeChatLinkCode
+ * below (which targets the OA webhook flow instead).
+ */
+export async function generateWeComBindCode(portalUserId: string): Promise<string> {
+  const code = randomCode();
+  const expiresAt = new Date(Date.now() + 30 * 60_000);
+  await prisma.clientPortalUser.update({
+    where: { id: portalUserId },
+    data: { wecomBindCode: code, wecomBindCodeExpiresAt: expiresAt },
+  });
+  return code;
+}
+
+/**
+ * Redeem a WeCom Pro bind code via the change_external_contact
+ * webhook. Persists the external_userid against the portal user,
+ * flips wechatOptIn true so notifyPortalUser can pick the WeChat
+ * channel, and clears the one-time code so it can't be re-redeemed.
+ *
+ * Returns the matched portal user when successful, null otherwise
+ * (expired code, no match — webhook caller logs but doesn't
+ * surface this to WeCom).
+ */
+export async function redeemWeComBindCode(args: {
+  code: string;
+  externalUserId: string;
+  nickname?: string;
+  configId?: string;
+}): Promise<{ portalUserId: string; clientId: string } | null> {
+  const user = await prisma.clientPortalUser.findUnique({
+    where: { wecomBindCode: args.code },
+    select: { id: true, clientId: true, wecomBindCodeExpiresAt: true },
+  });
+  if (!user) return null;
+  if (user.wecomBindCodeExpiresAt && user.wecomBindCodeExpiresAt < new Date()) {
+    return null;
+  }
+  await prisma.clientPortalUser.update({
+    where: { id: user.id },
+    data: {
+      wecomExternalUserId: args.externalUserId,
+      wechatNickname: args.nickname ?? undefined,
+      wechatOptIn: true,
+      wecomConfigId: args.configId ?? undefined,
+      wecomBindCode: null,
+      wecomBindCodeExpiresAt: null,
+    },
+  });
+  return { portalUserId: user.id, clientId: user.clientId };
+}
+
+/**
+ * When a client deletes the firm employee from their WeChat (or the
+ * employee deletes them), WeCom fires `del_external_contact` /
+ * `del_follow_user`. We clear the bound external_userid so future
+ * notifications fall back to email / portal-only. The historical
+ * portal_messages rows stay intact for the audit trail.
+ */
+export async function unbindWeComExternalUser(externalUserId: string): Promise<void> {
+  await prisma.clientPortalUser.updateMany({
+    where: { wecomExternalUserId: externalUserId },
+    data: { wecomExternalUserId: null, wechatNickname: null },
+  });
 }
 
 /**

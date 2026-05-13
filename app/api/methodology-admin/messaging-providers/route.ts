@@ -89,6 +89,12 @@ export async function PUT(req: Request) {
         !/^https:\/\/qyapi\.weixin\.qq\.com\/.+key=/.test(config.groupWebhookUrl)) {
       return NextResponse.json({ error: 'wecom.groupWebhookUrl must be the qyapi.weixin.qq.com Group Robot URL.' }, { status: 400 });
     }
+    // Connector URL: require HTTPS to catch typos. We don't pin the
+    // host because the firm picks where to deploy their connector.
+    if (typeof config.proConnectorUrl === 'string' && config.proConnectorUrl &&
+        !/^https:\/\//i.test(config.proConnectorUrl)) {
+      return NextResponse.json({ error: 'wecom.proConnectorUrl must start with https://' }, { status: 400 });
+    }
   }
 
   const updatedByName = session.user.name || session.user.email || null;
