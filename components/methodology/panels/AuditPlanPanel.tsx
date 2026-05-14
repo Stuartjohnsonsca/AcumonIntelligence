@@ -1195,6 +1195,17 @@ export function AuditPlanPanel({ engagementId, clientId, periodId, onClose, peri
       setActiveNote('');
       return;
     }
+    // Preserve the auditor's current level when it's still valid in
+    // the recomputed list. Without this, every `setTbRows(...)` call
+    // (merge / unmerge / refresh) bumped them back to the first level
+    // because `levels` is a new array reference even when the labels
+    // are unchanged. Only fall back to levels[0] when the active
+    // level is gone (e.g. the underlying rows for that level were
+    // removed) or when no level is selected yet.
+    if (activeLevel && levels.includes(activeLevel)) {
+      // Active level survives the levels rebuild — keep it.
+      return;
+    }
     if (levels.length > 0) setActiveLevel(levels[0]); else setActiveLevel('');
     setActiveNote('');
     // eslint-disable-next-line react-hooks/exhaustive-deps
