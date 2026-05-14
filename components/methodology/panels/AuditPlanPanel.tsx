@@ -477,6 +477,14 @@ export function AuditPlanPanel({ engagementId, clientId, periodId, onClose, peri
   const [testConclusions, setTestConclusions] = useState<Record<string, 'green' | 'orange' | 'red' | 'failed' | 'pending'>>({});
   const [riskClassificationTable, setRiskClassificationTable] = useState<Record<string, string> | null>(null);
   const [performanceMateriality, setPerformanceMateriality] = useState(0);
+  // Clearly Trivial threshold from the engagement materiality blob.
+  // Used alongside Performance Materiality to gate the Analytical
+  // Review trigger button: AR is only offered for rows where
+  // CT < |row balance| < PM and the row isn't already classified as
+  // Significant Risk / Area of Focus. Rows ≤ CT are too small to
+  // bother running AR on; rows ≥ PM require substantive procedures
+  // beyond AR.
+  const [clearlyTrivial, setClearlyTrivial] = useState(0);
   const [dbConclusions, setDbConclusions] = useState<any[]>([]);
   const [dbExecutions, setDbExecutions] = useState<any[]>([]);
   // "Run all" progress. null = idle. While set, the header button is
@@ -717,11 +725,17 @@ export function AuditPlanPanel({ engagementId, clientId, periodId, onClose, peri
           const rcData = await rcRes.json();
           if (rcData.table?.data) setRiskClassificationTable(rcData.table.data);
         }
-        // Load performance materiality
+        // Load performance materiality + clearly trivial. The
+        // materiality blob lives under `data` (per materiality
+        // route's GET); some legacy responses inline the fields at
+        // the top level, so we accept both shapes.
         if (matRes.ok) {
           const matData = await matRes.json();
-          const pm = matData.materiality?.performanceMateriality || matData.performanceMateriality || 0;
+          const blob = matData.materiality || matData.data || matData;
+          const pm = blob?.performanceMateriality || 0;
+          const ct = blob?.clearlyTrivial || 0;
           setPerformanceMateriality(Number(pm) || 0);
+          setClearlyTrivial(Number(ct) || 0);
         }
         if (pcRes.ok) {
           const pcData = await pcRes.json();
@@ -2123,14 +2137,26 @@ export function AuditPlanPanel({ engagementId, clientId, periodId, onClose, peri
                       </Fragment>
                       );
                     })}
-                    {/* Analytical Review trigger row — always present
-                        when the row is expanded so AR is reachable
-                        for any balance, not just AR-classified ones.
-                        Auto-opens for AR-classified rows (preserves
-                        previous behaviour); collapsed by default for
-                        every other classification with an explicit
-                        "Analytical Review" toggle button. */}
+                    {/* Analytical Review trigger row — only rendered
+                        on rows that match the audit-side eligibility
+                        rule for substantive analytical review:
+                          • not classified as Significant Risk
+                          • not classified as Area of Focus
+                          • |balance| > Clearly Trivial
+                          • |balance| < Performance Materiality
+                        Rows above PM need substantive testing (more
+                        than AR alone). Rows at-or-below CT are too
+                        small to bother. AoF / SR rows have RMM-driven
+                        testing requirements. The button toggles the
+                        panel; AR-classified rows auto-open it so
+                        previously-AR workflows aren't lost. */}
                     {isExp && (() => {
+                      const absRowValue = Math.abs(Number(row.currentYear) || 0);
+                      const ctOk = clearlyTrivial > 0 ? absRowValue > clearlyTrivial : true;
+                      const pmOk = performanceMateriality > 0 ? absRowValue < performanceMateriality : true;
+                      const classOk = !isSig && !isAoF;
+                      const arEligible = classOk && ctOk && pmOk;
+                      if (!arEligible) return null;
                       const arOpen = isAR || arOpenRows.has(rowKey);
                       return (
                         <>
@@ -2142,7 +2168,7 @@ export function AuditPlanPanel({ engagementId, clientId, periodId, onClose, peri
                                 className="text-[10px] font-medium px-2 py-1 rounded border border-green-300 bg-white text-green-700 hover:bg-green-50 inline-flex items-center gap-1.5"
                                 title={
                                   isAR
-                                    ? 'AR-classified row — panel always open. Click to hide / show.'
+                                    ? 'AR-classified row (below PM, no RMM) — panel always open. Click to hide / show.'
                                     : 'Open the Substantive Analytical Review workspace for this balance — formula builder, expectation, threshold check and sign-offs.'
                                 }
                               >
