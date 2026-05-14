@@ -27,25 +27,73 @@ import { prisma } from '@/lib/db';
 
 export type ProviderKey = 'twilio' | 'sent_dm' | 'telegram' | 'wecom';
 
-export interface TwilioConfig {
+/**
+ * Connector fields shared by every messaging provider.
+ *
+ * Acumon prefers to talk to a stand-alone connector service rather
+ * than call provider SDKs directly — same pattern as WeCom. The
+ * connector lives outside Acumon (typically Railway / Render /
+ * Fly), can be reused by other tools the firm builds, and holds the
+ * actual Twilio / sent.dm / Telegram / WeCom credentials internally.
+ *
+ * SuperAdmin pastes the connector URL + auth value here; the rest
+ * (channel-specific from-numbers, templates, etc.) live inside the
+ * connector. Direct-API credentials remain in each provider's config
+ * as a fallback for setups that haven't built a connector yet.
+ *
+ * Connector contract (the same shape across all four providers):
+ *
+ *   POST {baseUrl}/send
+ *     headers: { [authHeader]: authValue, Content-Type: application/json }
+ *     body:    {
+ *       providerId: "prov-main" | ...,
+ *       channel:    "sms" | "whatsapp" | "telegram" | "wecom",
+ *       to:         string,
+ *       body:       string,
+ *       mediaUrls?: string[]
+ *     }
+ *     200 →    { ok: true,  providerMessageId?, providerRaw? }
+ *     non-2xx →{ ok: false, error,             providerRaw? }
+ *
+ *   GET {baseUrl}{healthPath} → 200 when healthy
+ *
+ * Naming kept as `proConnector*` for historical consistency with
+ * the existing WeCom Pro fields — the "Pro" prefix is now generic.
+ */
+export interface MessagingConnectorConfig {
+  /** HTTPS root of the connector service. */
+  proConnectorUrl?: string;
+  /** Path appended to baseUrl for GET health probes. Defaults to /health. */
+  proConnectorHealthPath?: string;
+  /** Logical tenant id sent through to the connector so one
+   *  connector deployment can serve several firms / accounts.
+   *  Defaults to `prov-main` when blank. */
+  proConnectorProviderId?: string;
+  /** HTTP header name. Defaults to `Authorization`. */
+  proConnectorAuthHeader?: string;
+  /** Secret value placed in the auth header. */
+  proConnectorAuthValue?: string;
+}
+
+export interface TwilioConfig extends MessagingConnectorConfig {
   accountSid?: string;
   authToken?: string;
   smsFrom?: string;
   whatsappFrom?: string;
   webhookPublicUrl?: string;
 }
-export interface SentDmConfig {
+export interface SentDmConfig extends MessagingConnectorConfig {
   apiKey?: string;
   templateId?: string;
   smsTemplateId?: string;
   whatsappTemplateId?: string;
 }
-export interface TelegramConfig {
+export interface TelegramConfig extends MessagingConnectorConfig {
   botToken?: string;
   botUsername?: string;
   webhookSecret?: string;
 }
-export interface WeComConfig {
+export interface WeComConfig extends MessagingConnectorConfig {
   mode?: 'group_robot' | 'external_contact_pro';
   groupWebhookUrl?: string;
   corpId?: string;
@@ -61,36 +109,8 @@ export interface WeComConfig {
   senderUserId?: string;
   token?: string;
   apiBase?: string;
-
-  // ── WeCom Pro connector (external service the firm runs) ─────────
-  //
-  // For Model 3 the firm runs a separate service that talks to
-  // Tencent's WeCom Pro APIs. Acumon POSTs to it instead of calling
-  // Tencent directly. The connector handles access-token caching,
-  // Contact Way generation, sending, webhook decoding, etc. These
-  // fields are how Acumon finds and authenticates with the firm's
-  // connector. Concrete request/response shape is defined by the
-  // firm's connector implementation — Acumon just stores the URL +
-  // auth and uses them at send time.
-  proConnectorUrl?: string;
-  /// Path on the connector that responds to GET with 200 when the
-  /// service is healthy. Used by Acumon's connector smoke-test
-  /// button and by future health-check schedules. Defaults to
-  /// `/health` if unset.
-  proConnectorHealthPath?: string;
-  /// Logical identifier for which connector "tenant" or provider
-  /// instance Acumon is talking to. Sent through to the connector
-  /// on every call so a single connector deployment can multiplex
-  /// several firms / corp IDs behind one URL. Defaults to
-  /// `prov-main` when unset.
-  proConnectorProviderId?: string;
-  /// HTTP header name carrying the connector auth. Defaults to
-  /// `Authorization` when unset; some connectors prefer
-  /// `X-Api-Key` or a custom header.
-  proConnectorAuthHeader?: string;
-  /// The value placed in the header above. Treat as a secret — the
-  /// SuperAdmin UI renders this as a password input.
-  proConnectorAuthValue?: string;
+  // Connector fields (proConnectorUrl / proConnectorAuthValue / …)
+  // are inherited from MessagingConnectorConfig above.
 }
 
 export interface ProviderConfig<T = unknown> {

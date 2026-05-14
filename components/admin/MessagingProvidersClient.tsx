@@ -212,59 +212,187 @@ function envPlaceholder(effective: Record<string, any>, key: string): string {
   return typeof v === 'string' && v ? `From env: ${v.slice(0, 12)}…` : '';
 }
 
+/**
+ * Reusable connector configuration block. Every messaging provider
+ * follows the same connector contract (POST {baseUrl}/send with auth
+ * header) so the SuperAdmin sees identical fields across Twilio,
+ * sent.dm, Telegram and WeCom: just paste a URL and an auth value,
+ * and Acumon routes through the connector. Direct-API credentials
+ * live below in a "Non-connector path" collapsible.
+ */
+function ConnectorCard({
+  config,
+  setField,
+  baseUrlPlaceholder,
+  providerLabel,
+}: {
+  config: Record<string, any>;
+  setField: (k: string, v: string) => void;
+  baseUrlPlaceholder: string;
+  providerLabel: string;
+}) {
+  return (
+    <div className="border border-emerald-200 bg-emerald-50/30 rounded-lg p-3">
+      <div className="text-[11px] font-semibold text-emerald-800 mb-1">
+        {providerLabel} connector (the recommended path)
+      </div>
+      <p className="text-[10px] text-emerald-700/80 mb-3">
+        Point Acumon at a connector service that holds the real {providerLabel} credentials. Acumon POSTs <code>{`{ providerId, channel, to, body, mediaUrls? }`}</code> to <code>{`{base}/send`}</code> with your auth header. Other tools can call the same connector — credentials live in one place.
+      </p>
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+        <Field label="Base URL" hint={`HTTPS root of the ${providerLabel} connector. Acumon appends /health, /send, etc.`}>
+          <Input
+            value={config.proConnectorUrl || ''}
+            onChange={e => setField('proConnectorUrl', e.target.value)}
+            placeholder={baseUrlPlaceholder}
+          />
+        </Field>
+        <Field label="Healthcheck path" hint="Path appended to Base URL for GET health probes. Defaults to /health.">
+          <Input
+            value={config.proConnectorHealthPath || ''}
+            onChange={e => setField('proConnectorHealthPath', e.target.value)}
+            placeholder="/health"
+          />
+        </Field>
+        <Field label="Provider ID" hint="Logical tenant ID sent to the connector so one deployment can serve several accounts. Defaults to prov-main.">
+          <Input
+            value={config.proConnectorProviderId || ''}
+            onChange={e => setField('proConnectorProviderId', e.target.value)}
+            placeholder="prov-main"
+          />
+        </Field>
+        <Field label="Auth on connector" hint="Secret value placed in the auth header. e.g. 'Bearer eyJ…' or a static API key.">
+          <Input
+            type="password"
+            value={config.proConnectorAuthValue || ''}
+            onChange={e => setField('proConnectorAuthValue', e.target.value)}
+            placeholder={config.proConnectorAuthValue ? '••••••••' : 'paste auth value'}
+          />
+        </Field>
+        <Field label="Auth header name" hint="Defaults to Authorization. Some connectors prefer X-Api-Key.">
+          <Input
+            value={config.proConnectorAuthHeader || ''}
+            onChange={e => setField('proConnectorAuthHeader', e.target.value)}
+            placeholder="Authorization"
+          />
+        </Field>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * Collapsible "Non-connector path" wrapper. Mirrors the WeCom card's
+ * legacy block: tucked away so the connector path is what the
+ * SuperAdmin reaches for first, but reachable when needed.
+ */
+function NonConnectorBlock({ summary, children }: { summary: string; children: React.ReactNode }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <div className="border border-slate-200 rounded-lg">
+      <button
+        type="button"
+        onClick={() => setOpen(s => !s)}
+        className="w-full text-left px-3 py-2 text-[11px] font-medium text-slate-600 hover:bg-slate-50 flex items-center justify-between"
+      >
+        <span>
+          Non-connector path (rarely needed){' '}
+          <span className="text-slate-400 font-normal">— {summary}</span>
+        </span>
+        <span className="text-slate-400">{open ? '▾' : '▸'}</span>
+      </button>
+      {open && (
+        <div className="px-3 py-3 border-t border-slate-200">
+          {children}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function TwilioFields({ config, setField, effective }: { config: Record<string, any>; setField: (k: string, v: string) => void; effective: Record<string, any> }) {
   return (
-    <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-      <Field label="Account SID">
-        <Input value={config.accountSid || ''} onChange={e => setField('accountSid', e.target.value)} placeholder={envPlaceholder(effective, 'accountSid') || 'ACxxxxxxxx…'} />
-      </Field>
-      <Field label="Auth Token">
-        <Input type="password" value={config.authToken || ''} onChange={e => setField('authToken', e.target.value)} placeholder={effective.authToken ? '••••••••' : 'auth token'} />
-      </Field>
-      <Field label="SMS sender" hint="E.164 number, e.g. +447700900123">
-        <Input value={config.smsFrom || ''} onChange={e => setField('smsFrom', e.target.value)} placeholder={envPlaceholder(effective, 'smsFrom')} />
-      </Field>
-      <Field label="WhatsApp sender" hint="whatsapp:+447700900123">
-        <Input value={config.whatsappFrom || ''} onChange={e => setField('whatsappFrom', e.target.value)} placeholder={envPlaceholder(effective, 'whatsappFrom')} />
-      </Field>
-      <Field label="Webhook public URL (optional)" hint="Override when behind a proxy that rewrites the host">
-        <Input value={config.webhookPublicUrl || ''} onChange={e => setField('webhookPublicUrl', e.target.value)} placeholder={envPlaceholder(effective, 'webhookPublicUrl')} />
-      </Field>
+    <div className="space-y-3">
+      <ConnectorCard
+        config={config}
+        setField={setField}
+        providerLabel="Twilio"
+        baseUrlPlaceholder="https://twilio-connector.example.com"
+      />
+      <NonConnectorBlock summary="direct Account SID / Auth Token, sender numbers">
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+          <Field label="Account SID">
+            <Input value={config.accountSid || ''} onChange={e => setField('accountSid', e.target.value)} placeholder={envPlaceholder(effective, 'accountSid') || 'ACxxxxxxxx…'} />
+          </Field>
+          <Field label="Auth Token">
+            <Input type="password" value={config.authToken || ''} onChange={e => setField('authToken', e.target.value)} placeholder={effective.authToken ? '••••••••' : 'auth token'} />
+          </Field>
+          <Field label="SMS sender" hint="E.164 number, e.g. +447700900123">
+            <Input value={config.smsFrom || ''} onChange={e => setField('smsFrom', e.target.value)} placeholder={envPlaceholder(effective, 'smsFrom')} />
+          </Field>
+          <Field label="WhatsApp sender" hint="whatsapp:+447700900123">
+            <Input value={config.whatsappFrom || ''} onChange={e => setField('whatsappFrom', e.target.value)} placeholder={envPlaceholder(effective, 'whatsappFrom')} />
+          </Field>
+          <Field label="Webhook public URL (optional)" hint="Override when behind a proxy that rewrites the host">
+            <Input value={config.webhookPublicUrl || ''} onChange={e => setField('webhookPublicUrl', e.target.value)} placeholder={envPlaceholder(effective, 'webhookPublicUrl')} />
+          </Field>
+        </div>
+      </NonConnectorBlock>
     </div>
   );
 }
 
 function SentDmFields({ config, setField, effective }: { config: Record<string, any>; setField: (k: string, v: string) => void; effective: Record<string, any> }) {
   return (
-    <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-      <Field label="API key">
-        <Input type="password" value={config.apiKey || ''} onChange={e => setField('apiKey', e.target.value)} placeholder={effective.apiKey ? '••••••••' : 'sk-...'} />
-      </Field>
-      <Field label="Template ID (default)" hint="The {{body}}/{{link}} template you registered with sent.dm">
-        <Input value={config.templateId || ''} onChange={e => setField('templateId', e.target.value)} placeholder={envPlaceholder(effective, 'templateId')} />
-      </Field>
-      <Field label="SMS template ID (optional)">
-        <Input value={config.smsTemplateId || ''} onChange={e => setField('smsTemplateId', e.target.value)} placeholder={envPlaceholder(effective, 'smsTemplateId')} />
-      </Field>
-      <Field label="WhatsApp template ID (optional)">
-        <Input value={config.whatsappTemplateId || ''} onChange={e => setField('whatsappTemplateId', e.target.value)} placeholder={envPlaceholder(effective, 'whatsappTemplateId')} />
-      </Field>
+    <div className="space-y-3">
+      <ConnectorCard
+        config={config}
+        setField={setField}
+        providerLabel="sent.dm"
+        baseUrlPlaceholder="https://sentdm-connector.example.com"
+      />
+      <NonConnectorBlock summary="direct sent.dm API key + template IDs">
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+          <Field label="API key">
+            <Input type="password" value={config.apiKey || ''} onChange={e => setField('apiKey', e.target.value)} placeholder={effective.apiKey ? '••••••••' : 'sk-...'} />
+          </Field>
+          <Field label="Template ID (default)" hint="The {{body}}/{{link}} template you registered with sent.dm">
+            <Input value={config.templateId || ''} onChange={e => setField('templateId', e.target.value)} placeholder={envPlaceholder(effective, 'templateId')} />
+          </Field>
+          <Field label="SMS template ID (optional)">
+            <Input value={config.smsTemplateId || ''} onChange={e => setField('smsTemplateId', e.target.value)} placeholder={envPlaceholder(effective, 'smsTemplateId')} />
+          </Field>
+          <Field label="WhatsApp template ID (optional)">
+            <Input value={config.whatsappTemplateId || ''} onChange={e => setField('whatsappTemplateId', e.target.value)} placeholder={envPlaceholder(effective, 'whatsappTemplateId')} />
+          </Field>
+        </div>
+      </NonConnectorBlock>
     </div>
   );
 }
 
 function TelegramFields({ config, setField, effective }: { config: Record<string, any>; setField: (k: string, v: string) => void; effective: Record<string, any> }) {
   return (
-    <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-      <Field label="Bot token" hint="From BotFather → /newbot">
-        <Input type="password" value={config.botToken || ''} onChange={e => setField('botToken', e.target.value)} placeholder={effective.botToken ? '••••••••' : '123456:ABC…'} />
-      </Field>
-      <Field label="Bot username" hint="Without @ — used to build the t.me deep-link">
-        <Input value={config.botUsername || ''} onChange={e => setField('botUsername', e.target.value)} placeholder={envPlaceholder(effective, 'botUsername') || 'AcumonAuditBot'} />
-      </Field>
-      <Field label="Webhook secret" hint="Set in setWebhook + matches X-Telegram-Bot-Api-Secret-Token header">
-        <Input type="password" value={config.webhookSecret || ''} onChange={e => setField('webhookSecret', e.target.value)} placeholder={effective.webhookSecret ? '••••••••' : 'random 32 chars'} />
-      </Field>
+    <div className="space-y-3">
+      <ConnectorCard
+        config={config}
+        setField={setField}
+        providerLabel="Telegram"
+        baseUrlPlaceholder="https://telegram-connector.example.com"
+      />
+      <NonConnectorBlock summary="direct bot token + webhook secret">
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+          <Field label="Bot token" hint="From BotFather → /newbot">
+            <Input type="password" value={config.botToken || ''} onChange={e => setField('botToken', e.target.value)} placeholder={effective.botToken ? '••••••••' : '123456:ABC…'} />
+          </Field>
+          <Field label="Bot username" hint="Without @ — used to build the t.me deep-link">
+            <Input value={config.botUsername || ''} onChange={e => setField('botUsername', e.target.value)} placeholder={envPlaceholder(effective, 'botUsername') || 'AcumonAuditBot'} />
+          </Field>
+          <Field label="Webhook secret" hint="Set in setWebhook + matches X-Telegram-Bot-Api-Secret-Token header">
+            <Input type="password" value={config.webhookSecret || ''} onChange={e => setField('webhookSecret', e.target.value)} placeholder={effective.webhookSecret ? '••••••••' : 'random 32 chars'} />
+          </Field>
+        </div>
+      </NonConnectorBlock>
     </div>
   );
 }

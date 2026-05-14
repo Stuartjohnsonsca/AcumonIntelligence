@@ -23,6 +23,7 @@
 import crypto from 'crypto';
 import type { OutboundMessage, SendResult } from './types';
 import { getProviderConfig, type TwilioConfig } from './provider-config';
+import { sendViaConnector } from './connector';
 
 const TWILIO_API_BASE = 'https://api.twilio.com/2010-04-01';
 
@@ -34,27 +35,44 @@ async function getCreds() {
   return { sid: config.accountSid, token: config.authToken };
 }
 
-/** True when Twilio creds exist — DB config wins; env vars are the
- *  fallback. Async because the DB lookup is async; sync callers
- *  should await. */
+/** True when Twilio is reachable — either through a configured
+ *  connector OR direct Twilio creds. Async because the DB lookup
+ *  is async; sync callers should await. */
 export async function isTwilioConfigured(): Promise<boolean> {
   const { enabled, config } = await getProviderConfig<TwilioConfig>('twilio');
-  return enabled && !!config.accountSid && !!config.authToken;
+  if (!enabled) return false;
+  // Connector path counts as configured even when direct creds are
+  // blank — the connector holds the real account-side credentials.
+  if (config.proConnectorUrl && config.proConnectorAuthValue) return true;
+  return !!config.accountSid && !!config.authToken;
 }
 
-/** Send an SMS via Twilio Messages API. */
+/** Send an SMS. Routes through the firm's connector when one is
+ *  configured; falls back to Twilio's REST API otherwise. */
 export async function sendTwilioSms(msg: OutboundMessage): Promise<SendResult> {
+  const viaConnector = await sendViaConnector({ providerKey: 'twilio', channel: 'sms', message: msg });
+  if (viaConnector) return viaConnector;
+
   const { config } = await getProviderConfig<TwilioConfig>('twilio');
-  if (!config.smsFrom) return { ok: false, error: 'Twilio SMS sender not set (smsFrom).' };
+  if (!config.smsFrom) return { ok: false, error: 'Twilio SMS sender not set (smsFrom) and no connector configured.' };
   return await postMessage({ From: config.smsFrom, To: msg.to, Body: msg.body, MediaUrls: msg.mediaUrls });
 }
 
-/** Send a WhatsApp message via Twilio. Both From and To must be
- *  prefixed with `whatsapp:`; the helper adds the prefix when the
- *  caller passes a plain E.164 number. */
+/** Send a WhatsApp message. Connector path mirrors the connector
+ *  contract (channel: 'whatsapp', plain E.164 in `to`) — the
+ *  connector adds the `whatsapp:` prefix internally. */
 export async function sendTwilioWhatsApp(msg: OutboundMessage): Promise<SendResult> {
+  const viaConnector = await sendViaConnector({
+    providerKey: 'twilio',
+    channel: 'whatsapp',
+    // Strip whatsapp: prefix on the way out — the connector's
+    // contract is plain E.164.
+    message: { ...msg, to: msg.to.replace(/^whatsapp:/, '') },
+  });
+  if (viaConnector) return viaConnector;
+
   const { config } = await getProviderConfig<TwilioConfig>('twilio');
-  if (!config.whatsappFrom) return { ok: false, error: 'Twilio WhatsApp sender not set (whatsappFrom).' };
+  if (!config.whatsappFrom) return { ok: false, error: 'Twilio WhatsApp sender not set (whatsappFrom) and no connector configured.' };
   const From = config.whatsappFrom.startsWith('whatsapp:') ? config.whatsappFrom : `whatsapp:${config.whatsappFrom}`;
   const To = msg.to.startsWith('whatsapp:') ? msg.to : `whatsapp:${msg.to}`;
   return await postMessage({ From, To, Body: msg.body, MediaUrls: msg.mediaUrls });

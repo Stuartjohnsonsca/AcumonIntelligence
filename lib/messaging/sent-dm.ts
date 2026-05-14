@@ -26,12 +26,16 @@
 
 import type { MessageChannel, OutboundMessage, SendResult } from './types';
 import { getProviderConfig, type SentDmConfig } from './provider-config';
+import { sendViaConnector } from './connector';
 
 const SENT_DM_API_BASE = 'https://api.sent.dm';
 
 export async function isSentDmConfigured(): Promise<boolean> {
   const { enabled, config } = await getProviderConfig<SentDmConfig>('sent_dm');
-  return enabled && !!config.apiKey && !!config.templateId;
+  if (!enabled) return false;
+  // Connector path: the connector holds the API key + template id.
+  if (config.proConnectorUrl && config.proConnectorAuthValue) return true;
+  return !!config.apiKey && !!config.templateId;
 }
 
 /** Channel-specific template-id overrides. Falls back to the shared
@@ -54,10 +58,21 @@ export async function sendSentDmWhatsApp(msg: OutboundMessage): Promise<SendResu
 }
 
 async function sendSentDmMessage(channel: 'sms' | 'whatsapp', msg: OutboundMessage): Promise<SendResult> {
+  // Connector path takes precedence — template selection happens
+  // inside the firm's connector so Acumon doesn't need to know the
+  // template id. The connector contract carries `channel` so it
+  // can pick smsTemplateId vs whatsappTemplateId itself.
+  const viaConnector = await sendViaConnector({
+    providerKey: 'sent_dm',
+    channel,
+    message: { ...msg, to: msg.to.replace(/^whatsapp:/, '') },
+  });
+  if (viaConnector) return viaConnector;
+
   try {
     const { config } = await getProviderConfig<SentDmConfig>('sent_dm');
     const apiKey = config.apiKey;
-    if (!apiKey) return { ok: false, error: 'sent.dm API key not set (apiKey).' };
+    if (!apiKey) return { ok: false, error: 'sent.dm API key not set (apiKey) and no connector configured.' };
     const templateId = await templateIdForChannel(channel);
     if (!templateId) return { ok: false, error: `No sent.dm template id configured for ${channel}` };
 

@@ -18,15 +18,57 @@ CREATE TABLE IF NOT EXISTS messaging_provider_configs (
 );
 
 -- Seed rows for the four providers so the SuperAdmin UI always has
--- something to render against. Existing rows are left untouched for
--- twilio / sent_dm / telegram — wecom uses a merge below so the
--- connector defaults flow into an existing row too.
+-- something to render against. All four use the same merge pattern
+-- (`EXCLUDED.config || existing.config`) so re-runs only fill keys
+-- not already set — saved auth values + URLs survive subsequent
+-- migrations.
+--
+-- Connector defaults for Twilio / sent.dm / Telegram are shipped as
+-- BLANK fields with a sensible auth header default. The SuperAdmin
+-- pastes the connector URL + auth value once Acumon Group's three
+-- connector services are deployed.
+
 INSERT INTO messaging_provider_configs (id, provider, enabled, config)
-  VALUES
-    (gen_random_uuid()::text, 'twilio',   FALSE, '{}'::jsonb),
-    (gen_random_uuid()::text, 'sent_dm',  FALSE, '{}'::jsonb),
-    (gen_random_uuid()::text, 'telegram', FALSE, '{}'::jsonb)
-ON CONFLICT (provider) DO NOTHING;
+VALUES (
+  gen_random_uuid()::text,
+  'twilio',
+  FALSE,
+  '{
+    "proConnectorHealthPath": "/health",
+    "proConnectorProviderId": "prov-main",
+    "proConnectorAuthHeader": "Authorization"
+  }'::jsonb
+)
+ON CONFLICT (provider) DO UPDATE
+  SET config = EXCLUDED.config || messaging_provider_configs.config;
+
+INSERT INTO messaging_provider_configs (id, provider, enabled, config)
+VALUES (
+  gen_random_uuid()::text,
+  'sent_dm',
+  FALSE,
+  '{
+    "proConnectorHealthPath": "/health",
+    "proConnectorProviderId": "prov-main",
+    "proConnectorAuthHeader": "Authorization"
+  }'::jsonb
+)
+ON CONFLICT (provider) DO UPDATE
+  SET config = EXCLUDED.config || messaging_provider_configs.config;
+
+INSERT INTO messaging_provider_configs (id, provider, enabled, config)
+VALUES (
+  gen_random_uuid()::text,
+  'telegram',
+  FALSE,
+  '{
+    "proConnectorHealthPath": "/health",
+    "proConnectorProviderId": "prov-main",
+    "proConnectorAuthHeader": "Authorization"
+  }'::jsonb
+)
+ON CONFLICT (provider) DO UPDATE
+  SET config = EXCLUDED.config || messaging_provider_configs.config;
 
 -- WeCom seed — defaults match the firm's Railway-hosted connector
 -- deployment. The auth value is intentionally absent (the SuperAdmin

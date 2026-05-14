@@ -92,12 +92,22 @@ export async function PUT(req: Request) {
         !/^https:\/\/qyapi\.weixin\.qq\.com\/.+key=/.test(config.groupWebhookUrl)) {
       return NextResponse.json({ error: 'wecom.groupWebhookUrl must be the qyapi.weixin.qq.com Group Robot URL.' }, { status: 400 });
     }
-    // Connector URL: require HTTPS to catch typos. We don't pin the
-    // host because the firm picks where to deploy their connector.
-    if (typeof config.proConnectorUrl === 'string' && config.proConnectorUrl &&
-        !/^https:\/\//i.test(config.proConnectorUrl)) {
-      return NextResponse.json({ error: 'wecom.proConnectorUrl must start with https://' }, { status: 400 });
-    }
+  }
+
+  // Connector URL: HTTPS required across every provider. We don't
+  // pin the host because the firm picks where to deploy their
+  // connector. Applies uniformly to twilio / sent_dm / telegram /
+  // wecom — all four providers share the same connector contract.
+  if (typeof config.proConnectorUrl === 'string' && config.proConnectorUrl &&
+      !/^https:\/\//i.test(config.proConnectorUrl)) {
+    return NextResponse.json({ error: `${provider}.proConnectorUrl must start with https://` }, { status: 400 });
+  }
+  // Healthcheck path: starts with / when supplied. Anything else
+  // would silently mean "appended directly to baseUrl" which is
+  // almost never what the SuperAdmin meant.
+  if (typeof config.proConnectorHealthPath === 'string' && config.proConnectorHealthPath &&
+      !config.proConnectorHealthPath.startsWith('/')) {
+    return NextResponse.json({ error: `${provider}.proConnectorHealthPath must start with /` }, { status: 400 });
   }
 
   const updatedByName = session.user.name || session.user.email || null;

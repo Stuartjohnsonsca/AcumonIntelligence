@@ -20,6 +20,7 @@
 
 import type { OutboundMessage, SendResult } from './types';
 import { getProviderConfig, type TelegramConfig } from './provider-config';
+import { sendViaConnector } from './connector';
 
 async function getToken(): Promise<string> {
   const { config } = await getProviderConfig<TelegramConfig>('telegram');
@@ -29,11 +30,14 @@ async function getToken(): Promise<string> {
   return config.botToken;
 }
 
-/** True when the bot token is configured. Async — DB-first via the
+/** True when Telegram is reachable — either through a configured
+ *  connector OR a direct bot token. Async — DB-first via the
  *  provider-config layer, env-fallback. */
 export async function isTelegramConfigured(): Promise<boolean> {
   const { enabled, config } = await getProviderConfig<TelegramConfig>('telegram');
-  return enabled && !!config.botToken;
+  if (!enabled) return false;
+  if (config.proConnectorUrl && config.proConnectorAuthValue) return true;
+  return !!config.botToken;
 }
 
 /** Bot's public @username — required to build deep-links for the
@@ -66,6 +70,17 @@ export async function buildTelegramConnectUrl(code: string): Promise<string | un
  * with sendDocument so attachments arrive in the same conversation.
  */
 export async function sendTelegramMessage(msg: OutboundMessage): Promise<SendResult> {
+  // Connector path: the firm's Telegram connector holds the bot
+  // token. Acumon just hands over chat_id + body. Connector deals
+  // with bot.sendMessage / bot.sendDocument internally so we don't
+  // need to maintain a second code path for media.
+  const viaConnector = await sendViaConnector({
+    providerKey: 'telegram',
+    channel: 'telegram',
+    message: msg,
+  });
+  if (viaConnector) return viaConnector;
+
   try {
     const token = await getToken();
     const chatId = msg.to;
