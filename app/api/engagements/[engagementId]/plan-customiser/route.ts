@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { assertEngagementWriteAccess } from '@/lib/auth/engagement-auth';
 import { auth } from '@/lib/auth';
 import { prisma } from '@/lib/db';
+import { AUDIT_TOOLS, buildDefaultFlowForTool } from '@/lib/audit-tools';
 
 /**
  * Plan Customiser — per-engagement overrides to the auto-generated audit plan.
@@ -62,6 +63,14 @@ export interface PlanCustomiserCustomTest {
   framework: string;
   createdBy: { id: string; name: string };
   createdAt: string;
+  /** Output format the rendered test uses — drives the in-engagement
+   *  workspace layout (three-section vs spreadsheet vs document). */
+  outputFormat?: string;
+  /** Default flow shipped with AI-Tool deployments. The Audit Plan
+   *  Run handler reads this and passes it as `flowData` to the
+   *  test-execution endpoint, so AI Tools work the moment they land
+   *  on a plan without the auditor having to build a flow first. */
+  flow?: unknown;
 }
 
 export interface PlanCustomiserData {
@@ -97,6 +106,24 @@ export async function GET(req: Request, { params }: { params: Promise<{ engageme
   // Ensure required keys exist for clients that rely on them
   if (!data.overrides) data.overrides = {};
   if (!Array.isArray(data.customTests)) data.customTests = [];
+
+  // Backfill: AI-Tool deployments saved BEFORE the catalogue
+  // shipped a default flow have no `flow` field, which means the
+  // Audit Plan Run handler hits "No flow configured". Inject the
+  // default flow on read for any custom test whose name matches a
+  // catalogue tool. We don't write the backfill to the DB here — a
+  // subsequent edit / re-save will persist it naturally, and read-
+  // only injection keeps the GET handler side-effect-free.
+  for (const t of data.customTests) {
+    if (!t.flow) {
+      const match = AUDIT_TOOLS.find(at => at.label === t.name);
+      if (match) {
+        t.flow = buildDefaultFlowForTool(match);
+        if (!t.outputFormat) t.outputFormat = match.outputFormat;
+      }
+    }
+  }
+
   return NextResponse.json({ data });
 }
 
@@ -179,6 +206,12 @@ export async function POST(req: Request, { params }: { params: Promise<{ engagem
         framework: customTest.framework || 'IFRS',
         createdBy: setBy,
         createdAt: now,
+        // outputFormat + flow are passed through verbatim from the
+        // Plan Customiser modal when it deploys an AI Tool. Without
+        // them the Audit Plan Run handler can't execute the test —
+        // it would hit the "no flow configured" path.
+        outputFormat: typeof customTest.outputFormat === 'string' ? customTest.outputFormat : undefined,
+        flow: customTest.flow ?? undefined,
       };
       data.customTests.push(newTest);
       break;

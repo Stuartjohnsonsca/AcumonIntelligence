@@ -27,7 +27,7 @@
 import { useState, useEffect, useMemo, useRef } from 'react';
 import { X, Loader2, Plus, Check, Ban, Trash2, Save, Edit2, Table, Library, Wrench, Search } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import { AUDIT_TOOLS as STATIC_AUDIT_TOOLS, type AuditTool } from '@/lib/audit-tools';
+import { AUDIT_TOOLS as STATIC_AUDIT_TOOLS, buildDefaultFlowForTool, type AuditTool } from '@/lib/audit-tools';
 import type { ToolAvailability } from '@/types/methodology';
 
 interface FsLineOption {
@@ -351,6 +351,12 @@ export function PlanCustomiserModal({
   // afterwards. Called from the arm timer, never directly.
   async function fireDeployment(tool: AuditTool) {
     const desc = `${tool.description}\n\nDeployed against ${fsLineName} from the Plan Customiser. Refine sampling / population once opened.`;
+    // Ship a default flow with every deployment so the test is
+    // executable the moment it lands on the audit plan — start →
+    // ai_action (tool-specific prompt) → end. Auditors can refine
+    // the flow via Flow Builder after the fact; without this the
+    // Run button hits "No flow configured".
+    const flow = buildDefaultFlowForTool(tool);
     const ok = await post({
       action: 'add_custom',
       customTest: {
@@ -362,7 +368,8 @@ export function PlanCustomiserModal({
         assertions: tool.defaultAssertions,
         framework: 'ALL',
         outputFormat: tool.outputFormat,
-      },
+        flow,
+      } as any,
     });
     if (!ok) {
       // Surface the error so the operator can retry instead of
