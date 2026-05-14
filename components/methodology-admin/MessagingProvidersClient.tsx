@@ -270,51 +270,30 @@ function TelegramFields({ config, setField, effective }: { config: Record<string
 }
 
 function WeComFields({ config, setField, effective }: { config: Record<string, any>; setField: (k: string, v: string) => void; effective: Record<string, any> }) {
+  // The connector is now the headline configuration — these fields
+  // are what Acumon needs to reach the firm's WeCom Pro connector
+  // service. Everything else (Group Robot URL, Tencent creds) is
+  // a legacy / non-connector path tucked into a collapsible block
+  // below so the page leads with what most setups actually use.
+  const [showLegacy, setShowLegacy] = useState(false);
   const mode = (config.mode === 'external_contact_pro') ? 'external_contact_pro' : 'group_robot';
   function setMode(next: 'group_robot' | 'external_contact_pro') { setField('mode', next); }
   return (
     <div className="space-y-3">
-      {/* Mode selector — radio so the SuperAdmin sees which path the
-          orchestrator will use for WeChat-preference notifications. */}
-      <Field label="Mode" hint="Group Robot is free; External Contact Pro needs WeCom Pro and an approved API key.">
-        <div className="space-y-1.5">
-          <label className="flex items-center gap-2 text-xs cursor-pointer">
-            <input type="radio" checked={mode === 'group_robot'} onChange={() => setMode('group_robot')} />
-            <span><strong>Group Robot</strong> — shared group chat per engagement, free WeCom tier</span>
-          </label>
-          <label className="flex items-center gap-2 text-xs cursor-pointer">
-            <input type="radio" checked={mode === 'external_contact_pro'} onChange={() => setMode('external_contact_pro')} />
-            <span><strong>External Contact (Pro)</strong> — 1:1 DMs, requires WeCom Pro + approved API</span>
-          </label>
-        </div>
-      </Field>
-
-      {mode === 'group_robot' && (
-        <Field
-          label="Group Robot webhook URL"
-          hint="From the WeCom group → ⋯ → Group Robots → Add Robot → copy URL. Used as the firm-wide default; per-engagement URLs in Monitoring Reports take precedence."
-        >
-          <Input value={config.groupWebhookUrl || ''} onChange={e => setField('groupWebhookUrl', e.target.value)} placeholder="https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=..." />
-        </Field>
-      )}
-
-      {/* Firm-run connector — visible regardless of mode so the
-          SuperAdmin can paste connector creds without first having to
-          flip the radio to Pro. Only USED when mode = external_contact_pro,
-          but the fields stay editable in both modes so credentials
-          don't get wiped on a mode switch. */}
+      {/* Connector — the primary path. Acumon POSTs to this URL with
+          the auth header below for every WeChat-channel action; the
+          connector talks to Tencent on the firm's behalf. */}
       <div className="border border-emerald-200 bg-emerald-50/30 rounded-lg p-3">
         <div className="text-[11px] font-semibold text-emerald-800 mb-1">
-          WeCom Pro connector (your service)
+          WeCom connector (the recommended path)
         </div>
         <p className="text-[10px] text-emerald-700/80 mb-3">
-          Used only when <strong>Mode = External Contact (Pro)</strong> above. Acumon POSTs to your connector URL with the auth header — your connector talks to Tencent on Acumon's behalf.
-          {mode !== 'external_contact_pro' && ' These fields are inactive in Group Robot mode but you can pre-fill them.'}
+          Point Acumon at your WeCom connector service. Acumon doesn't talk to Tencent directly — the connector handles access tokens, Contact Way generation, sending and webhook decoding internally. You enter the connector URL + auth value here; that's it.
         </p>
         <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
           <Field
             label="Connector URL"
-            hint="HTTPS endpoint of the WeCom Pro connector you've built."
+            hint="HTTPS endpoint of your WeCom connector."
           >
             <Input
               value={config.proConnectorUrl || ''}
@@ -343,46 +322,89 @@ function WeComFields({ config, setField, effective }: { config: Record<string, a
               placeholder={config.proConnectorAuthValue ? '••••••••' : 'Bearer or key value'}
             />
           </Field>
-          <Field label="Sender WeCom UserID" hint="The firm-side WeCom employee whose customer roster the connector binds clients to.">
+          <Field label="Sender WeCom UserID (optional)" hint="The firm-side WeCom employee the connector should bind clients to. Most connectors derive this themselves — leave blank unless yours needs it.">
             <Input value={config.senderUserId || ''} onChange={e => setField('senderUserId', e.target.value)} placeholder={envPlaceholder(effective, 'senderUserId')} />
           </Field>
         </div>
       </div>
 
-      {/* Tencent direct credentials — visible in Pro mode only, used
-          only when the connector URL above is empty. Hidden in Group
-          Robot mode because Group Robot uses a webhook URL only. */}
-      {mode === 'external_contact_pro' && (
-        <div className="border border-slate-200 rounded-lg p-3">
-          <div className="text-[11px] font-semibold text-slate-600 mb-1">
-            Direct-to-Tencent fallback
+      {/* Legacy / non-connector paths — collapsed by default. The
+          Group Robot URL and direct Tencent creds are kept for the
+          handful of setups that haven't built a connector yet. Most
+          firms can ignore this section entirely. */}
+      <div className="border border-slate-200 rounded-lg">
+        <button
+          type="button"
+          onClick={() => setShowLegacy(s => !s)}
+          className="w-full text-left px-3 py-2 text-[11px] font-medium text-slate-600 hover:bg-slate-50 flex items-center justify-between"
+        >
+          <span>
+            Non-connector paths (rarely needed){' '}
+            <span className="text-slate-400 font-normal">— Group Robot URL, direct Tencent creds</span>
+          </span>
+          <span className="text-slate-400">{showLegacy ? '▾' : '▸'}</span>
+        </button>
+        {showLegacy && (
+          <div className="px-3 py-3 border-t border-slate-200 space-y-3">
+            {/* Mode selector — kept so existing Group Robot setups
+                still work; new setups should leave this on the
+                default (external_contact_pro) and use the connector
+                fields above. */}
+            <Field label="Mode" hint="Only relevant if you aren't using a connector. Leave on External Contact (Pro) for the connector path.">
+              <div className="space-y-1.5">
+                <label className="flex items-center gap-2 text-xs cursor-pointer">
+                  <input type="radio" checked={mode === 'external_contact_pro'} onChange={() => setMode('external_contact_pro')} />
+                  <span><strong>External Contact (Pro)</strong> — connector / 1:1 DMs (default)</span>
+                </label>
+                <label className="flex items-center gap-2 text-xs cursor-pointer">
+                  <input type="radio" checked={mode === 'group_robot'} onChange={() => setMode('group_robot')} />
+                  <span><strong>Group Robot</strong> — POST direct to a shared WeCom group webhook URL (no connector)</span>
+                </label>
+              </div>
+            </Field>
+
+            {mode === 'group_robot' && (
+              <Field
+                label="Group Robot webhook URL"
+                hint="From the WeCom group → ⋯ → Group Robots → Add Robot → copy URL."
+              >
+                <Input value={config.groupWebhookUrl || ''} onChange={e => setField('groupWebhookUrl', e.target.value)} placeholder="https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=..." />
+              </Field>
+            )}
+
+            {/* Direct Tencent creds — only used when both Pro mode is
+                picked AND no connector URL above. Almost no firm
+                needs these. */}
+            {mode === 'external_contact_pro' && (
+              <div>
+                <p className="text-[10px] text-slate-500 mb-2">
+                  Direct-to-Tencent credentials (used only when the connector URL above is empty).
+                </p>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                  <Field label="Corp ID" hint="WeCom → My Company → Corporation Info">
+                    <Input value={config.corpId || ''} onChange={e => setField('corpId', e.target.value)} placeholder={envPlaceholder(effective, 'corpId')} />
+                  </Field>
+                  <Field label="Agent ID" hint="WeCom → App Management → your app → AgentId">
+                    <Input value={config.agentId || ''} onChange={e => setField('agentId', e.target.value)} placeholder={envPlaceholder(effective, 'agentId')} />
+                  </Field>
+                  <Field label="App secret">
+                    <Input type="password" value={config.appSecret || ''} onChange={e => setField('appSecret', e.target.value)} placeholder={effective.appSecret ? '••••••••' : 'app secret'} />
+                  </Field>
+                  <Field label="External Contact secret" hint="Distinct from the App secret; under External Contact → Permissions in the WeCom dashboard">
+                    <Input type="password" value={config.externalContactSecret || ''} onChange={e => setField('externalContactSecret', e.target.value)} placeholder={effective.externalContactSecret ? '••••••••' : 'external-contact secret'} />
+                  </Field>
+                  <Field label="Webhook token">
+                    <Input type="password" value={config.token || ''} onChange={e => setField('token', e.target.value)} placeholder={effective.token ? '••••••••' : 'webhook token'} />
+                  </Field>
+                  <Field label="API base override (optional)" hint="For mainland proxies; leave blank for default api.weixin.qq.com">
+                    <Input value={config.apiBase || ''} onChange={e => setField('apiBase', e.target.value)} placeholder={envPlaceholder(effective, 'apiBase')} />
+                  </Field>
+                </div>
+              </div>
+            )}
           </div>
-          <p className="text-[10px] text-slate-500 mb-3">
-            Used only when the Connector URL above is empty. Lets Acumon hit Tencent's WeCom APIs directly.
-            Most setups use the connector instead; keep these blank if you prefer.
-          </p>
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-            <Field label="Corp ID" hint="WeCom → My Company → Corporation Info">
-              <Input value={config.corpId || ''} onChange={e => setField('corpId', e.target.value)} placeholder={envPlaceholder(effective, 'corpId')} />
-            </Field>
-            <Field label="Agent ID" hint="WeCom → App Management → your app → AgentId">
-              <Input value={config.agentId || ''} onChange={e => setField('agentId', e.target.value)} placeholder={envPlaceholder(effective, 'agentId')} />
-            </Field>
-            <Field label="App secret">
-              <Input type="password" value={config.appSecret || ''} onChange={e => setField('appSecret', e.target.value)} placeholder={effective.appSecret ? '••••••••' : 'app secret'} />
-            </Field>
-            <Field label="External Contact secret" hint="Distinct from the App secret; under External Contact → Permissions in the WeCom dashboard">
-              <Input type="password" value={config.externalContactSecret || ''} onChange={e => setField('externalContactSecret', e.target.value)} placeholder={effective.externalContactSecret ? '••••••••' : 'external-contact secret'} />
-            </Field>
-            <Field label="Webhook token">
-              <Input type="password" value={config.token || ''} onChange={e => setField('token', e.target.value)} placeholder={effective.token ? '••••••••' : 'webhook token'} />
-            </Field>
-            <Field label="API base override (optional)" hint="For mainland proxies; leave blank for default api.weixin.qq.com">
-              <Input value={config.apiBase || ''} onChange={e => setField('apiBase', e.target.value)} placeholder={envPlaceholder(effective, 'apiBase')} />
-            </Field>
-          </div>
-        </div>
-      )}
+        )}
+      </div>
     </div>
   );
 }
