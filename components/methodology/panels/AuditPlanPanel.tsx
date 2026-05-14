@@ -1662,26 +1662,61 @@ export function AuditPlanPanel({ engagementId, clientId, periodId, onClose, peri
                 const displayCode = row.originalAccountCode || row.accountCode;
                 return (
                   <Fragment key={rowKey}>
-                    {/* Merged group header — show once for the group */}
-                    {isMerged && isFirstInMerge && (
-                      <tr className="border-b border-blue-200 bg-blue-50/50">
-                        <td></td>
-                        <td></td>
-                        <td className="pl-1 pr-0.5 py-1 font-mono text-blue-600 text-[9px] font-bold">{row.accountCode}</td>
-                        <td colSpan={isThreeLevel ? 2 : 1} className="px-0.5 py-1 text-blue-700 font-medium">
-                          Merged: {mergedGroupRows.length} accounts
-                        </td>
-                        <td className="px-0.5 py-1 text-right whitespace-nowrap font-medium"><AmountCell value={mergedGroupRows.reduce((s, r) => s + (Number(r.currentYear) || 0), 0)} className="text-blue-700" /></td>
-                        <td className="px-0.5 py-1 text-right whitespace-nowrap"><AmountCell value={mergedGroupRows.reduce((s, r) => s + (Number(r.priorYear) || 0), 0)} className="text-blue-500" /></td>
-                        <td></td>
-                        <td className="px-0.5 py-1">
-                          <button onClick={() => handleUnmerge(row.accountCode)} disabled={merging}
-                            className="text-[8px] px-1.5 py-0.5 bg-white border border-blue-300 text-blue-600 rounded hover:bg-blue-100 font-medium">
-                            Unmerge
-                          </button>
-                        </td>
-                      </tr>
-                    )}
+                    {/* Merged group header — show once for the group.
+                        Cell layout mirrors the child row exactly so the
+                        Dr / Cr totals sit in the same columns as the
+                        constituent account amounts below; the row is
+                        distinguished by background colour + bold blue
+                        text rather than by colspan + right-alignment
+                        (which previously offset the totals visually).
+                        Two-decimal totals computed across ALL constituent
+                        rows (tbRows, not filteredRows) so zero / hidden
+                        rows still contribute. */}
+                    {isMerged && isFirstInMerge && (() => {
+                      const cyTotal = mergedGroupRows.reduce((s, r) => s + (Number(r.currentYear) || 0), 0);
+                      const pyTotal = mergedGroupRows.reduce((s, r) => s + (Number(r.priorYear) || 0), 0);
+                      return (
+                        <tr className="border-b border-blue-200 bg-blue-50 font-semibold">
+                          {/* Checkbox + chevron — empty cells, matching child layout */}
+                          <td></td>
+                          <td></td>
+                          {/* Account code — uses the merged code (e.g. MERGED_COST_OF_SALES_5gx5) */}
+                          <td className="pl-1 pr-0.5 py-1 font-mono text-blue-700 text-[9px]">{row.accountCode}</td>
+                          {/* Description slot — shows the group summary.
+                              No colSpan; keeps the Dr/Cr columns where
+                              the auditor expects them so the eye lines
+                              the total up with the constituent amounts. */}
+                          <td className="px-0.5 py-1 text-blue-700">
+                            Merged: {mergedGroupRows.length} accounts
+                          </td>
+                          {/* FS Note Level cell — only when isThreeLevel,
+                              matching the child row structure. */}
+                          {isThreeLevel && <td className="px-0.5 py-1"></td>}
+                          {/* Dr / Cr current year + spacer + Dr / Cr prior year.
+                              Same DrCell / CrCell components the child
+                              rows use so the digit alignment + tabular
+                              numbering matches exactly. */}
+                          <td className="px-1 py-1 text-left whitespace-nowrap min-w-[80px] tabular-nums"><DrCell value={cyTotal} className="text-blue-700" /></td>
+                          <td className="px-1 py-1 text-left whitespace-nowrap min-w-[80px] tabular-nums"><CrCell value={cyTotal} className="text-blue-700" /></td>
+                          <td className="w-3"></td>
+                          <td className="px-1 py-1 text-left whitespace-nowrap min-w-[80px] tabular-nums"><DrCell value={pyTotal} className="text-blue-500" /></td>
+                          <td className="px-1 py-1 text-left whitespace-nowrap min-w-[80px] tabular-nums"><CrCell value={pyTotal} className="text-blue-500" /></td>
+                          {/* Assertions, coverage, risk classification —
+                              empty on the merged header row. The
+                              constituent rows below carry the per-account
+                              detail. Last cell carries the Unmerge
+                              button. */}
+                          <td className="px-0.5 py-1"></td>
+                          <td className="px-0.5 py-1"></td>
+                          <td className="px-0.5 py-1 text-right">
+                            <button onClick={() => handleUnmerge(row.accountCode)} disabled={merging}
+                              className="text-[8px] px-1.5 py-0.5 bg-white border border-blue-300 text-blue-600 rounded hover:bg-blue-100 font-medium">
+                              Unmerge
+                            </button>
+                          </td>
+                        </tr>
+                      );
+                    })()}
                     <tr
                       data-scroll-anchor={row.accountCode ? `audit-plan-${row.accountCode}` : undefined}
                       className={`border-b border-slate-100 hover:bg-slate-50 ${tests.length > 0 ? 'cursor-pointer' : ''} ${isSig ? 'bg-red-50/20' : isAoF ? 'bg-orange-50/20' : ''} ${isMerged ? 'bg-blue-50/20' : ''}`}

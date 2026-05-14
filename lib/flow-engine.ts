@@ -1933,7 +1933,17 @@ async function handleActionAI(
     }
   }
   if (!execDef) {
-    return { action: 'continue', nextNodeId: getNextNodeId(flow, node.id), output: { skipped: true, reason: 'No execution definition' } };
+    // A missing execution definition is a methodology-config bug —
+    // the AI node is wired into the flow but has no instructions for
+    // what to do. Silently skipping it (previous behaviour) made the
+    // test appear "Complete" with no data, which masked the
+    // misconfiguration. Surface as an error so the auditor sees the
+    // test as Failed and a methodology admin can fix the test.
+    return {
+      action: 'error',
+      errorMessage: 'Test methodology is incomplete: no execution definition for this AI step. Ask a Methodology Admin to add one before re-running.',
+      output: { skipped: true, reason: 'No execution definition', configBug: true },
+    };
   }
 
   const prevNodeId = getPreviousNodeId(flow, node.id);
@@ -1943,7 +1953,15 @@ async function handleActionAI(
   const userPrompt = resolveTemplate(execDef.promptTemplate || '', ctx, inputBindings);
 
   if (!userPrompt.trim()) {
-    return { action: 'continue', nextNodeId: getNextNodeId(flow, node.id), output: { skipped: true, reason: 'Empty prompt template' } };
+    // Same rationale as the no-execution-definition branch above:
+    // the methodology has an AI node but no prompt template, so it
+    // can't actually do anything. Fail loudly with the reason
+    // instead of silently skipping and pretending we ran.
+    return {
+      action: 'error',
+      errorMessage: 'Test methodology is incomplete: the AI prompt template is empty. Ask a Methodology Admin to add a prompt before re-running.',
+      output: { skipped: true, reason: 'Empty prompt template', configBug: true },
+    };
   }
 
   const startTime = Date.now();
