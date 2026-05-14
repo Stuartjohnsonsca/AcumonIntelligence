@@ -2160,10 +2160,12 @@ export function AuditPlanPanel({ engagementId, clientId, periodId, onClose, peri
                         When PM / CT haven't been set on the engagement
                         yet, the corresponding bound is treated as open
                         so AR is not blocked on incomplete materiality.
-                        The button toggles the panel; AR-classified
-                        rows auto-open it so the previous workflow is
-                        preserved. */}
-                    {isExp && (() => {
+                        Rendered regardless of row expansion state —
+                        AR-eligible rows often have no other tests
+                        (and therefore can't be expanded via the
+                        chevron), so gating on isExp would hide AR
+                        from exactly the rows that need it. */}
+                    {(() => {
                       const absRowValue = Math.abs(Number(row.currentYear) || 0);
                       const proportion = tabTotal > 0 ? absRowValue / tabTotal : 1;
                       const thresholdHigh = performanceMateriality > 0 ? performanceMateriality * proportion : Infinity;
