@@ -428,6 +428,21 @@ export function AuditPlanPanel({ engagementId, clientId, periodId, onClose, peri
   }, [engagementId]);
   const [framework, setFramework] = useState('');
   const [expandedRmm, setExpandedRmm] = useState<Set<string>>(new Set());
+  // Rows where the auditor has explicitly opened the Analytical
+  // Review panel even though the row isn't AR-classified. AR was
+  // previously gated to below-PM-no-RMM rows only; widening it so
+  // auditors can run substantive analytical review on any balance
+  // (which is normal practice — AR is a substantive procedure
+  // available regardless of materiality classification). Keyed by
+  // rowKey to match the rest of the expansion state.
+  const [arOpenRows, setArOpenRows] = useState<Set<string>>(new Set());
+  function toggleArPanel(rowKey: string) {
+    setArOpenRows(prev => {
+      const next = new Set(prev);
+      if (next.has(rowKey)) next.delete(rowKey); else next.add(rowKey);
+      return next;
+    });
+  }
   const [excludedTests, setExcludedTests] = useState<Set<string>>(new Set());
   // Per-test data source — where the auditor expects the evidence
   // for this test to come from. Drives nothing behaviour-wise yet
@@ -2108,18 +2123,49 @@ export function AuditPlanPanel({ engagementId, clientId, periodId, onClose, peri
                       </Fragment>
                       );
                     })}
-                    {/* Analytical Review Panel — for AR-classified rows */}
-                    {isExp && isAR && (
-                      <tr>
-                        <td colSpan={isThreeLevel ? 13 : 12} className="p-2 bg-green-50/30">
-                          <AnalyticalReviewPanel
-                            engagementId={engagementId}
-                            fsLine={effectiveFsLevel || activeLevel || activeStatement}
-                            accountCodes={[row.accountCode]}
-                          />
-                        </td>
-                      </tr>
-                    )}
+                    {/* Analytical Review trigger row — always present
+                        when the row is expanded so AR is reachable
+                        for any balance, not just AR-classified ones.
+                        Auto-opens for AR-classified rows (preserves
+                        previous behaviour); collapsed by default for
+                        every other classification with an explicit
+                        "Analytical Review" toggle button. */}
+                    {isExp && (() => {
+                      const arOpen = isAR || arOpenRows.has(rowKey);
+                      return (
+                        <>
+                          <tr>
+                            <td colSpan={isThreeLevel ? 13 : 12} className="px-3 py-1 bg-green-50/20 border-t border-green-100">
+                              <button
+                                type="button"
+                                onClick={() => toggleArPanel(rowKey)}
+                                className="text-[10px] font-medium px-2 py-1 rounded border border-green-300 bg-white text-green-700 hover:bg-green-50 inline-flex items-center gap-1.5"
+                                title={
+                                  isAR
+                                    ? 'AR-classified row — panel always open. Click to hide / show.'
+                                    : 'Open the Substantive Analytical Review workspace for this balance — formula builder, expectation, threshold check and sign-offs.'
+                                }
+                              >
+                                <span>{arOpen ? '▾' : '▸'}</span>
+                                <span>Analytical Review</span>
+                                {isAR && <span className="text-[8px] uppercase tracking-wide text-green-600">auto</span>}
+                              </button>
+                            </td>
+                          </tr>
+                          {arOpen && (
+                            <tr>
+                              <td colSpan={isThreeLevel ? 13 : 12} className="p-2 bg-green-50/30">
+                                <AnalyticalReviewPanel
+                                  engagementId={engagementId}
+                                  fsLine={effectiveFsLevel || activeLevel || activeStatement}
+                                  accountCodes={[row.accountCode]}
+                                />
+                              </td>
+                            </tr>
+                          )}
+                        </>
+                      );
+                    })()}
                   </Fragment>
                 );
                 } catch (renderErr) {
