@@ -124,14 +124,11 @@ const TILE_GROUPS: TileGroup[] = [
         color: 'bg-sky-50 border-sky-200 hover:bg-sky-100',
         iconColor: 'text-sky-600',
       },
-      {
-        title: 'Messaging Providers',
-        description: 'Twilio / sent.dm / Telegram / WeCom credentials. Super Admin only — drives every outbound SMS, WhatsApp, Telegram and WeChat notification.',
-        href: '/methodology-admin/messaging-providers',
-        icon: MessageSquare,
-        color: 'bg-emerald-50 border-emerald-200 hover:bg-emerald-100',
-        iconColor: 'text-emerald-600',
-      },
+      // Messaging Providers tile lived here until it moved to Super
+      // Admin (/my-account/admin → Messaging Providers tab). Providers
+      // are a platform-level service Acumon meters and bills back to
+      // firms, not firm-specific methodology config, so they no longer
+      // belong on this page.
     ],
   },
   {

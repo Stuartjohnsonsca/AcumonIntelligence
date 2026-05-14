@@ -60,7 +60,7 @@ export function MessagingProvidersClient() {
   async function refresh() {
     setLoading(true);
     try {
-      const res = await fetch('/api/methodology-admin/messaging-providers');
+      const res = await fetch('/api/admin/messaging-providers');
       if (!res.ok) throw new Error('Failed to load providers');
       const data = await res.json();
       setRows(data.providers || []);
@@ -109,7 +109,7 @@ function ProviderCard({ row, onSaved }: { row: ProviderRow; onSaved: () => void 
   async function save() {
     setSaving(true); setMsg(null);
     try {
-      const res = await fetch('/api/methodology-admin/messaging-providers', {
+      const res = await fetch('/api/admin/messaging-providers', {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ provider: row.provider, enabled, config }),

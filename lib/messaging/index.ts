@@ -79,6 +79,16 @@ interface NotifyArgs {
   relatedRequestId?: string;
   /** Optional channel filter — defaults to every opted-in channel. */
   channels?: MessageChannel[];
+  /** The audit engagement this notification belongs to. When set, the
+   *  persisted portal_messages row records it for the Super Admin
+   *  Messaging Usage / billing rollup. Skip for generic sends (e.g.
+   *  the initial portal invite, comms-preference reminder) — usage
+   *  still attributes to the firm via the client lookup. */
+  auditEngagementId?: string | null;
+  /** Optional billable-units override. Defaults to 1 (one message =
+   *  one billable unit). Bump this for multi-segment SMS or media-
+   *  heavy WhatsApp so the usage tab shows accurate counts. */
+  billableUnits?: number;
 }
 
 interface NotifyResult {
@@ -107,11 +117,18 @@ export async function notifyPortalUser(args: NotifyArgs): Promise<NotifyResult> 
       wechatOpenId: true,
       wechatOptIn: true,
       preferredCommunicationChannel: true,
+      // firmId is denormalised on Client; pull it so every persisted
+      // portal_messages row carries the firm attribution for billing
+      // without re-querying.
+      client: { select: { firmId: true } },
     },
   });
   if (!user) {
     return { attempted: [], results: {} };
   }
+  const firmId = user.client?.firmId ?? null;
+  const auditEngagementId = args.auditEngagementId ?? null;
+  const billableUnits = Math.max(1, Math.floor(args.billableUnits ?? 1));
 
   // Single-select preferred channel — the radio button on the user's
   // /portal/my-details page drives this. Fallback when null is
@@ -246,12 +263,18 @@ export async function notifyPortalUser(args: NotifyArgs): Promise<NotifyResult> 
 
     // Persist the attempt regardless of success. Failed rows are
     // valuable for chasing up flaky channels and for re-send tooling.
+    // firmId / auditEngagementId / billableUnits get denormalised
+    // here so the Super Admin Messaging Usage rollup doesn't need
+    // to JOIN through clients on every aggregation.
     try {
       await prisma.portalMessage.create({
         data: {
           clientId: user.clientId,
           portalUserId: user.id,
           relatedRequestId: args.relatedRequestId ?? null,
+          firmId,
+          auditEngagementId,
+          billableUnits,
           direction: 'outbound',
           channel,
           providerMessageId: result.providerMessageId ?? null,
@@ -291,12 +314,29 @@ export async function recordInboundMessage(args: {
   providerMessageId?: string;
   providerRaw?: unknown;
   relatedRequestId?: string | null;
+  /** Optional engagement attribution. When the webhook can identify
+   *  the engagement (e.g. via the request thread the message replies
+   *  to) pass it so inbound traffic shows up against the same Client/
+   *  Period as outbound on the Messaging Usage tab. */
+  auditEngagementId?: string | null;
 }): Promise<void> {
+  // Denormalise firmId from the client for the same reason outbound
+  // sends do — keeps the billing rollup query cheap.
+  const client = await prisma.client.findUnique({
+    where: { id: args.clientId },
+    select: { firmId: true },
+  }).catch(() => null);
   await prisma.portalMessage.create({
     data: {
       clientId: args.clientId,
       portalUserId: args.portalUserId,
       relatedRequestId: args.relatedRequestId ?? null,
+      firmId: client?.firmId ?? null,
+      auditEngagementId: args.auditEngagementId ?? null,
+      // Inbound traffic from the client doesn't cost the firm a unit
+      // (the firm pays for outbound). Recorded as 0 so the rollup's
+      // SUM(billableUnits) tallies billable outbound only.
+      billableUnits: 0,
       direction: 'inbound',
       channel: args.channel,
       providerMessageId: args.providerMessageId ?? null,

@@ -220,6 +220,30 @@ async function applySchemaSafetyNet() {
         ADD COLUMN IF NOT EXISTS pending_change_approved_at timestamptz
     `));
 
+    // 7. PortalMessage billing-attribution columns. Denormalised so
+    //    the Super Admin Messaging Usage tab can GROUP BY firm /
+    //    engagement without JOINing through clients on every roll-up.
+    results.push(await safetyNetStep(prisma, 'portal_messages.firm_id column', `
+      ALTER TABLE portal_messages
+        ADD COLUMN IF NOT EXISTS firm_id text
+    `));
+    results.push(await safetyNetStep(prisma, 'portal_messages.audit_engagement_id column', `
+      ALTER TABLE portal_messages
+        ADD COLUMN IF NOT EXISTS audit_engagement_id text
+    `));
+    results.push(await safetyNetStep(prisma, 'portal_messages.billable_units column', `
+      ALTER TABLE portal_messages
+        ADD COLUMN IF NOT EXISTS billable_units integer NOT NULL DEFAULT 1
+    `));
+    results.push(await safetyNetStep(prisma, 'portal_messages.firm_id_created_at idx', `
+      CREATE INDEX IF NOT EXISTS portal_messages_firm_id_created_at_idx
+        ON portal_messages(firm_id, created_at)
+    `));
+    results.push(await safetyNetStep(prisma, 'portal_messages.audit_engagement_id idx', `
+      CREATE INDEX IF NOT EXISTS portal_messages_audit_engagement_id_channel_created_idx
+        ON portal_messages(audit_engagement_id, channel, created_at)
+    `));
+
     const ok = results.filter(r => r.ok).length;
     const failed = results.filter(r => !r.ok);
     if (failed.length === 0) {

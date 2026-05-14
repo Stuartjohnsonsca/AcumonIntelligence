@@ -1,7 +1,10 @@
 /**
- * /api/methodology-admin/messaging-providers
+ * /api/admin/messaging-providers
  *
  * Platform-wide messaging provider configuration. Super-Admin only.
+ * (Previously /api/methodology-admin/messaging-providers — relocated
+ * because providers are a system-level service Acumon runs across
+ * every firm and meters for billing, not firm-specific config.)
  *
  *   GET   → list every provider (twilio, sent_dm, telegram, wecom)
  *           with current enabled flag + config blob. Secrets are

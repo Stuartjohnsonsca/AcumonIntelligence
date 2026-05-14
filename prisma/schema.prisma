@@ -1548,6 +1548,23 @@ model PortalMessage {
   // Full provider payload, kept verbatim for debugging + audit.
   providerRaw       Json?   @map("provider_raw")
 
+  // ── Billing attribution ──────────────────────────────────────────
+  // firmId + auditEngagementId let the Super Admin Messaging Usage
+  // tab roll messages up per firm / client / period without having
+  // to JOIN through Client → AuditEngagement on every query. Both
+  // are nullable because some sends happen before a portal user is
+  // tied to a live engagement (e.g. the initial invite). When set,
+  // the values are denormalised at send time and never mutated —
+  // historical bills stay stable even if the engagement is later
+  // archived or reassigned.
+  firmId            String? @map("firm_id")
+  auditEngagementId String? @map("audit_engagement_id")
+  // Billable units for this row. Defaults to 1 (one message = one
+  // unit) but reserved so multi-segment SMS (long messages that
+  // Twilio bills as 2-3 segments) or attachment-bearing WhatsApp
+  // sends can record their actual cost weighting.
+  billableUnits     Int     @default(1) @map("billable_units")
+
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
 
@@ -1559,12 +1576,16 @@ model PortalMessage {
   @@index([portalUserId])
   @@index([relatedRequestId])
   @@index([providerMessageId])
+  // Billing rollup indexes — the Messaging Usage admin GROUPs BY
+  // firmId, then drills into engagement / channel / period.
+  @@index([firmId, createdAt])
+  @@index([auditEngagementId, channel, createdAt])
   @@map("portal_messages")
 }
 
 /// Platform-wide messaging provider configuration, managed by Super
-/// Admin via /methodology-admin/messaging-providers. One row per
-/// provider (twilio, sent_dm, telegram, wecom). The library code
+/// Admin via /my-account/admin → Messaging Providers tab. One row
+/// per provider (twilio, sent_dm, telegram, wecom). The library code
 /// reads this table first and falls back to env vars when the row is
 /// missing or `enabled=false` so existing env-based deployments keep
 /// working through the migration.
