@@ -73,6 +73,17 @@ export interface WeComConfig {
   // firm's connector implementation — Acumon just stores the URL +
   // auth and uses them at send time.
   proConnectorUrl?: string;
+  /// Path on the connector that responds to GET with 200 when the
+  /// service is healthy. Used by Acumon's connector smoke-test
+  /// button and by future health-check schedules. Defaults to
+  /// `/health` if unset.
+  proConnectorHealthPath?: string;
+  /// Logical identifier for which connector "tenant" or provider
+  /// instance Acumon is talking to. Sent through to the connector
+  /// on every call so a single connector deployment can multiplex
+  /// several firms / corp IDs behind one URL. Defaults to
+  /// `prov-main` when unset.
+  proConnectorProviderId?: string;
   /// HTTP header name carrying the connector auth. Defaults to
   /// `Authorization` when unset; some connectors prefer
   /// `X-Api-Key` or a custom header.

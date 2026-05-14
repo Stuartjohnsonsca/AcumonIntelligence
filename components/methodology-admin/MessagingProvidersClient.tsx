@@ -280,50 +280,79 @@ function WeComFields({ config, setField, effective }: { config: Record<string, a
   function setMode(next: 'group_robot' | 'external_contact_pro') { setField('mode', next); }
   return (
     <div className="space-y-3">
-      {/* Connector — the primary path. Acumon POSTs to this URL with
-          the auth header below for every WeChat-channel action; the
-          connector talks to Tencent on the firm's behalf. */}
+      {/* Connector — the primary path. Acumon POSTs to this Base URL
+          with the auth header below for every WeChat-channel action;
+          the connector talks to Tencent on the firm's behalf. The
+          five fields below match the deployment notes for the firm's
+          Railway-hosted WeCom connector. */}
       <div className="border border-emerald-200 bg-emerald-50/30 rounded-lg p-3">
         <div className="text-[11px] font-semibold text-emerald-800 mb-1">
           WeCom connector (the recommended path)
         </div>
         <p className="text-[10px] text-emerald-700/80 mb-3">
-          Point Acumon at your WeCom connector service. Acumon doesn't talk to Tencent directly — the connector handles access tokens, Contact Way generation, sending and webhook decoding internally. You enter the connector URL + auth value here; that's it.
+          Point Acumon at the firm's WeCom connector service. Acumon doesn't talk to Tencent directly — the connector handles access tokens, Contact Way generation, sending and webhook decoding internally. Defaults are pre-filled from the live deployment; paste the auth value to enable.
         </p>
         <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
           <Field
-            label="Connector URL"
-            hint="HTTPS endpoint of your WeCom connector."
+            label="Base URL"
+            hint="HTTPS root of the connector. Acumon appends /health, /contact-way, /send, etc."
           >
             <Input
               value={config.proConnectorUrl || ''}
               onChange={e => setField('proConnectorUrl', e.target.value)}
-              placeholder="https://your-wecom-connector.example.com"
+              placeholder="https://wecom-connector-production.up.railway.app"
+            />
+          </Field>
+          <Field
+            label="Healthcheck path"
+            hint="Path appended to Base URL for GET health probes. Defaults to /health."
+          >
+            <Input
+              value={config.proConnectorHealthPath || ''}
+              onChange={e => setField('proConnectorHealthPath', e.target.value)}
+              placeholder="/health"
+            />
+          </Field>
+          <Field
+            label="WeCom CorpID"
+            hint="The corp the connector is bound to. e.g. ww8c5bf8b3e6e97d82 (Acumon Group Limited)."
+          >
+            <Input
+              value={config.corpId || ''}
+              onChange={e => setField('corpId', e.target.value)}
+              placeholder="ww8c5bf8b3e6e97d82"
+            />
+          </Field>
+          <Field
+            label="WeCom Provider ID"
+            hint="Logical tenant ID sent to the connector on every call so one connector deployment can serve several corps. Defaults to prov-main."
+          >
+            <Input
+              value={config.proConnectorProviderId || ''}
+              onChange={e => setField('proConnectorProviderId', e.target.value)}
+              placeholder="prov-main"
+            />
+          </Field>
+          <Field
+            label="Auth on connector"
+            hint="Secret value placed in the auth header below. e.g. 'Bearer eyJ…' or a static API key — whatever the connector expects."
+          >
+            <Input
+              type="password"
+              value={config.proConnectorAuthValue || ''}
+              onChange={e => setField('proConnectorAuthValue', e.target.value)}
+              placeholder={config.proConnectorAuthValue ? '••••••••' : 'paste auth value'}
             />
           </Field>
           <Field
             label="Auth header name"
-            hint="Header carrying the auth value. Defaults to Authorization when blank."
+            hint="Header carrying the auth value above. Defaults to Authorization."
           >
             <Input
               value={config.proConnectorAuthHeader || ''}
               onChange={e => setField('proConnectorAuthHeader', e.target.value)}
               placeholder="Authorization"
             />
-          </Field>
-          <Field
-            label="Auth value"
-            hint="Secret value placed in the header. e.g. 'Bearer eyJ…' or just the API key, depending on your connector."
-          >
-            <Input
-              type="password"
-              value={config.proConnectorAuthValue || ''}
-              onChange={e => setField('proConnectorAuthValue', e.target.value)}
-              placeholder={config.proConnectorAuthValue ? '••••••••' : 'Bearer or key value'}
-            />
-          </Field>
-          <Field label="Sender WeCom UserID (optional)" hint="The firm-side WeCom employee the connector should bind clients to. Most connectors derive this themselves — leave blank unless yours needs it.">
-            <Input value={config.senderUserId || ''} onChange={e => setField('senderUserId', e.target.value)} placeholder={envPlaceholder(effective, 'senderUserId')} />
           </Field>
         </div>
       </div>
@@ -378,12 +407,9 @@ function WeComFields({ config, setField, effective }: { config: Record<string, a
             {mode === 'external_contact_pro' && (
               <div>
                 <p className="text-[10px] text-slate-500 mb-2">
-                  Direct-to-Tencent credentials (used only when the connector URL above is empty).
+                  Direct-to-Tencent credentials (used only when the Base URL above is empty — i.e. no connector). CorpID lives in the connector card above; everything here is only consulted when Acumon falls back to calling Tencent itself.
                 </p>
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                  <Field label="Corp ID" hint="WeCom → My Company → Corporation Info">
-                    <Input value={config.corpId || ''} onChange={e => setField('corpId', e.target.value)} placeholder={envPlaceholder(effective, 'corpId')} />
-                  </Field>
                   <Field label="Agent ID" hint="WeCom → App Management → your app → AgentId">
                     <Input value={config.agentId || ''} onChange={e => setField('agentId', e.target.value)} placeholder={envPlaceholder(effective, 'agentId')} />
                   </Field>
@@ -395,6 +421,9 @@ function WeComFields({ config, setField, effective }: { config: Record<string, a
                   </Field>
                   <Field label="Webhook token">
                     <Input type="password" value={config.token || ''} onChange={e => setField('token', e.target.value)} placeholder={effective.token ? '••••••••' : 'webhook token'} />
+                  </Field>
+                  <Field label="Sender WeCom UserID" hint="The firm-side WeCom employee whose customer roster bound external contacts attach to. Only relevant for direct-to-Tencent sends.">
+                    <Input value={config.senderUserId || ''} onChange={e => setField('senderUserId', e.target.value)} placeholder={envPlaceholder(effective, 'senderUserId')} />
                   </Field>
                   <Field label="API base override (optional)" hint="For mainland proxies; leave blank for default api.weixin.qq.com">
                     <Input value={config.apiBase || ''} onChange={e => setField('apiBase', e.target.value)} placeholder={envPlaceholder(effective, 'apiBase')} />

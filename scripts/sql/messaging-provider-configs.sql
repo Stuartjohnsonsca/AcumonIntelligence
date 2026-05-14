@@ -18,14 +18,38 @@ CREATE TABLE IF NOT EXISTS messaging_provider_configs (
 );
 
 -- Seed rows for the four providers so the SuperAdmin UI always has
--- something to render against. Existing rows are left untouched.
+-- something to render against. Existing rows are left untouched for
+-- twilio / sent_dm / telegram — wecom uses a merge below so the
+-- connector defaults flow into an existing row too.
 INSERT INTO messaging_provider_configs (id, provider, enabled, config)
   VALUES
     (gen_random_uuid()::text, 'twilio',   FALSE, '{}'::jsonb),
     (gen_random_uuid()::text, 'sent_dm',  FALSE, '{}'::jsonb),
-    (gen_random_uuid()::text, 'telegram', FALSE, '{}'::jsonb),
-    (gen_random_uuid()::text, 'wecom',    FALSE, '{"mode":"group_robot"}'::jsonb)
+    (gen_random_uuid()::text, 'telegram', FALSE, '{}'::jsonb)
 ON CONFLICT (provider) DO NOTHING;
+
+-- WeCom seed — defaults match the firm's Railway-hosted connector
+-- deployment. The auth value is intentionally absent (the SuperAdmin
+-- pastes it via the UI). ON CONFLICT … DO UPDATE uses
+-- `EXCLUDED.config || existing.config` so the seed only fills in
+-- keys that are not already set — anything the SuperAdmin has saved
+-- (e.g. a real auth value) is preserved on re-runs.
+INSERT INTO messaging_provider_configs (id, provider, enabled, config)
+VALUES (
+  gen_random_uuid()::text,
+  'wecom',
+  FALSE,
+  '{
+    "mode": "external_contact_pro",
+    "corpId": "ww8c5bf8b3e6e97d82",
+    "proConnectorUrl": "https://wecom-connector-production.up.railway.app",
+    "proConnectorHealthPath": "/health",
+    "proConnectorProviderId": "prov-main",
+    "proConnectorAuthHeader": "Authorization"
+  }'::jsonb
+)
+ON CONFLICT (provider) DO UPDATE
+  SET config = EXCLUDED.config || messaging_provider_configs.config;
 
 -- WeCom Pro External Contact user id on portal users.
 ALTER TABLE client_portal_users
