@@ -1021,6 +1021,19 @@ export function AuditPlanPanel({ engagementId, clientId, periodId, onClose, peri
     });
   }, [tbRows, activeStatement, activeLevel, activeNote]);
 
+  // Tab total — sum of |currentYear| across every row in the
+  // currently-active tab (FS Level / FS Note / Statement scope).
+  // Used by the Analytical Review trigger gate to allocate PM and
+  // CT across rows in proportion to their share of the tab. Each
+  // row's threshold = PM × (|row balance| / |tab total|); AR is
+  // offered when the row balance is BETWEEN the proportional CT
+  // and PM thresholds AND the row isn't already SR / AoF.
+  const tabTotal = useMemo(() => {
+    let t = 0;
+    for (const r of filteredRows) t += Math.abs(Number(r.currentYear) || 0);
+    return t;
+  }, [filteredRows]);
+
   // Tests visible in the current tab, ready to be POSTed to the
   // /test-execution endpoint. Mirrors the per-row matching logic from
   // the render loop below — copying it here is duplication, but the
@@ -2137,23 +2150,26 @@ export function AuditPlanPanel({ engagementId, clientId, periodId, onClose, peri
                       </Fragment>
                       );
                     })}
-                    {/* Analytical Review trigger row — only rendered
-                        on rows that match the audit-side eligibility
-                        rule for substantive analytical review:
+                    {/* Analytical Review trigger row — eligibility:
                           • not classified as Significant Risk
                           • not classified as Area of Focus
-                          • |balance| > Clearly Trivial
-                          • |balance| < Performance Materiality
-                        Rows above PM need substantive testing (more
-                        than AR alone). Rows at-or-below CT are too
-                        small to bother. AoF / SR rows have RMM-driven
-                        testing requirements. The button toggles the
-                        panel; AR-classified rows auto-open it so
-                        previously-AR workflows aren't lost. */}
+                          • |balance| > CT × proportion
+                          • |balance| < PM × proportion
+                        where proportion = |row balance| / |tab total|
+                        (each row's share of the FS Level it sits in).
+                        When PM / CT haven't been set on the engagement
+                        yet, the corresponding bound is treated as open
+                        so AR is not blocked on incomplete materiality.
+                        The button toggles the panel; AR-classified
+                        rows auto-open it so the previous workflow is
+                        preserved. */}
                     {isExp && (() => {
                       const absRowValue = Math.abs(Number(row.currentYear) || 0);
-                      const ctOk = clearlyTrivial > 0 ? absRowValue > clearlyTrivial : true;
-                      const pmOk = performanceMateriality > 0 ? absRowValue < performanceMateriality : true;
+                      const proportion = tabTotal > 0 ? absRowValue / tabTotal : 1;
+                      const thresholdHigh = performanceMateriality > 0 ? performanceMateriality * proportion : Infinity;
+                      const thresholdLow = clearlyTrivial > 0 ? clearlyTrivial * proportion : 0;
+                      const ctOk = absRowValue > thresholdLow;
+                      const pmOk = absRowValue < thresholdHigh;
                       const classOk = !isSig && !isAoF;
                       const arEligible = classOk && ctOk && pmOk;
                       if (!arEligible) return null;
