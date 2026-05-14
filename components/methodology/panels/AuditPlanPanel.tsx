@@ -1079,13 +1079,25 @@ export function AuditPlanPanel({ engagementId, clientId, periodId, onClose, peri
         if (overallRisk === 'Medium') return 'Area of Focus';
         return 'Normal';
       }
+      // Mirror the render-loop classification: RMM-driven Sig Risk
+      // / Area of Focus dominate; everything else is sized against
+      // engagement-level PM and CT so small sub-accounts don't
+      // inherit a tab-wide "Normal" RMM classification.
       let rowClassification: string | null = null;
       if (rmmMatch) {
-        rowClassification = classifyRisk(rmmMatch.overallRisk ?? undefined);
-      } else if (performanceMateriality > 0 && rowValue > performanceMateriality) {
-        rowClassification = 'Normal';
-      } else if (performanceMateriality > 0) {
-        rowClassification = 'AR';
+        const rmmClass = classifyRisk(rmmMatch.overallRisk ?? undefined);
+        if (rmmClass === 'Significant Risk' || rmmClass === 'Area of Focus') {
+          rowClassification = rmmClass;
+        }
+      }
+      if (!rowClassification) {
+        if (performanceMateriality > 0 && rowValue > performanceMateriality) {
+          rowClassification = 'Normal';
+        } else if (clearlyTrivial > 0 && rowValue > clearlyTrivial) {
+          rowClassification = 'AR';
+        } else if (performanceMateriality > 0 && rowValue > 0) {
+          rowClassification = 'AR';
+        }
       }
 
       let tests: ReturnType<typeof getTestsForRow>;
@@ -1120,7 +1132,7 @@ export function AuditPlanPanel({ engagementId, clientId, periodId, onClose, peri
   // recompute on most renders, but the work is cheap (a few hundred
   // function calls in worst case) so leaving it as-is.
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [filteredRows, rmmItems, activeLevel, activeStatement, activeNote, riskClassificationTable, performanceMateriality, excludedTests]);
+  }, [filteredRows, rmmItems, activeLevel, activeStatement, activeNote, riskClassificationTable, performanceMateriality, clearlyTrivial, excludedTests]);
 
   // Tests in the current tab that haven't been started yet — the
   // Run All button only fires for these so existing runs aren't
@@ -1676,15 +1688,32 @@ export function AuditPlanPanel({ engagementId, clientId, periodId, onClose, peri
                   return 'Normal'; // Low or unknown
                 }
 
+                // Per-row risk classification:
+                //   • RMM-driven Sig Risk / Area of Focus win regardless
+                //     of balance size — they reflect the auditor's
+                //     identified risk, not the line's magnitude.
+                //   • Otherwise classify by balance vs engagement-level
+                //     PM and CT. This prevents tiny sub-accounts (£50,
+                //     £344, …) from inheriting an FS-Line-level Normal
+                //     RMM classification and showing as green/Risk when
+                //     they're actually immaterial.
                 let rowClassification: string | null = null;
                 if (rmmMatch) {
-                  rowClassification = classifyRisk(rmmMatch.overallRisk ?? undefined);
-                } else if (performanceMateriality > 0 && rowValue > performanceMateriality) {
-                  rowClassification = 'Normal';
-                } else if (performanceMateriality > 0) {
-                  rowClassification = 'AR';
-                } else {
-                  rowClassification = null; // PM not set → show all
+                  const rmmClass = classifyRisk(rmmMatch.overallRisk ?? undefined);
+                  if (rmmClass === 'Significant Risk' || rmmClass === 'Area of Focus') {
+                    rowClassification = rmmClass;
+                  }
+                }
+                if (!rowClassification) {
+                  if (performanceMateriality > 0 && rowValue > performanceMateriality) {
+                    rowClassification = 'Normal';
+                  } else if (clearlyTrivial > 0 && rowValue > clearlyTrivial) {
+                    rowClassification = 'AR';
+                  } else if (performanceMateriality > 0 && rowValue > 0) {
+                    rowClassification = 'AR'; // CT not set — anything non-zero below PM is AR
+                  } else {
+                    rowClassification = null; // PM unset OR row at/below CT → Immaterial (hollow)
+                  }
                 }
                 // Each RMM risk drives its own tests with its own assertions + classification
                 // Call getTestsForRow once per RMM match, then deduplicate by test description
