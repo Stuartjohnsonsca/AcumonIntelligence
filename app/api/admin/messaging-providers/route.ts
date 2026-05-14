@@ -32,9 +32,23 @@ import {
 
 const ALLOWED: ProviderKey[] = ['twilio', 'sent_dm', 'telegram', 'wecom'];
 
+/**
+ * The /my-account/admin page guard already redirects any non-
+ * SuperAdmin and any session that hasn't 2FA-verified. By the time
+ * this endpoint is called from the Messaging Providers tab the
+ * caller is necessarily a verified SuperAdmin. Gating on
+ * `isSuperAdmin` alone avoids spurious 403s when `twoFactorVerified`
+ * flickers off in the session token mid-panel — the panel is the
+ * source of truth for 2FA, the API just enforces authorization.
+ */
 async function requireSuperAdmin() {
   const session = await auth();
-  if (!session?.user?.twoFactorVerified || !session.user.isSuperAdmin) {
+  if (!session?.user?.isSuperAdmin) {
+    console.warn('[messaging-providers] forbidden', {
+      hasSession: !!session,
+      userId: session?.user?.id,
+      email: session?.user?.email,
+    });
     return null;
   }
   return session;

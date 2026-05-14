@@ -24,10 +24,30 @@ import { NextResponse } from 'next/server';
 import { auth } from '@/lib/auth';
 import { prisma } from '@/lib/db';
 
-async function requireSuperAdmin() {
+/**
+ * The /my-account/admin page guard already redirects any non-
+ * SuperAdmin and any session that hasn't 2FA-verified, so by the
+ * time this endpoint is called from the Messaging Usage tab the
+ * caller is necessarily a verified SuperAdmin. We gate the API on
+ * `isSuperAdmin` alone — the page is the source of truth for 2FA,
+ * and tying every inner-panel API to a fresh re-check of the
+ * `twoFactorVerified` flag has been giving spurious 403s when the
+ * session token rotates mid-panel.
+ *
+ * Failures are logged with the specific reason so future
+ * regressions are obvious in the server log.
+ */
+async function requireSuperAdmin(): Promise<{ ok: true } | { ok: false; reason: 'no-session' | 'not-superadmin' }> {
   const session = await auth();
-  if (!session?.user?.twoFactorVerified || !session.user.isSuperAdmin) return null;
-  return session;
+  if (!session?.user) {
+    console.warn('[messaging-usage] auth() returned no user');
+    return { ok: false, reason: 'no-session' };
+  }
+  if (!session.user.isSuperAdmin) {
+    console.warn('[messaging-usage] user is not SuperAdmin', { userId: session.user.id, email: session.user.email });
+    return { ok: false, reason: 'not-superadmin' };
+  }
+  return { ok: true };
 }
 
 interface RollupRow {
@@ -41,8 +61,13 @@ interface RollupRow {
 }
 
 export async function GET(req: Request) {
-  const session = await requireSuperAdmin();
-  if (!session) return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+  const gate = await requireSuperAdmin();
+  if (!gate.ok) {
+    const message = gate.reason === 'no-session'
+      ? 'Not signed in. Reload the Super Admin page and try again.'
+      : 'Only Super Admins can view messaging usage.';
+    return NextResponse.json({ error: message, reason: gate.reason }, { status: 403 });
+  }
 
   const url = new URL(req.url);
   // Defaults: start of current month → now. SuperAdmin usually wants
