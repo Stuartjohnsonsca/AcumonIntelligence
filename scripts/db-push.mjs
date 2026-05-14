@@ -246,7 +246,69 @@ async function applySchemaSafetyNetSafely(label) {
   }
 }
 
+/**
+ * Pre-push hygiene: drop indexes whose definitions don't match what
+ * Prisma's `@unique` will create, so the subsequent `db push` doesn't
+ * collide on a duplicate name.
+ *
+ * The three `client_portal_users_*_key` indexes below were created as
+ * PARTIAL unique indexes (`CREATE UNIQUE INDEX ... WHERE col IS NOT
+ * NULL`) by the early `scripts/sql/portal-*.sql` migrations. Prisma's
+ * `@unique` annotation produces a NON-partial unique index. The two
+ * are functionally equivalent on a nullable column — Postgres treats
+ * NULLs as distinct in a regular unique index — but Prisma compares
+ * by exact definition and tries to recreate, hitting
+ * "relation … already exists" on every deploy.
+ *
+ * Dropping the partial indexes here is safe: data is untouched, and
+ * the immediately-following `prisma db push` recreates each one with
+ * the same name as a plain unique. Run as best-effort: a missing
+ * index is fine, and any other error is logged but doesn't abort the
+ * push (the push itself will surface real schema problems).
+ */
+async function dropConflictingPartialIndexes() {
+  const prisma = new PrismaClient();
+  const indexes = [
+    'client_portal_users_telegram_link_code_key',
+    'client_portal_users_wechat_link_code_key',
+    'client_portal_users_wecom_bind_code_key',
+  ];
+  try {
+    for (const name of indexes) {
+      try {
+        // Inspect first so we only drop the partial variant — a non-
+        // partial one is already what Prisma wants and dropping it
+        // would be churn (and a brief window without the uniqueness
+        // guarantee).
+        const rows = await prisma.$queryRawUnsafe(
+          `SELECT indexdef FROM pg_indexes WHERE schemaname = 'public' AND indexname = '${name}'`
+        );
+        if (!Array.isArray(rows) || rows.length === 0) continue;
+        const def = String(rows[0]?.indexdef || '');
+        if (!/\bWHERE\b/i.test(def)) {
+          // Already a plain unique — nothing to do.
+          continue;
+        }
+        console.error(`[db-push] dropping partial unique index ${name} so Prisma can recreate it as plain unique`);
+        await prisma.$executeRawUnsafe(`DROP INDEX IF EXISTS public.${name}`);
+      } catch (err) {
+        console.error(`[db-push] could not inspect/drop ${name}:`, err?.message || err);
+      }
+    }
+  } finally {
+    await prisma.$disconnect();
+  }
+}
+
 async function main() {
+  // Drop conflicting partial unique indexes before db push tries to
+  // recreate them. See dropConflictingPartialIndexes() docstring.
+  try {
+    await dropConflictingPartialIndexes();
+  } catch (err) {
+    console.error('[db-push] pre-push hygiene failed (continuing):', err?.message || err);
+  }
+
   console.error('[db-push] applying schema with prisma db push…');
   const first = runPrismaPush();
   if (first.code === 0) {

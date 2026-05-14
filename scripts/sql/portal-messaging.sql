@@ -27,11 +27,14 @@ ALTER TABLE client_portal_users
   ADD COLUMN IF NOT EXISTS sms_opt_in                  BOOLEAN NOT NULL DEFAULT FALSE;
 
 -- Unique index on telegram_link_code so a single /start callback can
--- resolve to exactly one user. Created as a partial-unique index so
--- multiple users with NULL link_code don't collide.
+-- resolve to exactly one user. Plain unique — Postgres treats NULLs
+-- as distinct in a unique index, so multiple users with NULL
+-- link_code don't collide. This matches what Prisma generates from
+-- the `@unique` annotation in schema.prisma; a previous version used
+-- a partial-unique `WHERE col IS NOT NULL` which collided with
+-- Prisma on every deploy.
 CREATE UNIQUE INDEX IF NOT EXISTS client_portal_users_telegram_link_code_key
-  ON client_portal_users (telegram_link_code)
-  WHERE telegram_link_code IS NOT NULL;
+  ON client_portal_users (telegram_link_code);
 
 CREATE INDEX IF NOT EXISTS client_portal_users_whatsapp_number_idx
   ON client_portal_users (whatsapp_number);

@@ -11,9 +11,11 @@ ALTER TABLE client_portal_users
   ADD COLUMN IF NOT EXISTS wecom_bind_code_expires_at   TIMESTAMPTZ NULL,
   ADD COLUMN IF NOT EXISTS wecom_config_id              TEXT NULL;
 
--- Partial unique index — multiple users with NULL bind_code are fine
--- but two pending binds with the same code would collide on the
--- webhook lookup. Same pattern as the Telegram link code.
+-- Plain unique index on wecom_bind_code. Postgres treats NULLs as
+-- distinct in a unique index, so multiple users with NULL bind_code
+-- don't collide; two pending binds with the same non-null code still
+-- collide as intended. Matches Prisma's `@unique` annotation; a
+-- previous partial-unique variant collided with Prisma on every
+-- deploy.
 CREATE UNIQUE INDEX IF NOT EXISTS client_portal_users_wecom_bind_code_key
-  ON client_portal_users (wecom_bind_code)
-  WHERE wecom_bind_code IS NOT NULL;
+  ON client_portal_users (wecom_bind_code);

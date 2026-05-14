@@ -17,11 +17,13 @@ ALTER TABLE client_portal_users
   ADD COLUMN IF NOT EXISTS wechat_link_code           TEXT NULL,
   ADD COLUMN IF NOT EXISTS wechat_link_expires_at     TIMESTAMPTZ NULL;
 
--- Partial-unique index so multiple users with NULL link_code don't
--- collide. Mirrors the Telegram link-code pattern.
+-- Plain unique index on wechat_link_code. Postgres treats NULLs as
+-- distinct in a unique index, so multiple users with NULL link_code
+-- don't collide. This matches what Prisma generates from `@unique`
+-- in schema.prisma; a previous version used a partial-unique
+-- `WHERE col IS NOT NULL` which collided with Prisma on every deploy.
 CREATE UNIQUE INDEX IF NOT EXISTS client_portal_users_wechat_link_code_key
-  ON client_portal_users (wechat_link_code)
-  WHERE wechat_link_code IS NOT NULL;
+  ON client_portal_users (wechat_link_code);
 
 CREATE INDEX IF NOT EXISTS client_portal_users_wechat_open_id_idx
   ON client_portal_users (wechat_open_id);
