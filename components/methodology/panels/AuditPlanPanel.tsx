@@ -369,6 +369,63 @@ export function AuditPlanPanel({ engagementId, clientId, periodId, onClose, peri
   const [activeLevel, setActiveLevel] = useState('');
   const [activeNote, setActiveNote] = useState('');
   const [activeOtherTab, setActiveOtherTab] = useState<OtherTab | ''>('');
+
+  // Taxation rollup — three dots (P / R / RI) on the "Taxation" tab
+  // button mirroring the aggregate sign-off state of Tax on Profits
+  // and VAT Reconciliation. Fed by `engagement:taxation-signoffs`
+  // which TaxationPanel dispatches whenever any dot is toggled.
+  // States: 'green' both signed, 'orange' partial, 'pending' neither.
+  type TaxRollupDot = 'green' | 'orange' | 'pending';
+  const [taxationRollup, setTaxationRollup] = useState<{ preparer: TaxRollupDot; reviewer: TaxRollupDot; ri: TaxRollupDot }>({
+    preparer: 'pending',
+    reviewer: 'pending',
+    ri: 'pending',
+  });
+  useEffect(() => {
+    function onSignOffs(e: Event) {
+      const detail = (e as CustomEvent).detail as { engagementId?: string; preparer?: TaxRollupDot; reviewer?: TaxRollupDot; ri?: TaxRollupDot } | undefined;
+      if (!detail || detail.engagementId !== engagementId) return;
+      setTaxationRollup({
+        preparer: detail.preparer || 'pending',
+        reviewer: detail.reviewer || 'pending',
+        ri: detail.ri || 'pending',
+      });
+    }
+    window.addEventListener('engagement:taxation-signoffs', onSignOffs);
+    return () => window.removeEventListener('engagement:taxation-signoffs', onSignOffs);
+  }, [engagementId]);
+
+  // Initial fetch — the Taxation tab button needs the rollup BEFORE
+  // the user has clicked into it (TaxationPanel only mounts when
+  // active, so without this the dots stay pending until first visit).
+  // We compute the rollup here directly rather than waiting on
+  // TaxationPanel to mount + dispatch. Same fields the panel reads.
+  useEffect(() => {
+    if (!engagementId) return;
+    let cancelled = false;
+    async function loadTaxationRollup() {
+      try {
+        const [topRes, vatRes] = await Promise.all([
+          fetch(`/api/engagements/${engagementId}/tax-on-profits`).then(r => r.ok ? r.json() : null).catch(() => null),
+          fetch(`/api/engagements/${engagementId}/vat-reconciliation`).then(r => r.ok ? r.json() : null).catch(() => null),
+        ]);
+        if (cancelled) return;
+        const td = topRes?.data || {};
+        const vd = vatRes?.data || {};
+        const signedP = (d: any) => !!d.preparerSignedAt || !!d.conclusion;
+        const signedR = (d: any) => !!d.reviewedAt;
+        const signedRI = (d: any) => !!d.riSignedAt;
+        const rollup = (a: boolean, b: boolean): TaxRollupDot => (a && b) ? 'green' : (a || b) ? 'orange' : 'pending';
+        setTaxationRollup({
+          preparer: rollup(signedP(td), signedP(vd)),
+          reviewer: rollup(signedR(td), signedR(vd)),
+          ri: rollup(signedRI(td), signedRI(vd)),
+        });
+      } catch { /* tolerant — pending dots while we wait */ }
+    }
+    loadTaxationRollup();
+    return () => { cancelled = true; };
+  }, [engagementId]);
   const [framework, setFramework] = useState('');
   const [expandedRmm, setExpandedRmm] = useState<Set<string>>(new Set());
   const [excludedTests, setExcludedTests] = useState<Set<string>>(new Set());
@@ -1193,15 +1250,39 @@ export function AuditPlanPanel({ engagementId, clientId, periodId, onClose, peri
         ))}
         <div className="w-px bg-slate-300 mx-1.5 my-1" />
         <span className="px-1 py-1.5 text-[10px] font-semibold text-slate-400 uppercase tracking-wide self-center">Other</span>
-        {OTHER_TABS.map(tab => (
-          <button key={tab}
-            onClick={() => { setActiveOtherTab(tab); setActiveStatement(''); setActiveLevel(''); setActiveNote(''); }}
-            className={`px-3 py-1.5 text-[11px] font-medium border-b-2 whitespace-nowrap transition-colors ${
-              activeOtherTab === tab ? 'border-purple-600 text-purple-700' : 'border-transparent text-slate-500 hover:text-slate-700'
-            }`}>
-            {tab}
-          </button>
-        ))}
+        {OTHER_TABS.map(tab => {
+          // Roll-up dots only on the Taxation tab today — other tabs
+          // either don't have a P/R/RI concept (Going Concern,
+          // Disclosure stubs) or have their own internal aggregates.
+          // Easy to extend the map below if more roll-ups arrive.
+          const showTaxationDots = tab === 'Taxation';
+          const dotColor = (s: TaxRollupDot) => s === 'green' ? 'bg-green-500' : s === 'orange' ? 'bg-orange-400' : 'bg-transparent border border-slate-300';
+          return (
+            <button key={tab}
+              onClick={() => { setActiveOtherTab(tab); setActiveStatement(''); setActiveLevel(''); setActiveNote(''); }}
+              className={`px-3 py-1.5 text-[11px] font-medium border-b-2 whitespace-nowrap transition-colors inline-flex items-center gap-1.5 ${
+                activeOtherTab === tab ? 'border-purple-600 text-purple-700' : 'border-transparent text-slate-500 hover:text-slate-700'
+              }`}>
+              <span>{tab}</span>
+              {showTaxationDots && (
+                <span className="inline-flex items-center gap-1 ml-0.5">
+                  <span title={`Preparer rollup: ${taxationRollup.preparer}`} className="inline-flex items-center gap-0.5 text-[9px] text-slate-500">
+                    <span>P</span>
+                    <span className={`inline-block w-2 h-2 rounded-full ${dotColor(taxationRollup.preparer)}`} />
+                  </span>
+                  <span title={`Reviewer rollup: ${taxationRollup.reviewer}`} className="inline-flex items-center gap-0.5 text-[9px] text-slate-500">
+                    <span>R</span>
+                    <span className={`inline-block w-2 h-2 rounded-full ${dotColor(taxationRollup.reviewer)}`} />
+                  </span>
+                  <span title={`RI rollup: ${taxationRollup.ri}`} className="inline-flex items-center gap-0.5 text-[9px] text-slate-500">
+                    <span>RI</span>
+                    <span className={`inline-block w-2 h-2 rounded-full ${dotColor(taxationRollup.ri)}`} />
+                  </span>
+                </span>
+              )}
+            </button>
+          );
+        })}
       </div>
 
       {/* Level 2: FS Level sub-tabs */}

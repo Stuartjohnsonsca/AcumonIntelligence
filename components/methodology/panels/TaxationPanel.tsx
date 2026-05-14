@@ -46,23 +46,51 @@ interface SubTabSignOffs {
   reviewer?: SignOffEntry;
   ri?: SignOffEntry;
 }
+type SignOffRole = 'preparer' | 'reviewer' | 'ri';
 
-/** Tiny circle indicating whether the role has signed off this sub-tab.
- *  - Filled green: signed
- *  - Hollow ring: pending
- *  Tooltip carries the signer's name + timestamp when present. */
-function SignOffDot({ label, entry }: { label: string; entry?: SignOffEntry }) {
+/** Interactive sign-off pip. Click toggles the role's sign-off for
+ *  this sub-tab. Rendered as a `<span role="button">` rather than a
+ *  real `<button>` because it lives inside the tab `<button>` and
+ *  nesting buttons is invalid HTML — onClick + stopPropagation gives
+ *  us the behaviour we need without the nesting.
+ *
+ *  - Filled green:  signed (tooltip shows name + timestamp)
+ *  - Hollow ring:   pending (tooltip says "Click to sign off as …")
+ *  - Saving state:  semi-transparent while the PUT is in flight so
+ *                   double-clicks don't fire two toggles.
+ */
+function SignOffDot({
+  label,
+  entry,
+  onToggle,
+  saving,
+}: {
+  label: string;
+  entry?: SignOffEntry;
+  onToggle?: () => void;
+  saving?: boolean;
+}) {
   const signed = !!entry?.timestamp;
   const title = signed
-    ? `${label}: ${entry!.name || 'unknown'} on ${new Date(entry!.timestamp!).toLocaleString('en-GB')}`
-    : `${label}: not signed`;
+    ? `${label}: ${entry!.name || 'unknown'} on ${new Date(entry!.timestamp!).toLocaleString('en-GB')} — click to clear`
+    : onToggle
+      ? `${label}: click to sign off`
+      : `${label}: not signed`;
   return (
     <span
+      role={onToggle ? 'button' : undefined}
+      tabIndex={onToggle ? 0 : undefined}
+      onClick={onToggle
+        ? (e) => { e.stopPropagation(); if (!saving) onToggle(); }
+        : undefined}
+      onKeyDown={onToggle
+        ? (e) => { if ((e.key === 'Enter' || e.key === ' ') && !saving) { e.preventDefault(); e.stopPropagation(); onToggle(); } }
+        : undefined}
       title={title}
-      className={`inline-flex items-center gap-0.5 text-[9px] font-medium ${signed ? 'text-green-700' : 'text-slate-400'}`}
+      className={`inline-flex items-center gap-0.5 text-[9px] font-medium select-none ${signed ? 'text-green-700' : 'text-slate-400'} ${onToggle ? 'cursor-pointer hover:opacity-80' : ''} ${saving ? 'opacity-50' : ''}`}
     >
       <span className="leading-none">{label}</span>
-      <span className={`inline-block w-2 h-2 rounded-full ${signed ? 'bg-green-500' : 'border border-slate-300 bg-transparent'}`} />
+      <span className={`inline-block w-2.5 h-2.5 rounded-full ${signed ? 'bg-green-500' : 'border border-slate-300 bg-transparent'}`} />
     </span>
   );
 }
@@ -95,6 +123,10 @@ export function TaxationPanel({
   const [taxOnProfitsSO, setTaxOnProfitsSO] = useState<SubTabSignOffs>({});
   const [vatReconciliationSO, setVatReconciliationSO] = useState<SubTabSignOffs>({});
   const [signOffRefreshTick, setSignOffRefreshTick] = useState(0);
+  // While a dot's PUT is in flight we dim the dot and ignore further
+  // clicks. Key is `${subTabKey}:${role}` so the two sub-tabs and
+  // three roles each have their own busy flag.
+  const [savingKey, setSavingKey] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -106,15 +138,23 @@ export function TaxationPanel({
         ]);
         if (cancelled) return;
 
-        // Tax on Profits — the panel persists `conclusion` (preparer
-        // signal), `reviewedByName/reviewedAt` (reviewer), and
-        // `riSignedByName/riSignedAt` (RI). Fall back to byUserName/at
-        // for the preparer slot when no explicit reviewer is set.
+        // Read order for the Preparer slot:
+        //   1. explicit `preparerSignedAt` / `preparerSignedByName`
+        //      set by clicking the P dot here;
+        //   2. legacy: a `conclusion` saved without an explicit P
+        //      click — treat the conclusion's `at` as the preparer
+        //      timestamp so dots don't go backwards for existing
+        //      engagements.
+        // Reviewer / RI are explicit fields written by the R / RI
+        // dots — there's no legacy fallback because nothing in the
+        // pre-existing UI ever set them.
         const topData = topRes?.data || {};
         setTaxOnProfitsSO({
-          preparer: topData.conclusion
-            ? { name: topData.byUserName || 'Preparer', timestamp: topData.at }
-            : undefined,
+          preparer: topData.preparerSignedAt
+            ? { name: topData.preparerSignedByName || 'Preparer', timestamp: topData.preparerSignedAt }
+            : topData.conclusion
+              ? { name: topData.byUserName || 'Preparer', timestamp: topData.at }
+              : undefined,
           reviewer: topData.reviewedAt
             ? { name: topData.reviewedByName, timestamp: topData.reviewedAt }
             : undefined,
@@ -123,13 +163,14 @@ export function TaxationPanel({
             : undefined,
         });
 
-        // VAT Reconciliation — same shape as Tax on Profits since both
-        // tools share the same conclusion + sign-off field convention.
+        // VAT Reconciliation — same convention as Tax on Profits.
         const vatData = vatRes?.data || {};
         setVatReconciliationSO({
-          preparer: vatData.conclusion
-            ? { name: vatData.byUserName || 'Preparer', timestamp: vatData.at }
-            : undefined,
+          preparer: vatData.preparerSignedAt
+            ? { name: vatData.preparerSignedByName || 'Preparer', timestamp: vatData.preparerSignedAt }
+            : vatData.conclusion
+              ? { name: vatData.byUserName || 'Preparer', timestamp: vatData.at }
+              : undefined,
           reviewer: vatData.reviewedAt
             ? { name: vatData.reviewedByName, timestamp: vatData.reviewedAt }
             : undefined,
@@ -170,14 +211,76 @@ export function TaxationPanel({
     'vat-reconciliation': vatReconciliationSO,
   };
 
-  // Roll up Reviewer/RI sign-offs across both Taxation sub-tabs and
-  // broadcast to CompletionPanel so the tab-strip Reviewer/RI dots
-  // mirror what's signed inside this panel. Three states:
-  //   • green  — both Tax on Profits AND VAT Reconciliation signed
-  //   • orange — exactly one of them signed (partial rollup)
+  /**
+   * Click handler for a P/R/RI dot. PUTs a shallow-merge patch into
+   * the appropriate sub-panel's `data` blob to toggle the role's
+   * sign-off, then dispatches the panel's change event so the dots
+   * refresh immediately. Both endpoints share the same shallow-merge
+   * PUT semantics so we don't need separate code paths.
+   *
+   * Toggle policy: if the role is currently signed, the click clears
+   * it (sets fields to null). Otherwise it sets the timestamp +
+   * signer name. We persist `null` rather than omitting the keys so
+   * the shallow merge actually unsets the previous value.
+   */
+  async function toggleSignOff(subTabKey: 'tax-on-profits' | 'vat-reconciliation', role: SignOffRole) {
+    const so = signOffsBySubTab[subTabKey] || {};
+    const currentlySigned = !!so[role]?.timestamp;
+    const now = currentlySigned ? null : new Date().toISOString();
+    const name = currentlySigned ? null : (userName || userRole || 'User');
+    // Map role → DB field names. Preparer writes a dedicated
+    // preparerSignedAt/By pair so the dot can be toggled
+    // independently of the conclusion text (which has its own Save
+    // button further down the panel).
+    const patch: Record<string, unknown> = role === 'preparer'
+      ? { preparerSignedAt: now, preparerSignedByName: name }
+      : role === 'reviewer'
+        ? { reviewedAt: now, reviewedByName: name }
+        : { riSignedAt: now, riSignedByName: name };
+
+    const url = subTabKey === 'tax-on-profits'
+      ? `/api/engagements/${engagementId}/tax-on-profits`
+      : `/api/engagements/${engagementId}/vat-reconciliation`;
+    const changeEvent = subTabKey === 'tax-on-profits'
+      ? 'engagement:tax-on-profits-changed'
+      : 'engagement:vat-reconciliation-changed';
+
+    const key = `${subTabKey}:${role}`;
+    if (savingKey === key) return;
+    setSavingKey(key);
+    // Optimistically update local state so the dot flips immediately;
+    // a failed PUT below will roll it back on the next refresh tick.
+    setLocal(subTabKey, role, currentlySigned ? undefined : { name: name || undefined, timestamp: now || undefined });
+    try {
+      const res = await fetch(url, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ data: patch }),
+      });
+      if (!res.ok) {
+        // Force a re-fetch so the optimistic state gets corrected.
+        setSignOffRefreshTick(t => t + 1);
+      }
+      try { window.dispatchEvent(new CustomEvent(changeEvent, { detail: { engagementId } })); } catch {}
+    } catch {
+      setSignOffRefreshTick(t => t + 1);
+    } finally {
+      setSavingKey(null);
+    }
+  }
+
+  function setLocal(subTabKey: 'tax-on-profits' | 'vat-reconciliation', role: SignOffRole, entry: SignOffEntry | undefined) {
+    const setter = subTabKey === 'tax-on-profits' ? setTaxOnProfitsSO : setVatReconciliationSO;
+    setter(prev => ({ ...prev, [role]: entry }));
+  }
+
+  // Roll up Preparer / Reviewer / RI sign-offs across both Taxation
+  // sub-tabs and broadcast so listeners (CompletionPanel pill, the
+  // Audit Plan OTHER_TABS Taxation button) mirror what's signed
+  // inside. Three states:
+  //   • green  — both sub-tabs signed for this role
+  //   • orange — exactly one signed (partial)
   //   • pending — neither signed
-  // The partial state matches the dot convention used elsewhere in
-  // the Completion strip (orange = some, green = all, pending = none).
   useEffect(() => {
     function rollup(top?: SignOffEntry, vat?: SignOffEntry): 'green' | 'orange' | 'pending' {
       const a = !!top?.timestamp;
@@ -190,6 +293,7 @@ export function TaxationPanel({
       window.dispatchEvent(new CustomEvent('engagement:taxation-signoffs', {
         detail: {
           engagementId,
+          preparer: rollup(taxOnProfitsSO.preparer, vatReconciliationSO.preparer),
           reviewer: rollup(taxOnProfitsSO.reviewer, vatReconciliationSO.reviewer),
           ri: rollup(taxOnProfitsSO.ri, vatReconciliationSO.ri),
         },
@@ -221,9 +325,24 @@ export function TaxationPanel({
               <Icon className="h-3.5 w-3.5" />
               <span>{t.label}</span>
               <span className="inline-flex items-center gap-1.5 ml-1">
-                <SignOffDot label="P" entry={so.preparer} />
-                <SignOffDot label="R" entry={so.reviewer} />
-                <SignOffDot label="RI" entry={so.ri} />
+                <SignOffDot
+                  label="P"
+                  entry={so.preparer}
+                  onToggle={() => toggleSignOff(t.key, 'preparer')}
+                  saving={savingKey === `${t.key}:preparer`}
+                />
+                <SignOffDot
+                  label="R"
+                  entry={so.reviewer}
+                  onToggle={() => toggleSignOff(t.key, 'reviewer')}
+                  saving={savingKey === `${t.key}:reviewer`}
+                />
+                <SignOffDot
+                  label="RI"
+                  entry={so.ri}
+                  onToggle={() => toggleSignOff(t.key, 'ri')}
+                  saving={savingKey === `${t.key}:ri`}
+                />
               </span>
             </button>
           );
