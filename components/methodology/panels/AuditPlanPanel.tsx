@@ -1022,17 +1022,111 @@ export function AuditPlanPanel({ engagementId, clientId, periodId, onClose, peri
   }, [tbRows, activeStatement, activeLevel, activeNote]);
 
   // Tab total — sum of |currentYear| across every row in the
-  // currently-active tab (FS Level / FS Note / Statement scope).
-  // Used by the Analytical Review trigger gate to allocate PM and
-  // CT across rows in proportion to their share of the tab. Each
-  // row's threshold = PM × (|row balance| / |tab total|); AR is
-  // offered when the row balance is BETWEEN the proportional CT
-  // and PM thresholds AND the row isn't already SR / AoF.
+  // currently-active tab. Retained for any downstream use that wants
+  // a tab-level allocation; per the latest audit-side rule it is NOT
+  // used to gate which rows attract substantive testing (that gate
+  // is the cumulative-from-smallest rule in `testRequiredRowIds`
+  // below — see comment there).
   const tabTotal = useMemo(() => {
     let t = 0;
     for (const r of filteredRows) t += Math.abs(Number(r.currentYear) || 0);
     return t;
   }, [filteredRows]);
+
+  /**
+   * Row-level test-gate (cumulative-from-smallest).
+   *
+   * Audit-side rule (replaces the previous "below PM = no test"
+   * check): every row that's NOT a Significant Risk or Area of
+   * Focus is sorted by |currentYear| ascending and the running
+   * total is walked from smallest upwards. The first row that
+   * pushes the cumulative sum strictly above engagement-level PM is
+   * the cut-off; that row and every larger row require testing.
+   * Smaller rows whose cumulative tail stays at-or-below PM are
+   * scoped out and require no testing.
+   *
+   * SR / AoF rows are testing-required regardless of size because
+   * their risk-led classification overrides the size-based gate.
+   *
+   * `allocated PM` (PM × proportion-of-tab-total) is intentionally
+   * unused here — the auditor flagged that the allocated thresholds
+   * should drive error assessment (i.e. judging individual found
+   * errors when extrapolated), not which rows attract testing.
+   */
+  const testRequiredRowIds = useMemo(() => {
+    const result = new Set<string>();
+    if (filteredRows.length === 0) return result;
+
+    // Re-derive each row's "is SR or AoF" classification using the
+    // same matching rules as the render loop below. We only need
+    // SR/AoF vs other here, so we short-circuit out of the
+    // full classifyRisk pipeline.
+    const activeLevelLower = (activeLevel || '').toLowerCase().trim();
+    function isRowSrOrAoF(row: TBRow): boolean {
+      const rowDesc = (row.description || '').toLowerCase().trim();
+      const rowCode = (row.accountCode || '').toLowerCase().trim();
+      const rowFsLevel = (row.fsLevel || '').toLowerCase().trim();
+      const canonRowLevel = (canonicalLevel(row) || '').toLowerCase().trim();
+      const matches = rmmItems.filter(r => {
+        const li = r.lineItem.toLowerCase().trim();
+        if (li === rowDesc || li === rowCode) return true;
+        if (li === rowFsLevel || li === canonRowLevel || li === activeLevelLower) return true;
+        const rfl = (r.fsLevel || '').toLowerCase().trim();
+        if (rfl && (rfl === rowFsLevel || rfl === canonRowLevel || rfl === activeLevelLower)) return true;
+        return false;
+      });
+      if (matches.length === 0) return false;
+      const RP: Record<string, number> = { 'Very High': 0, 'High': 1, 'Medium': 2, 'Low': 3 };
+      const best = matches.reduce((b, r) => (RP[r.overallRisk || ''] ?? 99) < (RP[b.overallRisk || ''] ?? 99) ? r : b);
+      const overall = best.overallRisk || '';
+      const fromTable = overall ? riskClassificationTable?.[overall] : null;
+      const cls = fromTable
+        || (overall === 'High' || overall === 'Very High' ? 'Significant Risk'
+          : overall === 'Medium' ? 'Area of Focus'
+          : overall === 'Low' || overall === 'Remote' ? 'Normal'
+          : null);
+      return cls === 'Significant Risk' || cls === 'Area of Focus';
+    }
+
+    // Tag SR/AoF rows up front — they're always tested.
+    const others: { id: string; abs: number }[] = [];
+    for (const r of filteredRows) {
+      if (isRowSrOrAoF(r)) {
+        result.add(r.id);
+      } else {
+        others.push({ id: r.id, abs: Math.abs(Number(r.currentYear) || 0) });
+      }
+    }
+
+    // No PM configured → can't compute the cut-off. Default to
+    // "every row tests" so the auditor sees tests rather than an
+    // empty plan they'd otherwise have to debug. Once PM is set the
+    // cut-off applies and the tail drops out.
+    if (performanceMateriality <= 0) {
+      for (const o of others) result.add(o.id);
+      return result;
+    }
+
+    // Sort the non-SR/AoF rows by |amount| ASC and walk the
+    // running cumulative sum. The first row that pushes the total
+    // strictly above PM is the cut-off; from there to the end, all
+    // rows are testing-required.
+    others.sort((a, b) => a.abs - b.abs);
+    let cum = 0;
+    let cutIndex = -1;
+    for (let i = 0; i < others.length; i++) {
+      cum += others[i].abs;
+      if (cum > performanceMateriality) {
+        cutIndex = i;
+        break;
+      }
+    }
+    if (cutIndex >= 0) {
+      for (let i = cutIndex; i < others.length; i++) result.add(others[i].id);
+    }
+    // cutIndex < 0 → cumulative never exceeded PM; only SR/AoF tested.
+    return result;
+  }, [filteredRows, rmmItems, riskClassificationTable, activeLevel, performanceMateriality]);
 
   // Tests visible in the current tab, ready to be POSTed to the
   // /test-execution endpoint. Mirrors the per-row matching logic from
@@ -1080,9 +1174,10 @@ export function AuditPlanPanel({ engagementId, clientId, periodId, onClose, peri
         return 'Normal';
       }
       // Mirror the render-loop classification: RMM-driven Sig Risk
-      // / Area of Focus dominate; everything else is sized against
-      // engagement-level PM and CT so small sub-accounts don't
-      // inherit a tab-wide "Normal" RMM classification.
+      // / Area of Focus dominate; everything else uses the
+      // cumulative-from-smallest gate (`testRequiredRowIds`) instead
+      // of a raw row-vs-PM comparison. See the testRequiredRowIds
+      // memo for the rule.
       let rowClassification: string | null = null;
       if (rmmMatch) {
         const rmmClass = classifyRisk(rmmMatch.overallRisk ?? undefined);
@@ -1091,13 +1186,11 @@ export function AuditPlanPanel({ engagementId, clientId, periodId, onClose, peri
         }
       }
       if (!rowClassification) {
-        if (performanceMateriality > 0 && rowValue > performanceMateriality) {
+        if (testRequiredRowIds.has(row.id)) {
           rowClassification = 'Normal';
-        } else if (clearlyTrivial > 0 && rowValue > clearlyTrivial) {
-          rowClassification = 'AR';
-        } else if (performanceMateriality > 0 && rowValue > 0) {
-          rowClassification = 'AR';
         }
+        // else: row is below the cumulative cut-off → no
+        // testing required, classification stays null (Immaterial).
       }
 
       let tests: ReturnType<typeof getTestsForRow>;
@@ -1132,7 +1225,7 @@ export function AuditPlanPanel({ engagementId, clientId, periodId, onClose, peri
   // recompute on most renders, but the work is cheap (a few hundred
   // function calls in worst case) so leaving it as-is.
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [filteredRows, rmmItems, activeLevel, activeStatement, activeNote, riskClassificationTable, performanceMateriality, clearlyTrivial, excludedTests]);
+  }, [filteredRows, rmmItems, activeLevel, activeStatement, activeNote, riskClassificationTable, performanceMateriality, testRequiredRowIds, excludedTests]);
 
   // Tests in the current tab that haven't been started yet — the
   // Run All button only fires for these so existing runs aren't
@@ -1692,11 +1785,17 @@ export function AuditPlanPanel({ engagementId, clientId, periodId, onClose, peri
                 //   • RMM-driven Sig Risk / Area of Focus win regardless
                 //     of balance size — they reflect the auditor's
                 //     identified risk, not the line's magnitude.
-                //   • Otherwise classify by balance vs engagement-level
-                //     PM and CT. This prevents tiny sub-accounts (£50,
-                //     £344, …) from inheriting an FS-Line-level Normal
-                //     RMM classification and showing as green/Risk when
-                //     they're actually immaterial.
+                //   • Otherwise gate by the cumulative-from-smallest
+                //     rule (testRequiredRowIds): rows whose tail
+                //     stays at-or-below PM are scoped out (null /
+                //     hollow / no tests); rows from the cut-off
+                //     upwards are Normal (green / tested).
+                //
+                //   Allocated / proportional PM is intentionally NOT
+                //   used here per the auditor: those allocations are
+                //   reserved for error-assessment (extrapolating
+                //   misstatements), not for selecting which rows to
+                //   test.
                 let rowClassification: string | null = null;
                 if (rmmMatch) {
                   const rmmClass = classifyRisk(rmmMatch.overallRisk ?? undefined);
@@ -1705,15 +1804,10 @@ export function AuditPlanPanel({ engagementId, clientId, periodId, onClose, peri
                   }
                 }
                 if (!rowClassification) {
-                  if (performanceMateriality > 0 && rowValue > performanceMateriality) {
+                  if (testRequiredRowIds.has(row.id)) {
                     rowClassification = 'Normal';
-                  } else if (clearlyTrivial > 0 && rowValue > clearlyTrivial) {
-                    rowClassification = 'AR';
-                  } else if (performanceMateriality > 0 && rowValue > 0) {
-                    rowClassification = 'AR'; // CT not set — anything non-zero below PM is AR
-                  } else {
-                    rowClassification = null; // PM unset OR row at/below CT → Immaterial (hollow)
                   }
+                  // else: scoped-out tail → null (hollow / no tests).
                 }
                 // Each RMM risk drives its own tests with its own assertions + classification
                 // Call getTestsForRow once per RMM match, then deduplicate by test description
