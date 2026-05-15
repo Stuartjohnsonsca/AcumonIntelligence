@@ -1474,11 +1474,18 @@ export function RMMTab({ engagementId, auditType, teamMembers = [], showCategory
                     {/* Risk Classification — 4-tier dot:
                           red    = Significant Risk (overallRisk High / Very High)
                           orange = Area of Focus    (overallRisk Medium)
-                          green  = Normal           (overallRisk Low / Remote)
-                          hollow = Immaterial       (no overallRisk yet)
+                          green  = Normal           (overallRisk Low / Remote,
+                                                     OR no risk set yet AND
+                                                     |amount| > PM)
+                          hollow = Immaterial       (no risk set yet AND
+                                                     |amount| ≤ PM, or PM not
+                                                     configured)
                         Firm-defined riskClassificationTable still wins where
                         present; the inline fallback only kicks in for tiers
-                        the firm hasn't customised. */}
+                        the firm hasn't customised. Auditors get a size-based
+                        default so an un-assessed row that's clearly material
+                        doesn't sit in the "Immaterial" bucket.
+                    */}
                     <td className="px-1 py-1 text-center align-top">
                       {(() => {
                         const overall = row.overallRisk || '';
@@ -1491,10 +1498,21 @@ export function RMMTab({ engagementId, auditType, teamMembers = [], showCategory
                         if (classification === 'Significant Risk') return <span className="inline-block w-3 h-3 rounded-full bg-red-500 cursor-help" title="Significant Risk" />;
                         if (classification === 'Area of Focus') return <span className="inline-block w-3 h-3 rounded-full bg-orange-400 cursor-help" title="Area of Focus" />;
                         if (classification === 'Normal') return <span className="inline-block w-3 h-3 rounded-full bg-green-500 cursor-help" title="Normal" />;
-                        // Immaterial — hollow circle. Either the auditor hasn't
-                        // set an overall risk yet, or the firm's classification
-                        // table explicitly returned null/empty for this tier.
-                        return <span className="inline-block w-3 h-3 rounded-full border border-slate-400 bg-white cursor-help" title="Immaterial — overall risk not yet assessed" />;
+                        // No firm-classification + no overallRisk yet —
+                        // fall back to size: above PM → Normal (green),
+                        // below or equal → Immaterial (hollow). Anchors
+                        // of merged groups use the group sum so the dot
+                        // reflects the combined balance, not the anchor's
+                        // contribution alone.
+                        const sizeAmount = isGroupAnchor && groupInfo ? groupInfo.summedAmount : row.amount;
+                        const n = sizeAmount != null ? Math.abs(Number(sizeAmount)) : NaN;
+                        if (performanceMateriality > 0 && Number.isFinite(n) && n > performanceMateriality) {
+                          return <span className="inline-block w-3 h-3 rounded-full bg-green-500 cursor-help" title={`Normal — defaulted on size (|amount| £${n.toLocaleString('en-GB', { minimumFractionDigits: 2 })} exceeds PM £${performanceMateriality.toLocaleString('en-GB', { minimumFractionDigits: 2 })}). Set Overall Risk to override.`} />;
+                        }
+                        const reason = performanceMateriality > 0
+                          ? `Immaterial — defaulted on size (|amount| ${Number.isFinite(n) ? `£${n.toLocaleString('en-GB', { minimumFractionDigits: 2 })}` : 'not set'} ≤ PM £${performanceMateriality.toLocaleString('en-GB', { minimumFractionDigits: 2 })}). Set Overall Risk to override.`
+                          : 'Immaterial — overall risk not yet assessed and Performance Materiality not yet set.';
+                        return <span className="inline-block w-3 h-3 rounded-full border border-slate-400 bg-white cursor-help" title={reason} />;
                       })()}
                     </td>
                     {/* Notes — free text */}
