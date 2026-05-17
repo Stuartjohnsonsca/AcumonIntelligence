@@ -87,6 +87,7 @@ const HANDLERS: Record<string, ActionHandler> = {
   identifyPayrollMovements: handleIdentifyPayrollMovements,
   requestPortalQuestions: handleRequestPortalQuestions,
   verifyPayrollMovements: handleVerifyPayrollMovements,
+  testJournals: handleTestJournals,
 };
 
 export function getActionHandler(handlerName: string): ActionHandler | null {
@@ -5810,6 +5811,86 @@ async function handleVerifyPayrollMovements(ctx: ActionHandlerContext): Promise<
       green_count: green.length,
       findings,
       pass_fail: red.length === 0 ? (orange.length === 0 ? 'pass' : 'review') : 'fail',
+    },
+  };
+}
+
+/**
+ * Management Override (ISA 240) — Test Journals.
+ *
+ * Looks for a completed JournalRiskRun on this engagement. If found, emits
+ * the selected sample as a data_table so the next pipeline step (typically
+ * `request_documents`) can ask the client for supporting evidence on each
+ * journal. If not found, pauses so the auditor can run the analysis on the
+ * Management Override tab — that tab handles the Xero pull / portal request /
+ * CSV upload UX and is the right place for the audit trail.
+ */
+async function handleTestJournals(ctx: ActionHandlerContext): Promise<ActionHandlerResult> {
+  const run = await prisma.journalRiskRun.findFirst({
+    where: { engagementId: ctx.engagementId, status: 'completed' },
+    orderBy: { createdAt: 'desc' },
+  });
+
+  if (!run) {
+    // No run yet — surface the MO tab so the auditor can pull/upload data
+    // and run the engine before this pipeline can proceed.
+    return {
+      action: 'pause',
+      outputs: {
+        status: 'awaiting_journal_risk_run',
+        message: 'Run the ISA 240 journal risk analysis on the Management Override tab, then resume this test.',
+      },
+      pauseReason: 'journal_risk_run_required',
+      pauseRefId: `journal_risk_${ctx.engagementId}`,
+    };
+  }
+
+  // Pull the selected sample for the next step.
+  const selected = await prisma.journalRiskEntry.findMany({
+    where: { runId: run.id, selected: true },
+    orderBy: { riskScore: 'desc' },
+  });
+
+  // Suspicious population = anything that scored above the low band
+  // (everything LAYER 1/2/3 selected + medium/high band not selected).
+  const suspicious = await prisma.journalRiskEntry.findMany({
+    where: { runId: run.id, riskBand: { in: ['medium', 'high'] } },
+    orderBy: { riskScore: 'desc' },
+  });
+
+  // Map entries to the row shape downstream actions expect (`ref` /
+  // `counterparty` / `amount` / `description` show up in request_documents'
+  // dedup logic, so populating them gives portal requests sensible text).
+  const toRow = (e: typeof selected[number]) => ({
+    journal_id: e.journalId,
+    ref: e.journalId,
+    posted_at: e.postedAt,
+    period: e.period,
+    amount: e.amount,
+    description: e.description || '',
+    counterparty: e.preparedByUserId,
+    debit_account: e.debitAccountId,
+    credit_account: e.creditAccountId,
+    risk_score: e.riskScore,
+    risk_band: e.riskBand,
+    risk_tags: (e.riskTags as string[]) || [],
+    selection_layer: e.selectionLayer,
+    rationale: e.rationale,
+  });
+
+  const sampleRows = selected.map(toRow);
+  const suspiciousRows = suspicious.map(toRow);
+
+  return {
+    action: 'continue',
+    outputs: {
+      suspicious_journals: suspiciousRows,
+      sample_items: sampleRows,
+      data_table: sampleRows,
+      pass_fail: selected.length === 0 ? 'pass' : 'review',
+      run_id: run.runId,
+      population_size: run.totalJournals,
+      selected_count: run.totalSelected,
     },
   };
 }
