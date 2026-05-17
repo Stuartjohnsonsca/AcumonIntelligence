@@ -8,7 +8,8 @@ import { validateJournals, validateUsers, validateAccounts, validateConfig } fro
 import { buildDefaultConfig } from '@/lib/journal-risk/config-builder';
 import { generateScoredCsv, generateMarkdownSummary } from '@/lib/journal-risk/reporting';
 import { analyzeCoverage } from '@/lib/journal-risk/selection/coverage';
-import type { Config } from '@/lib/journal-risk/types';
+import { pullFromXero } from '@/lib/journal-risk/xero-pull';
+import type { Config, JournalRecord, UserRecord, AccountRecord } from '@/lib/journal-risk/types';
 
 async function verifyAccess(engagementId: string, firmId: string | undefined, isSuperAdmin: boolean) {
   const e = await prisma.auditEngagement.findUnique({
@@ -50,6 +51,22 @@ export async function GET(req: Request, { params }: { params: Promise<{ engageme
   const url = new URL(req.url);
   const runId = url.searchParams.get('runId');
 
+  // Sources status — tells the panel whether to show "Pull from Xero" /
+  // request-from-client / CSV upload options.
+  if (url.searchParams.get('sources')) {
+    let xeroConnection: { orgName: string | null; expiresAt: Date } | null = null;
+    try {
+      const conn = await prisma.accountingConnection.findUnique({
+        where: { clientId_system: { clientId: engagement.clientId, system: 'xero' } },
+        select: { orgName: true, expiresAt: true },
+      });
+      if (conn && new Date() < conn.expiresAt) xeroConnection = conn;
+    } catch { /* ignore */ }
+    return NextResponse.json({
+      xero: xeroConnection ? { connected: true, orgName: xeroConnection.orgName } : { connected: false },
+    });
+  }
+
   // Also return default config if requested
   if (url.searchParams.get('defaultConfig')) {
     const period = await prisma.clientPeriod.findUnique({ where: { id: engagement.periodId } });
@@ -87,6 +104,130 @@ export async function GET(req: Request, { params }: { params: Promise<{ engageme
   }});
 }
 
+/**
+ * Run the engine, persist the run + entries, and return the run summary.
+ * Shared between the CSV-upload path and the Xero-pull path.
+ */
+async function runAndPersist(opts: {
+  engagementId: string;
+  firmId: string | undefined;
+  clientId: string;
+  periodId: string;
+  userId: string;
+  journals: JournalRecord[];
+  users: UserRecord[];
+  accounts: AccountRecord[];
+  baseCurrency: string;
+  sourceLabel: string; // 'csv' | 'xero' — surfaced in the populationEvidence
+  configOverrides?: Partial<Config>;
+}) {
+  validateJournals(opts.journals);
+  validateUsers(opts.users);
+  validateAccounts(opts.accounts);
+
+  const period = await prisma.clientPeriod.findUnique({ where: { id: opts.periodId } });
+  const periodStart = period?.startDate ? new Date(period.startDate).toISOString().slice(0, 10) : new Date().getFullYear() + '-01-01';
+  const periodEnd = period?.endDate ? new Date(period.endDate).toISOString().slice(0, 10) : new Date().getFullYear() + '-12-31';
+  const firmKeywords = opts.firmId ? await loadFirmKeywords(opts.firmId) : null;
+  let config = buildDefaultConfig({
+    periodStartDate: periodStart,
+    periodEndDate: periodEnd,
+    suspiciousKeywords: firmKeywords ?? undefined,
+  });
+  if (opts.configOverrides) {
+    config = { ...config, ...opts.configOverrides } as Config;
+  }
+  validateConfig(config);
+
+  const client = await prisma.client.findUnique({ where: { id: opts.clientId }, select: { clientName: true } });
+  const entityName = client?.clientName || 'Unknown';
+
+  const result = runJournalRiskAnalysis({
+    journals: opts.journals,
+    users: opts.users,
+    accounts: opts.accounts,
+    config,
+    engagementId: opts.engagementId,
+    entityName,
+    baseCurrency: opts.baseCurrency,
+  });
+
+  // Tag the population evidence with the source so the UI can show how
+  // the data got here (and an auditor reviewing the file can tell at a
+  // glance whether it came from a verified accounting-system pull or a
+  // CSV upload).
+  (result.population as unknown as { sourceSystem: string }).sourceSystem = opts.sourceLabel;
+
+  const coverage = analyzeCoverage(result.results.journals);
+
+  await prisma.journalRiskRun.updateMany({
+    where: { engagementId: opts.engagementId, status: 'completed' },
+    data: { status: 'superseded' },
+  });
+
+  const run = await prisma.journalRiskRun.create({
+    data: {
+      engagementId: opts.engagementId,
+      runId: result.results.run.runId,
+      status: 'completed',
+      config: config as object,
+      populationEvidence: result.population as object,
+      selectionSummary: {
+        layer1: coverage.byLayer.layer1_mandatory_high_risk || 0,
+        layer2: coverage.byLayer.layer2_targeted_coverage || 0,
+        layer3: coverage.byLayer.layer3_unpredictable || 0,
+        notSelected: coverage.byLayer.not_selected || 0,
+      },
+      riskModelSnapshot: result.riskModel as object,
+      totalJournals: result.results.journals.length,
+      totalSelected: coverage.totalSelected,
+      runById: opts.userId,
+    },
+  });
+
+  const BATCH_SIZE = 500;
+  const entries = result.results.journals;
+  // Build a journalId → input record lookup so we can recover the raw amount
+  // / description / accounts without an O(n²) array scan per entry.
+  const inputById = new Map(opts.journals.map(j => [j.journalId, j]));
+  for (let i = 0; i < entries.length; i += BATCH_SIZE) {
+    const batch = entries.slice(i, i + BATCH_SIZE);
+    await prisma.journalRiskEntry.createMany({
+      data: batch.map(j => {
+        const src = inputById.get(j.journalId);
+        return {
+          runId: run.id,
+          journalId: j.journalId,
+          postedAt: j.postedAt,
+          period: j.period,
+          isManual: j.isManual,
+          preparedByUserId: j.preparedByUserId,
+          approvedByUserId: j.approvedByUserId || null,
+          amount: src?.amount ?? 0,
+          description: src?.description ?? null,
+          debitAccountId: src?.debitAccountId ?? '',
+          creditAccountId: src?.creditAccountId ?? '',
+          riskScore: j.riskScore,
+          riskBand: j.riskBand,
+          riskTags: j.riskTags as object,
+          drivers: j.drivers as object,
+          selected: j.selection.selected,
+          selectionLayer: j.selection.selectionLayer,
+          mandatory: j.selection.mandatory,
+          rationale: j.selection.rationale,
+        };
+      }),
+    });
+  }
+
+  return {
+    run,
+    totalJournals: entries.length,
+    totalSelected: coverage.totalSelected,
+    selectionSummary: run.selectionSummary,
+  };
+}
+
 // POST — run analysis, update entries, export
 export async function POST(req: Request, { params }: { params: Promise<{ engagementId: string }> }) {
   const session = await auth();
@@ -112,119 +253,36 @@ export async function POST(req: Request, { params }: { params: Promise<{ engagem
     }
 
     try {
-      // Parse CSVs
-      const journalsCsv = await journalsFile.text();
-      const usersCsv = await usersFile.text();
-      const accountsCsv = await accountsFile.text();
+      const journals = parseJournalsCsv(await journalsFile.text());
+      const users = parseUsersCsv(await usersFile.text());
+      const accounts = parseAccountsCsv(await accountsFile.text());
 
-      const journals = parseJournalsCsv(journalsCsv);
-      const users = parseUsersCsv(usersCsv);
-      const accounts = parseAccountsCsv(accountsCsv);
-
-      // Validate
-      validateJournals(journals);
-      validateUsers(users);
-      validateAccounts(accounts);
-
-      // Build config
-      const period = await prisma.clientPeriod.findUnique({ where: { id: engagement.periodId } });
-      const periodStart = period?.startDate ? new Date(period.startDate).toISOString().slice(0, 10) : new Date().getFullYear() + '-01-01';
-      const periodEnd = period?.endDate ? new Date(period.endDate).toISOString().slice(0, 10) : new Date().getFullYear() + '-12-31';
-      const firmKeywords = engagement.firmId ? await loadFirmKeywords(engagement.firmId) : null;
-      let config = buildDefaultConfig({
-        periodStartDate: periodStart,
-        periodEndDate: periodEnd,
-        suspiciousKeywords: firmKeywords ?? undefined,
-      });
-
-      // Apply overrides
+      let overrides: Partial<Config> | undefined;
       if (configOverrides) {
-        try {
-          const overrides = JSON.parse(configOverrides);
-          config = { ...config, ...overrides } as Config;
-        } catch { /* ignore invalid overrides */ }
+        try { overrides = JSON.parse(configOverrides); } catch { /* ignore */ }
       }
 
-      validateConfig(config);
-
-      // Get entity name
-      const client = await prisma.client.findUnique({ where: { id: engagement.clientId }, select: { clientName: true } });
-      const entityName = client?.clientName || 'Unknown';
-
-      // Run analysis
-      const result = runJournalRiskAnalysis({
-        journals, users, accounts, config,
+      const out = await runAndPersist({
         engagementId,
-        entityName,
+        firmId: engagement.firmId,
+        clientId: engagement.clientId,
+        periodId: engagement.periodId,
+        userId: session.user.id,
+        journals,
+        users,
+        accounts,
         baseCurrency: journals[0]?.currency || 'GBP',
+        sourceLabel: 'csv',
+        configOverrides: overrides,
       });
-
-      const coverage = analyzeCoverage(result.results.journals);
-
-      // Mark previous runs as superseded
-      await prisma.journalRiskRun.updateMany({
-        where: { engagementId, status: 'completed' },
-        data: { status: 'superseded' },
-      });
-
-      // Persist run
-      const run = await prisma.journalRiskRun.create({
-        data: {
-          engagementId,
-          runId: result.results.run.runId,
-          status: 'completed',
-          config: config as object,
-          populationEvidence: result.population as object,
-          selectionSummary: {
-            layer1: coverage.byLayer.layer1_mandatory_high_risk || 0,
-            layer2: coverage.byLayer.layer2_targeted_coverage || 0,
-            layer3: coverage.byLayer.layer3_unpredictable || 0,
-            notSelected: coverage.byLayer.not_selected || 0,
-          },
-          riskModelSnapshot: result.riskModel as object,
-          totalJournals: result.results.journals.length,
-          totalSelected: coverage.totalSelected,
-          runById: session.user.id,
-        },
-      });
-
-      // Persist entries in batches
-      const BATCH_SIZE = 500;
-      const entries = result.results.journals;
-      for (let i = 0; i < entries.length; i += BATCH_SIZE) {
-        const batch = entries.slice(i, i + BATCH_SIZE);
-        await prisma.journalRiskEntry.createMany({
-          data: batch.map(j => ({
-            runId: run.id,
-            journalId: j.journalId,
-            postedAt: j.postedAt,
-            period: j.period,
-            isManual: j.isManual,
-            preparedByUserId: j.preparedByUserId,
-            approvedByUserId: j.approvedByUserId || null,
-            amount: journals.find(jr => jr.journalId === j.journalId)?.amount || 0,
-            description: journals.find(jr => jr.journalId === j.journalId)?.description || null,
-            debitAccountId: journals.find(jr => jr.journalId === j.journalId)?.debitAccountId || '',
-            creditAccountId: journals.find(jr => jr.journalId === j.journalId)?.creditAccountId || '',
-            riskScore: j.riskScore,
-            riskBand: j.riskBand,
-            riskTags: j.riskTags as object,
-            drivers: j.drivers as object,
-            selected: j.selection.selected,
-            selectionLayer: j.selection.selectionLayer,
-            mandatory: j.selection.mandatory,
-            rationale: j.selection.rationale,
-          })),
-        });
-      }
 
       return NextResponse.json({
         run: {
-          id: run.id,
-          runId: run.runId,
-          totalJournals: entries.length,
-          totalSelected: coverage.totalSelected,
-          selectionSummary: run.selectionSummary,
+          id: out.run.id,
+          runId: out.run.runId,
+          totalJournals: out.totalJournals,
+          totalSelected: out.totalSelected,
+          selectionSummary: out.selectionSummary,
         },
       }, { status: 201 });
     } catch (err: any) {
@@ -236,6 +294,106 @@ export async function POST(req: Request, { params }: { params: Promise<{ engagem
   // ── JSON actions ──
   const body = await req.json();
   const { action } = body;
+
+  // Pull journals from Xero and run the engine.
+  if (action === 'pull_xero') {
+    try {
+      const period = await prisma.clientPeriod.findUnique({ where: { id: engagement.periodId } });
+      if (!period?.startDate || !period?.endDate) {
+        return NextResponse.json({ error: 'Engagement period has no start / end date set' }, { status: 400 });
+      }
+      const periodStart = new Date(period.startDate).toISOString().slice(0, 10);
+      const periodEnd = new Date(period.endDate).toISOString().slice(0, 10);
+      const client = await prisma.client.findUnique({ where: { id: engagement.clientId }, select: { clientName: true } });
+
+      const pull = await pullFromXero({
+        clientId: engagement.clientId,
+        periodStart,
+        periodEnd,
+        entity: client?.clientName || 'Unknown',
+        baseCurrency: 'GBP',
+      });
+
+      if (pull.journals.length === 0) {
+        return NextResponse.json({
+          error: 'No manual journals found in Xero for this period.',
+          skipped: pull.skipped,
+        }, { status: 400 });
+      }
+
+      const out = await runAndPersist({
+        engagementId,
+        firmId: engagement.firmId,
+        clientId: engagement.clientId,
+        periodId: engagement.periodId,
+        userId: session.user.id,
+        journals: pull.journals,
+        users: pull.users,
+        accounts: pull.accounts,
+        baseCurrency: 'GBP',
+        sourceLabel: 'xero',
+      });
+
+      return NextResponse.json({
+        run: {
+          id: out.run.id,
+          runId: out.run.runId,
+          totalJournals: out.totalJournals,
+          totalSelected: out.totalSelected,
+          selectionSummary: out.selectionSummary,
+          source: 'xero',
+          skipped: pull.skipped,
+        },
+      }, { status: 201 });
+    } catch (err: any) {
+      console.error('[Journal Risk] Xero pull failed:', err);
+      return NextResponse.json({ error: err.message || 'Xero pull failed' }, { status: 400 });
+    }
+  }
+
+  // Create a PortalRequest asking the client to upload a journal export.
+  if (action === 'request_from_client') {
+    const message = typeof body?.message === 'string' ? body.message : '';
+    const period = await prisma.clientPeriod.findUnique({ where: { id: engagement.periodId } });
+    const periodStartStr = period?.startDate ? new Date(period.startDate).toLocaleDateString('en-GB') : '';
+    const periodEndStr = period?.endDate ? new Date(period.endDate).toLocaleDateString('en-GB') : '';
+
+    const question = [
+      'Please provide a full journal export covering the audit period (and the 90 days after period end).',
+      periodStartStr && periodEndStr ? `Period: ${periodStartStr} – ${periodEndStr}.` : '',
+      '',
+      'The export should include, for every journal entry:',
+      '',
+      '- Journal number / ID',
+      '- Date posted',
+      '- User who posted the journal (and the approver, where separate)',
+      '- Account code(s) on each line — both sides of the entry',
+      '- Amount on each line',
+      '- Journal narration / description',
+      '- Source (e.g. manual journal, system-generated)',
+      '',
+      'Most accounting systems can produce this directly — in Xero this is the "General Ledger Detail" report (with all accounts selected) or the Journals export.',
+      '',
+      'Alternatively, if you would prefer us to pull the data directly from your accounting system, please let us know and we can send a read-only connection request.',
+      '',
+      message,
+    ].filter(Boolean).join('\n');
+
+    const portalRequest = await prisma.portalRequest.create({
+      data: {
+        clientId: engagement.clientId,
+        engagementId,
+        section: 'evidence',
+        question,
+        status: 'outstanding',
+        requestedById: session.user.id,
+        requestedByName: session.user.name || session.user.email || 'Audit Team',
+        evidenceTag: 'journal_export',
+      },
+    });
+
+    return NextResponse.json({ id: portalRequest.id, sentAt: new Date().toISOString() });
+  }
 
   // Update entry test status
   if (action === 'update_entry') {

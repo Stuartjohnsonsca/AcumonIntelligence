@@ -73,7 +73,14 @@ export function JournalRiskPanel({ engagementId, periodStartDate, periodEndDate 
   const [running, setRunning] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  // Upload state
+  // Data-source state — populated from /journal-risk?sources=1 so the panel
+  // can show the right input option (Xero / portal request / CSV upload).
+  const [xeroConnected, setXeroConnected] = useState<{ connected: boolean; orgName?: string | null } | null>(null);
+  const [requestSent, setRequestSent] = useState<string | null>(null); // ISO timestamp
+  const [requesting, setRequesting] = useState(false);
+  const [pickedSource, setPickedSource] = useState<'xero' | 'request' | 'csv' | null>(null);
+
+  // Upload state (CSV path)
   const [journalsFile, setJournalsFile] = useState<File | null>(null);
   const [usersFile, setUsersFile] = useState<File | null>(null);
   const [accountsFile, setAccountsFile] = useState<File | null>(null);
@@ -99,6 +106,66 @@ export function JournalRiskPanel({ engagementId, periodStartDate, periodEndDate 
   }, [engagementId]);
 
   useEffect(() => { loadRun(); }, [loadRun]);
+
+  // Load connection status so we know which input option to surface.
+  useEffect(() => {
+    (async () => {
+      try {
+        const res = await fetch(`/api/engagements/${engagementId}/journal-risk?sources=1`);
+        if (res.ok) {
+          const data = await res.json();
+          setXeroConnected(data.xero || { connected: false });
+        }
+      } catch { /* ignore */ }
+    })();
+  }, [engagementId]);
+
+  // Pull from Xero
+  async function handlePullFromXero() {
+    setRunning(true);
+    setError(null);
+    try {
+      const res = await fetch(`/api/engagements/${engagementId}/journal-risk`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'pull_xero' }),
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        setError(data.error || `Xero pull failed (${res.status})`);
+        return;
+      }
+      await loadRun();
+    } catch (err: any) {
+      setError(err.message || 'Xero pull failed');
+    } finally {
+      setRunning(false);
+    }
+  }
+
+  // Send a portal request asking the client to upload a journal export
+  async function handleRequestFromClient() {
+    setRequesting(true);
+    setError(null);
+    try {
+      const res = await fetch(`/api/engagements/${engagementId}/journal-risk`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'request_from_client' }),
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        setError(data.error || `Request failed (${res.status})`);
+        return;
+      }
+      const data = await res.json();
+      setRequestSent(data.sentAt || new Date().toISOString());
+    } catch (err: any) {
+      setError(err.message || 'Request failed');
+    } finally {
+      setRequesting(false);
+    }
+  }
 
   // Load entries when run exists
   const loadEntries = useCallback(async () => {
@@ -187,35 +254,92 @@ export function JournalRiskPanel({ engagementId, periodStartDate, periodEndDate 
 
   if (loading) return <div className="py-8 text-center text-sm text-slate-400 animate-pulse">Loading...</div>;
 
-  // ── Upload View (no run exists) ──
+  // ── Input View (no run exists) ──
   if (!run) {
     return (
       <div className="space-y-4">
         <div className="text-center py-4">
           <h3 className="text-sm font-semibold text-slate-700 mb-1">ISA 240 — Journal Entry Risk Assessment</h3>
-          <p className="text-xs text-slate-400">Upload journal data to run risk scoring and sample selection</p>
+          <p className="text-xs text-slate-400">Where would you like the journal data to come from?</p>
         </div>
 
-        <div className="grid grid-cols-3 gap-4">
-          <FileDropZone label="Journals CSV" file={journalsFile} onFile={setJournalsFile} accept=".csv" required
-            hint="journalId, postedAt, period, source, preparedByUserId, approvedByUserId, description, amount, debitAccountId, creditAccountId" />
-          <FileDropZone label="Users CSV" file={usersFile} onFile={setUsersFile} accept=".csv" required
-            hint="userId, displayName, roleTitle" />
-          <FileDropZone label="Accounts CSV" file={accountsFile} onFile={setAccountsFile} accept=".csv" required
-            hint="accountId, accountName, category, isJudgmental, materialityGroup" />
-        </div>
+        {/* Source picker — three tiles. Xero tile is enabled only when a
+            live connection exists; the other two are always available. */}
+        {!pickedSource && (
+          <div className="grid grid-cols-3 gap-3">
+            <button
+              onClick={() => xeroConnected?.connected && handlePullFromXero()}
+              disabled={!xeroConnected?.connected || running}
+              className={`border rounded-lg p-4 text-left transition-colors ${
+                xeroConnected?.connected
+                  ? 'border-blue-200 bg-blue-50 hover:bg-blue-100 cursor-pointer'
+                  : 'border-slate-200 bg-slate-50 opacity-60 cursor-not-allowed'
+              }`}
+            >
+              <p className="text-xs font-semibold text-slate-700 mb-1">Pull from accounting system</p>
+              <p className="text-[10px] text-slate-500">
+                {xeroConnected?.connected
+                  ? `Xero connected${xeroConnected.orgName ? ` — ${xeroConnected.orgName}` : ''}. Pulls all manual journals for the period and runs the risk engine.`
+                  : 'No active Xero connection for this client.'}
+              </p>
+              {running && (
+                <p className="text-[10px] text-blue-600 mt-2 animate-pulse">Pulling journals…</p>
+              )}
+            </button>
+
+            <button
+              onClick={() => handleRequestFromClient()}
+              disabled={requesting}
+              className="border border-amber-200 bg-amber-50 hover:bg-amber-100 rounded-lg p-4 text-left transition-colors disabled:opacity-60"
+            >
+              <p className="text-xs font-semibold text-slate-700 mb-1">Request from client</p>
+              <p className="text-[10px] text-slate-500">
+                {requestSent
+                  ? `Request sent ${new Date(requestSent).toLocaleString('en-GB')} — waiting for the client to upload via the portal.`
+                  : 'Sends a portal request asking the client to upload a journal export.'}
+              </p>
+              {requesting && (
+                <p className="text-[10px] text-amber-700 mt-2 animate-pulse">Sending request…</p>
+              )}
+            </button>
+
+            <button
+              onClick={() => setPickedSource('csv')}
+              className="border border-slate-200 bg-white hover:bg-slate-50 rounded-lg p-4 text-left transition-colors"
+            >
+              <p className="text-xs font-semibold text-slate-700 mb-1">Upload CSV manually</p>
+              <p className="text-[10px] text-slate-500">Use this if you already have a journal extract from another accounting system or a prior client response.</p>
+            </button>
+          </div>
+        )}
+
+        {/* CSV upload path — surfaces the three drop zones */}
+        {pickedSource === 'csv' && (
+          <>
+            <div className="flex items-center justify-between">
+              <button onClick={() => setPickedSource(null)} className="text-[10px] text-blue-600 hover:underline">← Back to source picker</button>
+            </div>
+            <div className="grid grid-cols-3 gap-4">
+              <FileDropZone label="Journals CSV" file={journalsFile} onFile={setJournalsFile} accept=".csv" required
+                hint="journalId, postedAt, period, source, preparedByUserId, approvedByUserId, description, amount, debitAccountId, creditAccountId" />
+              <FileDropZone label="Users CSV" file={usersFile} onFile={setUsersFile} accept=".csv" required
+                hint="userId, displayName, roleTitle" />
+              <FileDropZone label="Accounts CSV" file={accountsFile} onFile={setAccountsFile} accept=".csv" required
+                hint="accountId, accountName, category, isJudgmental, materialityGroup" />
+            </div>
+            <div className="flex justify-center">
+              <button
+                onClick={handleRun}
+                disabled={!journalsFile || !usersFile || !accountsFile || running}
+                className="px-6 py-2 bg-blue-600 text-white text-sm font-medium rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {running ? 'Running Analysis...' : 'Run Analysis'}
+              </button>
+            </div>
+          </>
+        )}
 
         {error && <div className="text-xs text-red-600 bg-red-50 border border-red-200 rounded p-2">{error}</div>}
-
-        <div className="flex justify-center">
-          <button
-            onClick={handleRun}
-            disabled={!journalsFile || !usersFile || !accountsFile || running}
-            className="px-6 py-2 bg-blue-600 text-white text-sm font-medium rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
-          >
-            {running ? 'Running Analysis...' : 'Run Analysis'}
-          </button>
-        </div>
       </div>
     );
   }
@@ -252,6 +376,11 @@ export function JournalRiskPanel({ engagementId, periodStartDate, periodEndDate 
       {/* Population evidence */}
       {pop && (
         <div className="flex items-center gap-4 text-[10px] text-slate-500 bg-slate-50 rounded px-3 py-1.5">
+          {pop.sourceSystem && (
+            <span className="font-medium text-slate-600">
+              Source: {pop.sourceSystem === 'xero' ? 'Xero (live pull)' : pop.sourceSystem === 'csv' ? 'CSV upload' : pop.sourceSystem}
+            </span>
+          )}
           <span>Records: {pop.recordCount?.toLocaleString()}</span>
           {pop.hashTotals && <span>Debits: {fmtNum(pop.hashTotals.totalDebits)}</span>}
           {pop.hashTotals && <span>Credits: {fmtNum(pop.hashTotals.totalCredits)}</span>}
