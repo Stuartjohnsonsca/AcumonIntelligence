@@ -147,3 +147,18 @@ export function isUnusualAccountPair(
   if (count === undefined) return true;
   return count <= 1;
 }
+
+/**
+ * True if this journal has a mirror entry (same absolute amount, opposite
+ * direction across the same account pair) within the offsetting window.
+ *
+ * `offsettingIndex` is precomputed in EvaluationContext: keyed by journalId
+ * → matching journalId. A non-null match means the journal is part of an
+ * offsetting pair.
+ */
+export function isOffsettingEntry(
+  journalId: string,
+  offsettingIndex: Map<string, string>,
+): boolean {
+  return offsettingIndex.has(journalId);
+}

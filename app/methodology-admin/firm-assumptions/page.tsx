@@ -48,6 +48,13 @@ export default async function FirmAssumptionsPage() {
   // by AuditType. Default zero per type means "no minimum set".
   const minAvgFeePerHour: Record<string, number> = (tablesMap.min_avg_fee_per_hour?.byAuditType as Record<string, number>) || {};
 
+  // Firm-wide MOC suspicious keyword list — feeds the Management Override
+  // journal risk engine. Null/empty means the engine falls back to its
+  // built-in default list at run time.
+  const mocSuspiciousKeywords: string[] = Array.isArray(tablesMap.moc_suspicious_keywords?.keywords)
+    ? (tablesMap.moc_suspicious_keywords.keywords as string[])
+    : [];
+
   // Audit-type catalogue — admin-configurable list, with the original
   // five built-in types as the default seed. Drives the Audit Types
   // editor + the per-type Min Fee per Hour grid.
@@ -80,6 +87,7 @@ export default async function FirmAssumptionsPage() {
         initialMinAvgFeePerHour={minAvgFeePerHour}
         initialAuditTypes={auditTypes}
         initialCarryForward={(tablesMap.carryForward?.matrix as Record<string, Record<string, boolean>>) || null}
+        initialMocSuspiciousKeywords={mocSuspiciousKeywords}
       />
     </div>
   );

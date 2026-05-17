@@ -120,4 +120,12 @@ export const DEFAULT_RULES: RiskRule[] = [
     condition: { type: 'derived', field: 'reversalJournalId', derivedFn: 'isQuickReversal' },
     tags: ['quick_reversal'],
   },
+  {
+    ruleId: 'B02',
+    name: 'Offsetting entry (mirrored debit / credit)',
+    severity: 'high',
+    weight: 14,
+    condition: { type: 'derived', field: 'amount', derivedFn: 'isOffsettingEntry' },
+    tags: ['offsetting_entry'],
+  },
 ];

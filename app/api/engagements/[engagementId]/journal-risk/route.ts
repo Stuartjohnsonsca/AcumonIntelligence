@@ -19,6 +19,26 @@ async function verifyAccess(engagementId: string, firmId: string | undefined, is
   return e;
 }
 
+/**
+ * Load the firm's MOC suspicious-keyword overrides. Returns null when the
+ * firm hasn't customised the list — the engine then falls back to its
+ * built-in default.
+ */
+async function loadFirmKeywords(firmId: string): Promise<string[] | null> {
+  try {
+    const row = await prisma.methodologyRiskTable.findUnique({
+      where: { firmId_tableType: { firmId, tableType: 'moc_suspicious_keywords' } },
+    });
+    const data = row?.data as { keywords?: unknown } | null | undefined;
+    const list = data?.keywords;
+    if (!Array.isArray(list)) return null;
+    const cleaned = list.filter((k): k is string => typeof k === 'string' && k.trim().length > 0);
+    return cleaned.length > 0 ? cleaned : null;
+  } catch {
+    return null;
+  }
+}
+
 // GET — latest run summary or specific run
 export async function GET(req: Request, { params }: { params: Promise<{ engagementId: string }> }) {
   const session = await auth();
@@ -35,7 +55,12 @@ export async function GET(req: Request, { params }: { params: Promise<{ engageme
     const period = await prisma.clientPeriod.findUnique({ where: { id: engagement.periodId } });
     const periodStart = period?.startDate ? new Date(period.startDate).toISOString().slice(0, 10) : new Date().getFullYear() + '-01-01';
     const periodEnd = period?.endDate ? new Date(period.endDate).toISOString().slice(0, 10) : new Date().getFullYear() + '-12-31';
-    return NextResponse.json({ config: buildDefaultConfig({ periodStartDate: periodStart, periodEndDate: periodEnd }) });
+    const firmKeywords = engagement.firmId ? await loadFirmKeywords(engagement.firmId) : null;
+    return NextResponse.json({ config: buildDefaultConfig({
+      periodStartDate: periodStart,
+      periodEndDate: periodEnd,
+      suspiciousKeywords: firmKeywords ?? undefined,
+    }) });
   }
 
   const run = runId
@@ -105,7 +130,12 @@ export async function POST(req: Request, { params }: { params: Promise<{ engagem
       const period = await prisma.clientPeriod.findUnique({ where: { id: engagement.periodId } });
       const periodStart = period?.startDate ? new Date(period.startDate).toISOString().slice(0, 10) : new Date().getFullYear() + '-01-01';
       const periodEnd = period?.endDate ? new Date(period.endDate).toISOString().slice(0, 10) : new Date().getFullYear() + '-12-31';
-      let config = buildDefaultConfig({ periodStartDate: periodStart, periodEndDate: periodEnd });
+      const firmKeywords = engagement.firmId ? await loadFirmKeywords(engagement.firmId) : null;
+      let config = buildDefaultConfig({
+        periodStartDate: periodStart,
+        periodEndDate: periodEnd,
+        suspiciousKeywords: firmKeywords ?? undefined,
+      });
 
       // Apply overrides
       if (configOverrides) {

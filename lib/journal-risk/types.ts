@@ -51,6 +51,9 @@ export interface Config {
     mandatorySelectMinScore: number;
     mandatorySelectMinCriticalTags: number;
   };
+  /** Window (in days) within which two mirrored entries on the same account
+   *  pair are treated as an offsetting pair for rule B02. */
+  offsettingWindowDays?: number;
   selection: {
     layer2CoverageTargets: Record<string, number>;
     layer3UnpredictableCount: number;
@@ -190,4 +193,8 @@ export interface EvaluationContext {
   pairFrequency: Map<string, number>;
   userPostingFrequency: Map<string, number>;
   userPostingPercentiles: Map<string, number>;
+  /** journalId → matching journalId. Present only for journals identified as
+   *  offsetting pairs (same absolute amount, mirrored debit/credit accounts,
+   *  posted within `offsettingWindowDays`). */
+  offsettingIndex: Map<string, string>;
 }

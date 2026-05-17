@@ -56,6 +56,9 @@ interface Props {
   /** Firm-wide Tax on Profits rates — Label, Jurisdiction, From, To, Rate %.
    *  Consumed by the Corporation Tax / Tax on Profits engagement tool. */
   initialTaxOnProfits?: { rates?: FirmTaxOnProfitsRate[] } | null;
+  /** Firm-wide MOC (Management Override) suspicious keyword list. Empty
+   *  array means the journal risk engine uses its built-in default. */
+  initialMocSuspiciousKeywords?: string[];
 }
 
 // The catalogue of items the carry-forward matrix offers. Each row in
@@ -163,6 +166,7 @@ export function FirmAssumptionsClient({
   initialCarryForward,
   initialVatConfig,
   initialTaxOnProfits,
+  initialMocSuspiciousKeywords,
 }: Props) {
   const [inherentRisk, setInherentRisk] = useState<InherentRiskTable>(() => {
     const t = initialInherentRisk;
@@ -184,6 +188,14 @@ export function FirmAssumptionsClient({
     Array.isArray(initialTestCategories) ? initialTestCategories : ['Significant Risk', 'Area of Focus', 'Normal', 'Analytical Review', 'Mandatory']
   );
   const [newCategory, setNewCategory] = useState('');
+
+  // Management Override suspicious-keyword list. An empty array is meaningful
+  // — it tells the engine "use the built-in default", whereas a non-empty
+  // array replaces the default for this firm.
+  const [mocKeywords, setMocKeywords] = useState<string[]>(
+    Array.isArray(initialMocSuspiciousKeywords) ? initialMocSuspiciousKeywords : []
+  );
+  const [newMocKeyword, setNewMocKeyword] = useState('');
   const [arConfidenceFactor, setArConfidenceFactor] = useState<number>(
     initialArConfidenceFactor ?? 1.0
   );
@@ -410,6 +422,7 @@ export function FirmAssumptionsClient({
         ['assertions', assertions],
         ['specialistRoles', { roles: specialistRoles }],
         ['testCategories', { categories: testCategories }],
+        ['moc_suspicious_keywords', { keywords: mocKeywords.map(k => k.trim()).filter(k => k.length > 0) }],
         ['arConfidenceFactor', { confidenceFactor: arConfidenceFactor }],
         ['fxProvider', { provider: fxProvider }],
         ['riskClassification', riskClassification ?? {}],
@@ -890,6 +903,81 @@ export function FirmAssumptionsClient({
               >
                 <Plus className="h-3.5 w-3.5" /> Add
               </button>
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* Management Override — Suspicious Keywords */}
+      <div className="border rounded-lg">
+        <button
+          onClick={() => toggleSection('mocKeywords')}
+          className="w-full flex items-center justify-between px-4 py-3 bg-slate-50 rounded-t-lg"
+        >
+          <h2 className="text-lg font-semibold text-slate-900">Management Override — Suspicious Keywords</h2>
+          {expandedSections.mocKeywords ? <ChevronUp className="h-5 w-5" /> : <ChevronDown className="h-5 w-5" />}
+        </button>
+        {expandedSections.mocKeywords && (
+          <div className="p-4">
+            <p className="text-sm text-slate-500 mb-3">
+              Words and phrases that flag a journal description as potentially indicative of management override (ISA 240).
+              Leave this list empty to use the engine's built-in default keywords. A non-empty list <strong>replaces</strong> the default for this firm.
+              Matching is case-insensitive and treats each entry as a substring (so &quot;adjust&quot; will match &quot;adjustment&quot; and &quot;adjusted&quot;).
+            </p>
+            <div className="flex flex-wrap gap-2 mb-3">
+              {mocKeywords.map((kw, idx) => (
+                <span key={idx} className="inline-flex items-center gap-1.5 px-2.5 py-1 bg-red-50 text-red-700 text-xs rounded-full border border-red-200">
+                  {kw}
+                  <button
+                    onClick={() => { setMocKeywords(prev => prev.filter((_, i) => i !== idx)); setSaved(false); }}
+                    className="text-red-400 hover:text-red-600"
+                  >
+                    <X className="h-3 w-3" />
+                  </button>
+                </span>
+              ))}
+              {mocKeywords.length === 0 && (
+                <p className="text-sm text-slate-400 italic">No firm-specific keywords — engine default in use.</p>
+              )}
+            </div>
+            <div className="flex items-center gap-2">
+              <input
+                type="text"
+                value={newMocKeyword}
+                onChange={e => setNewMocKeyword(e.target.value)}
+                onKeyDown={e => {
+                  if (e.key === 'Enter' && newMocKeyword.trim()) {
+                    const kw = newMocKeyword.trim();
+                    setMocKeywords(prev => prev.includes(kw.toLowerCase()) ? prev : [...prev, kw]);
+                    setNewMocKeyword('');
+                    setSaved(false);
+                  }
+                }}
+                placeholder='Add keyword (e.g. "off books", "as instructed")'
+                className="flex-1 max-w-sm px-3 py-1.5 text-sm border border-slate-200 rounded focus:outline-none focus:ring-1 focus:ring-blue-400"
+              />
+              <button
+                onClick={() => {
+                  if (newMocKeyword.trim()) {
+                    const kw = newMocKeyword.trim();
+                    setMocKeywords(prev => prev.some(x => x.toLowerCase() === kw.toLowerCase()) ? prev : [...prev, kw]);
+                    setNewMocKeyword('');
+                    setSaved(false);
+                  }
+                }}
+                className="inline-flex items-center gap-1 px-3 py-1.5 text-xs bg-blue-600 text-white rounded hover:bg-blue-700"
+              >
+                <Plus className="h-3.5 w-3.5" /> Add
+              </button>
+              {mocKeywords.length > 0 && (
+                <button
+                  onClick={() => { setMocKeywords([]); setSaved(false); }}
+                  className="inline-flex items-center gap-1 px-3 py-1.5 text-xs bg-slate-100 text-slate-600 rounded hover:bg-slate-200"
+                  title="Revert to engine default"
+                >
+                  Use default
+                </button>
+              )}
             </div>
           </div>
         )}

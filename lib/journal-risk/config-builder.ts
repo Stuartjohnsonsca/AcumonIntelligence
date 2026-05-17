@@ -5,11 +5,13 @@ const ENGINE_VERSION = '1.0.0';
 
 /**
  * Build a default Config from engagement period dates.
- * Users can override individual fields before running.
+ * Callers can pass `suspiciousKeywords` to override the global default with a
+ * firm-wide list (admin: Firm Wide Assumptions → MOC keywords).
  */
 export function buildDefaultConfig(opts: {
   periodStartDate: string;
   periodEndDate: string;
+  suspiciousKeywords?: string[];
 }): Config {
   // Post-close cutoff: 90 days after period end (standard audit window)
   const peDate = new Date(opts.periodEndDate);
@@ -25,12 +27,15 @@ export function buildDefaultConfig(opts: {
     postCloseCutoffDate: postCloseCutoff,
     periodEndWindowDays: 5,
     seniorRoles: ['Director', 'Finance Director', 'CFO', 'CEO', 'Managing Director', 'Partner', 'Owner', 'Chairman'],
-    suspiciousKeywords: DEFAULT_SUSPICIOUS_KEYWORDS,
+    suspiciousKeywords: Array.isArray(opts.suspiciousKeywords) && opts.suspiciousKeywords.length > 0
+      ? opts.suspiciousKeywords
+      : DEFAULT_SUSPICIOUS_KEYWORDS,
     thresholds: {
       highRiskMinScore: 70,
       mandatorySelectMinScore: 80,
       mandatorySelectMinCriticalTags: 1,
     },
+    offsettingWindowDays: 7,
     selection: {
       layer2CoverageTargets: {
         timing_high_risk: 2,
@@ -50,7 +55,7 @@ export function buildDefaultConfig(opts: {
       C01: 14, C02: 12, C03: 8,
       D01: 10, D02: 14,
       A01: 15,
-      B01: 12,
+      B01: 12, B02: 14,
     },
   };
 }

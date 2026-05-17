@@ -15,6 +15,7 @@ import {
   isAtypicalPoster,
   isSeldomUsedAccount,
   isUnusualAccountPair,
+  isOffsettingEntry,
 } from '../features/derived';
 
 // ─── Helpers ───────────────────────────────────────────────────────────────
@@ -194,14 +195,30 @@ export function evaluateRule(
       const creditJudgmental = creditAcc?.isJudgmental === true;
       hit = debitJudgmental || creditJudgmental;
       if (hit) {
+        // Best-effort categorisation so the explanation distinguishes
+        // provisions / impairment / accruals — drives where it lands in
+        // the planning memo and which estimate procedure picks it up.
+        const labelFor = (acc: typeof debitAcc): string => {
+          if (!acc) return '';
+          const haystack = `${acc.accountName} ${acc.category || ''} ${acc.materialityGroup || ''}`.toLowerCase();
+          if (/(impairment|writedown|write\s*down)/.test(haystack)) return 'impairment';
+          if (/provision/.test(haystack)) return 'provision';
+          if (/accrual/.test(haystack)) return 'accrual';
+          if (/(reserve|deferred|allowance)/.test(haystack)) return 'estimate';
+          return 'estimate';
+        };
         const parts: string[] = [];
+        const cats = new Set<string>();
         if (debitJudgmental && debitAcc) {
           parts.push(`${journal.debitAccountId} (${debitAcc.accountName})`);
+          cats.add(labelFor(debitAcc));
         }
         if (creditJudgmental && creditAcc) {
           parts.push(`${journal.creditAccountId} (${creditAcc.accountName})`);
+          cats.add(labelFor(creditAcc));
         }
-        explanation = `Posts to judgmental/estimate account${parts.length > 1 ? 's' : ''}: ${parts.join(', ')}.`;
+        const catLabel = Array.from(cats).join(' / ');
+        explanation = `Posts to ${catLabel} account${parts.length > 1 ? 's' : ''}: ${parts.join(', ')}.`;
       }
       break;
     }
@@ -211,6 +228,14 @@ export function evaluateRule(
       hit = journal.reversalJournalId !== null && journal.reversalJournalId !== '';
       if (hit) {
         explanation = `Journal is linked to reversal ${journal.reversalJournalId}.`;
+      }
+      break;
+    }
+    case 'isOffsettingEntry': {
+      hit = isOffsettingEntry(journal.journalId, ctx.offsettingIndex);
+      if (hit) {
+        const match = ctx.offsettingIndex.get(journal.journalId)!;
+        explanation = `Mirrored by journal ${match} (same absolute amount, opposite direction across the same account pair, within ${ctx.config.offsettingWindowDays ?? 7} days).`;
       }
       break;
     }
