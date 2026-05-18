@@ -72,7 +72,7 @@ const ROLE_AUTHORITY: Record<string, string[]> = {
   Partner: ['preparer', 'reviewer', 'ri'], Admin: ['preparer', 'reviewer', 'ri'],
 };
 
-function StepSignOffDots({ data, nodeId }: { data: any; nodeId: string }) {
+function StepSignOffDots({ data, nodeId, expanded = false }: { data: any; nodeId: string; expanded?: boolean }) {
   const { setNodes } = useReactFlow();
   const readOnly = data._readOnly as boolean;
   const userRole = (data._userRole as string) || '';
@@ -107,41 +107,55 @@ function StepSignOffDots({ data, nodeId }: { data: any; nodeId: string }) {
     setNodes(nds => nds.map(n => n.id === nodeId ? { ...n, data: { ...n.data, stepSignOffs: updated } } : n));
   }
 
+  // Expanded variant — when the node is selected the user wants to
+  // tap or hover-inspect these dots, so we double the hit-target
+  // and label each with P / R / RI so the role is unmistakable
+  // without having to read the tooltip.
+  const sizeCls = expanded ? 'w-4 h-4' : 'w-2.5 h-2.5';
+  const gapCls = expanded ? 'gap-1.5' : 'gap-0.5';
   return (
-    <div className="flex items-center gap-0.5 mt-1">
+    <div className={`flex items-center ${gapCls} mt-1`}>
       {['preparer', 'reviewer', 'ri'].map(role => {
         const canClick = allowed.includes(role);
         const so = signOffs[role];
+        const initials = role === 'ri' ? 'RI' : role === 'reviewer' ? 'R' : 'P';
         return (
-          <button key={role} onClick={(e) => { e.stopPropagation(); cycle(role); }}
-            disabled={!canClick}
-            title={`${role === 'ri' ? 'RI' : role.charAt(0).toUpperCase() + role.slice(1)}${so ? ` — ${so.name}, ${new Date(so.at).toLocaleDateString('en-GB')}` : ''}${!canClick ? ' (no authority)' : ''}`}
-            className={`w-2.5 h-2.5 rounded-full ${SIGNOFF_COLORS[so?.status || 'blank']} ${canClick ? 'hover:ring-2 hover:ring-offset-1 hover:ring-slate-400 cursor-pointer' : 'cursor-not-allowed opacity-60'} transition-all`} />
+          <div key={role} className="inline-flex items-center gap-1">
+            <button onClick={(e) => { e.stopPropagation(); cycle(role); }}
+              disabled={!canClick}
+              title={`${role === 'ri' ? 'RI' : role.charAt(0).toUpperCase() + role.slice(1)}${so ? ` — ${so.name}, ${new Date(so.at).toLocaleDateString('en-GB')}` : ''}${!canClick ? ' (no authority)' : ''}`}
+              className={`${sizeCls} rounded-full ${SIGNOFF_COLORS[so?.status || 'blank']} ${canClick ? 'hover:ring-2 hover:ring-offset-1 hover:ring-slate-400 cursor-pointer' : 'cursor-not-allowed opacity-60'} transition-all`} />
+            {expanded && <span className="text-[9px] text-slate-500 font-semibold">{initials}</span>}
+          </div>
         );
       })}
     </div>
   );
 }
 
-function MetadataBadges({ data }: { data: any }) {
+function MetadataBadges({ data, expanded = false }: { data: any; expanded?: boolean }) {
   const src = typeof data.sourceDoc === 'string' ? data.sourceDoc : '';
   const out = typeof data.outputDoc === 'string' ? data.outputDoc : '';
   const resp = typeof data.responsible === 'string' ? data.responsible : '';
   const atts = Array.isArray(data.attachments) ? data.attachments : [];
   if (!src && !out && !resp && atts.length === 0) return null;
+  // Expanded variant uses a readable badge size with full content
+  // visible; compact stays at the 7px micro-badge for the small node.
+  const txt = expanded ? 'text-[10px] px-1.5 py-0.5' : 'text-[7px] px-1 py-0';
+  const ico = expanded ? 'h-3 w-3' : 'h-2 w-2';
   return (
-    <div className="flex flex-wrap items-center gap-1 mt-1">
-      {src ? <span className="text-[7px] px-1 py-0 bg-blue-100 text-blue-600 rounded inline-flex items-center gap-0.5"><ArrowDownToLine className="h-2 w-2" />{src}</span> : null}
-      {out ? <span className="text-[7px] px-1 py-0 bg-green-100 text-green-600 rounded inline-flex items-center gap-0.5"><ArrowUpFromLine className="h-2 w-2" />{out}</span> : null}
-      {resp ? <span className="text-[7px] px-1 py-0 bg-purple-100 text-purple-600 rounded inline-flex items-center gap-0.5"><User className="h-2 w-2" />{resp}</span> : null}
-      {atts.length > 0 ? <span className="text-[7px] px-1 py-0 bg-amber-100 text-amber-600 rounded inline-flex items-center gap-0.5"><Paperclip className="h-2 w-2" />{atts.length}</span> : null}
+    <div className={`flex flex-wrap items-center ${expanded ? 'gap-1.5' : 'gap-1'} mt-1`}>
+      {src ? <span className={`${txt} bg-blue-100 text-blue-600 rounded inline-flex items-center gap-0.5`}><ArrowDownToLine className={ico} />{src}</span> : null}
+      {out ? <span className={`${txt} bg-green-100 text-green-600 rounded inline-flex items-center gap-0.5`}><ArrowUpFromLine className={ico} />{out}</span> : null}
+      {resp ? <span className={`${txt} bg-purple-100 text-purple-600 rounded inline-flex items-center gap-0.5`}><User className={ico} />{resp}</span> : null}
+      {atts.length > 0 ? <span className={`${txt} bg-amber-100 text-amber-600 rounded inline-flex items-center gap-0.5`}><Paperclip className={ico} />{atts.length}</span> : null}
     </div>
   );
 }
 
 // ─── Attachment buttons (capture + upload) + hover preview ───
 
-function StepAttachmentButtons({ data, nodeId }: { data: any; nodeId: string }) {
+function StepAttachmentButtons({ data, nodeId, expanded = false }: { data: any; nodeId: string; expanded?: boolean }) {
   const { setNodes } = useReactFlow();
   const readOnly = data._readOnly as boolean;
   const engagementId = (data._engagementId as string) || '';
@@ -170,15 +184,23 @@ function StepAttachmentButtons({ data, nodeId }: { data: any; nodeId: string }) 
 
   if (readOnly && atts.length === 0) return null;
 
+  // Expanded variant — Snip / File / attachment-count buttons grow
+  // to a proper tap target so the auditor doesn't have to zoom into
+  // the canvas to update evidence on the selected node.
+  const btnCls = expanded
+    ? 'px-3 h-7 text-[11px] gap-1'
+    : 'px-1.5 h-5 text-[9px] gap-0.5';
+  const iconCls = expanded ? 'h-3.5 w-3.5' : 'h-3 w-3';
+
   return (
-    <div className="flex items-center gap-0.5 mt-1 relative">
+    <div className={`flex items-center ${expanded ? 'gap-1.5' : 'gap-0.5'} mt-1 relative`}>
       {!readOnly && (
         <>
-          <button onClick={(e) => { e.stopPropagation(); setShowCapture(true); }} title="Add screenshot — paste, upload an image, or capture this tab" className="px-1.5 h-5 rounded bg-blue-50 text-blue-600 hover:bg-blue-100 inline-flex items-center justify-center gap-0.5 text-[9px] font-medium">
-            <Camera className="h-3 w-3" /> Snip
+          <button onClick={(e) => { e.stopPropagation(); setShowCapture(true); }} title="Add screenshot — paste, upload an image, or capture this tab" className={`rounded bg-blue-50 text-blue-600 hover:bg-blue-100 inline-flex items-center justify-center font-medium ${btnCls}`}>
+            <Camera className={iconCls} /> Snip
           </button>
-          <button onClick={(e) => { e.stopPropagation(); fileInputRef.current?.click(); }} title="Upload any file (PDF, doc, image, zip)" className="px-1.5 h-5 rounded bg-slate-100 text-slate-600 hover:bg-slate-200 inline-flex items-center justify-center gap-0.5 text-[9px] font-medium">
-            <Upload className="h-3 w-3" /> File
+          <button onClick={(e) => { e.stopPropagation(); fileInputRef.current?.click(); }} title="Upload any file (PDF, doc, image, zip)" className={`rounded bg-slate-100 text-slate-600 hover:bg-slate-200 inline-flex items-center justify-center font-medium ${btnCls}`}>
+            <Upload className={iconCls} /> File
           </button>
           <input ref={fileInputRef} type="file" className="hidden" accept="image/*,.pdf,.doc,.docx,.zip" onChange={handleFileUpload} />
         </>
@@ -379,18 +401,35 @@ function WtActionNode({ id, data, selected }: NodeProps) {
   }, [id, setNodes]);
 
   const direction = (data._direction as FlowDirection) || 'horizontal';
+  // Selected = "I'm working on this step" — expand the box, bump up
+  // text size, surface an explicit Edit button, and let the helper
+  // components render their larger variants so the buttons /
+  // sign-off dots become proper tap targets.
+  const sizeCls = selected
+    ? 'min-w-[300px] max-w-[460px] px-5 py-3 text-sm'
+    : 'min-w-[180px] max-w-[280px] px-4 py-2 text-xs';
   return (
-    <div className={`relative px-4 py-2 rounded-lg bg-blue-50 border-2 text-blue-800 text-xs text-center min-w-[180px] max-w-[280px] group ${selected ? 'border-blue-500 shadow-md' : 'border-blue-300'}`}>
+    <div className={`relative rounded-lg bg-blue-50 border-2 text-blue-800 text-center group transition-all ${sizeCls} ${selected ? 'border-blue-500 shadow-lg' : 'border-blue-300'}`}>
       <Handle type="target" position={direction === 'horizontal' ? Position.Left : Position.Top} className="!bg-blue-400 !w-2.5 !h-2.5" />
-      <div onDoubleClick={() => !readOnly && setEditing(true)} className="cursor-text">
+      <div onDoubleClick={() => !readOnly && setEditing(true)} className={`cursor-text ${selected ? 'font-medium' : ''}`}>
         {String(data.label || '')}
       </div>
-      <MetadataBadges data={data} />
-      <div className="flex items-center justify-between">
-        <StepSignOffDots data={data} nodeId={id} />
-        <StepAttachmentButtons data={data} nodeId={id} />
-        {data.docLocation ? <span className="text-[7px] text-slate-400 inline-flex items-center gap-0.5"><MapPin className="h-2 w-2" />{String(data.docLocation)}</span> : null}
+      <MetadataBadges data={data} expanded={selected} />
+      <div className={`flex items-center justify-between ${selected ? 'mt-2' : ''}`}>
+        <StepSignOffDots data={data} nodeId={id} expanded={selected} />
+        <StepAttachmentButtons data={data} nodeId={id} expanded={selected} />
+        {data.docLocation ? <span className={`text-slate-400 inline-flex items-center gap-0.5 ${selected ? 'text-[10px]' : 'text-[7px]'}`}><MapPin className={selected ? 'h-3 w-3' : 'h-2 w-2'} />{String(data.docLocation)}</span> : null}
       </div>
+      {/* Explicit Edit button — visible only when the node is selected
+          AND the canvas is editable. Saves the user discovering the
+          double-click affordance. */}
+      {selected && !readOnly && (
+        <div className="mt-2 pt-2 border-t border-blue-200">
+          <button onClick={(e) => { e.stopPropagation(); setEditing(true); }} className="inline-flex items-center gap-1 px-3 py-1 rounded-md bg-blue-600 text-white text-[11px] font-medium hover:bg-blue-700">
+            Edit step
+          </button>
+        </div>
+      )}
       {!readOnly && (
         <button onClick={onDelete} className="absolute -top-2 -right-2 w-4 h-4 bg-red-500 text-white rounded-full text-[8px] hidden group-hover:flex items-center justify-center hover:bg-red-600">
           <X className="h-2.5 w-2.5" />
@@ -412,26 +451,34 @@ function WtDecisionNode({ id, data, selected }: NodeProps) {
   }, [id, setNodes]);
 
   const direction = (data._direction as FlowDirection) || 'horizontal';
+  // Same expand-on-select treatment as Action — decisions hold the
+  // most metadata (label + condition + approval chain) so the
+  // expanded box gets noticeably wider to keep the chain readable
+  // without truncation.
+  const sizeCls = selected
+    ? 'min-w-[320px] max-w-[480px] px-5 py-3 text-sm'
+    : 'min-w-[200px] max-w-[300px] px-4 py-2 text-xs';
   return (
-    <div className={`relative px-4 py-2 rounded-lg bg-amber-50 border-dashed text-amber-800 text-xs text-center min-w-[200px] max-w-[300px] group ${data.isSignificantControl ? 'border-[3px] border-red-600 shadow-red-100 shadow-md' : `border-2 ${selected ? 'border-amber-500 shadow-md' : 'border-amber-400'}`}`}>
+    <div className={`relative rounded-lg bg-amber-50 border-dashed text-amber-800 text-center group transition-all ${sizeCls} ${data.isSignificantControl ? 'border-[3px] border-red-600 shadow-red-100 shadow-md' : `border-2 ${selected ? 'border-amber-500 shadow-lg' : 'border-amber-400'}`}`}>
       <Handle type="target" position={direction === 'horizontal' ? Position.Left : Position.Top} className="!bg-amber-500 !w-2.5 !h-2.5" />
       <div className="flex items-center justify-center gap-1">
-        <span className="text-[8px] text-amber-500 font-bold">DECISION</span>
-        {data.isSignificantControl ? <span className="text-[7px] px-1 bg-red-100 text-red-700 rounded font-bold">SIGNIFICANT CONTROL</span> : null}
+        <span className={`font-bold ${selected ? 'text-[10px]' : 'text-[8px]'} text-amber-500`}>DECISION</span>
+        {data.isSignificantControl ? <span className={`bg-red-100 text-red-700 rounded font-bold ${selected ? 'text-[9px] px-1.5 py-0.5' : 'text-[7px] px-1'}`}>SIGNIFICANT CONTROL</span> : null}
       </div>
-      <div onDoubleClick={() => !readOnly && setEditing(true)} className="cursor-text">
+      <div onDoubleClick={() => !readOnly && setEditing(true)} className={`cursor-text ${selected ? 'font-medium' : ''}`}>
         {String(data.label || '')}
-        {data.condition ? <div className="text-[9px] text-amber-600 mt-0.5 italic">{String(data.condition)}</div> : null}
+        {data.condition ? <div className={`italic mt-0.5 text-amber-600 ${selected ? 'text-xs' : 'text-[9px]'}`}>{String(data.condition)}</div> : null}
       </div>
-      {/* Approval chain — visual mini tree */}
+      {/* Approval chain — visual mini tree (badges scale up when the
+          node is selected so the role + threshold are readable). */}
       {Array.isArray(data.approvalChain) && data.approvalChain.length > 0 && (
         <div className="mt-1.5 border-t border-amber-200 pt-1.5">
-          <span className="text-[7px] text-amber-500 font-bold block mb-0.5">APPROVAL CHAIN</span>
+          <span className={`text-amber-500 font-bold block mb-0.5 ${selected ? 'text-[10px]' : 'text-[7px]'}`}>APPROVAL CHAIN</span>
           <div className="flex flex-col items-center gap-0.5">
             {(data.approvalChain as ApprovalLevel[]).map((lvl, i) => (
               <div key={i} className="flex items-center gap-1">
-                {i > 0 && <span className="text-[8px] text-amber-400">↓</span>}
-                <span className="text-[8px] px-1.5 py-0.5 bg-amber-100 text-amber-700 rounded-full font-medium">
+                {i > 0 && <span className={`text-amber-400 ${selected ? 'text-[10px]' : 'text-[8px]'}`}>↓</span>}
+                <span className={`bg-amber-100 text-amber-700 rounded-full font-medium ${selected ? 'text-[10px] px-2 py-0.5' : 'text-[8px] px-1.5 py-0.5'}`}>
                   L{lvl.level}: {lvl.role}{lvl.threshold ? ` (${lvl.threshold})` : ''}
                 </span>
               </div>
@@ -439,12 +486,22 @@ function WtDecisionNode({ id, data, selected }: NodeProps) {
           </div>
         </div>
       )}
-      <MetadataBadges data={data} />
-      <div className="flex items-center justify-between">
-        <StepSignOffDots data={data} nodeId={id} />
-        <StepAttachmentButtons data={data} nodeId={id} />
-        {data.docLocation ? <span className="text-[7px] text-slate-400 inline-flex items-center gap-0.5"><MapPin className="h-2 w-2" />{String(data.docLocation)}</span> : null}
+      <MetadataBadges data={data} expanded={selected} />
+      <div className={`flex items-center justify-between ${selected ? 'mt-2' : ''}`}>
+        <StepSignOffDots data={data} nodeId={id} expanded={selected} />
+        <StepAttachmentButtons data={data} nodeId={id} expanded={selected} />
+        {data.docLocation ? <span className={`text-slate-400 inline-flex items-center gap-0.5 ${selected ? 'text-[10px]' : 'text-[7px]'}`}><MapPin className={selected ? 'h-3 w-3' : 'h-2 w-2'} />{String(data.docLocation)}</span> : null}
       </div>
+      {/* Explicit Edit button — surface when selected so the user
+          can edit the decision condition / approval chain without
+          discovering double-click. */}
+      {selected && !readOnly && (
+        <div className="mt-2 pt-2 border-t border-amber-200">
+          <button onClick={(e) => { e.stopPropagation(); setEditing(true); }} className="inline-flex items-center gap-1 px-3 py-1 rounded-md bg-amber-600 text-white text-[11px] font-medium hover:bg-amber-700">
+            Edit decision
+          </button>
+        </div>
+      )}
       {!readOnly && (
         <button onClick={onDelete} className="absolute -top-2 -right-2 w-4 h-4 bg-red-500 text-white rounded-full text-[8px] hidden group-hover:flex items-center justify-center hover:bg-red-600">
           <X className="h-2.5 w-2.5" />
