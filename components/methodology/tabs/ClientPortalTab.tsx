@@ -579,7 +579,7 @@ function ManageView({ data }: { data: PreviewData }) {
             <div className="grid grid-cols-[minmax(200px,3fr)_1fr_1fr_1fr] gap-3 px-5 py-3 bg-slate-50 border-b border-slate-200 text-xs text-slate-600">
               <div className="font-medium">FS Line / TB code</div>
               {[1, 2, 3].map(col => (
-                <div key={col} className="text-center">
+                <div key={col} className="text-left pl-2">
                   <div className="font-medium text-slate-700">Column {col}</div>
                   <div className="text-[11px]">{(data.escalationDays as any)[`days${col}`]} day{(data.escalationDays as any)[`days${col}`] === 1 ? '' : 's'} to escalate</div>
                 </div>

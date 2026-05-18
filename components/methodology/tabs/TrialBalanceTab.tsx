@@ -1613,6 +1613,31 @@ export function TrialBalanceTab({ engagementId, isGroupAudit = false, showCatego
       })()}
 
 
+      {/* Blank-description warning — rows with an account code but no
+          description can't be allocated to a Portal Principal staff
+          member, so the Portal Work Allocation grid silently drops
+          them. Flag here so the audit team fixes the import where
+          they have context, rather than the client being told. */}
+      {(() => {
+        const blanks = rows.filter(r => r.accountCode && !r.description?.trim());
+        if (blanks.length === 0) return null;
+        return (
+          <div className="bg-amber-50 border border-amber-200 rounded-md px-3 py-2 mb-2 text-xs text-amber-800 flex items-start gap-2">
+            <span className="font-medium flex-shrink-0">⚠</span>
+            <div className="flex-1">
+              <strong>{blanks.length}</strong> TB row{blanks.length === 1 ? '' : 's'} with an account code but no description.
+              These rows are excluded from the Portal Work Allocation grid because the Portal Principal can&apos;t reasonably allocate staff without a description.
+              Fix the description{blanks.length === 1 ? '' : 's'} below — affected codes are highlighted.
+              {blanks.length <= 10 && (
+                <span className="block text-[11px] mt-0.5 text-amber-700">
+                  Codes: {blanks.slice(0, 10).map(b => b.accountCode).join(', ')}
+                </span>
+              )}
+            </div>
+          </div>
+        );
+      })()}
+
       {/* Main data table */}
       <div className="border border-slate-200 rounded-lg overflow-auto flex-1" style={{ minHeight: '300px', maxHeight: 'calc(100vh - 360px)' }}>
         <table className="text-xs" style={{ tableLayout: 'fixed', width: 'max-content', minWidth: '100%' }}>
@@ -1809,15 +1834,23 @@ export function TrialBalanceTab({ engagementId, isGroupAudit = false, showCatego
                 <td className="px-2 py-0.5">
                   {/* Description can be long and is the most important
                       field to see in full. title= shows the whole text
-                      on hover when the narrow cell truncates it. */}
+                      on hover when the narrow cell truncates it.
+                      Rows where a real account code is filled but the
+                      description is blank get a red focus ring — this
+                      is the place the Portal Principal's Work
+                      Allocation grid needs fixed before it can include
+                      the row, so we flag it on the audit team's side
+                      rather than the client's. */}
                   <input
                     type="text"
                     value={row.description}
                     onChange={e => updateRow(i, 'description', e.target.value)}
                     onPaste={e => handlePaste(e, i, 1)}
-                    className={txtCls}
+                    className={`${txtCls} ${row.accountCode && !row.description?.trim() ? 'ring-1 ring-red-300 bg-red-50/40' : ''}`}
                     placeholder="Description"
-                    title={row.description || undefined}
+                    title={row.accountCode && !row.description?.trim()
+                      ? 'Blank description — Portal Work Allocation cannot include this row until a description is added.'
+                      : (row.description || undefined)}
                     data-tb-cell={`${fi}-description`}
                   />
                 </td>

@@ -130,6 +130,26 @@ export default function PortalSetupPage({ params }: { params: Promise<{ engageme
 
   useEffect(() => { load(); }, [load]);
 
+  // Re-fetch state when the tab regains focus. The escalation days
+  // shown above the allocation grid are owned by the Opening tab on
+  // the firm side — if the auditor changes them while this page is
+  // sitting open in another tab, the days here would otherwise stay
+  // stale until manual reload. Same applies to FS-Line groups and
+  // staff suggestions, both of which the audit team can edit
+  // server-side while the Principal has this page open.
+  useEffect(() => {
+    if (typeof document === 'undefined') return;
+    function onVisible() {
+      if (document.visibilityState === 'visible') load();
+    }
+    document.addEventListener('visibilitychange', onVisible);
+    window.addEventListener('focus', onVisible);
+    return () => {
+      document.removeEventListener('visibilitychange', onVisible);
+      window.removeEventListener('focus', onVisible);
+    };
+  }, [load]);
+
   // ── Staff actions ──────────────────────────────────────────────────
   async function addStaff(name: string, email: string, role: string, inheritedFromEngagementId?: string, preConfirm?: boolean) {
     setAdding(true);
@@ -614,44 +634,36 @@ export default function PortalSetupPage({ params }: { params: Promise<{ engageme
 
           {openAlloc && (
             <div className="border-t border-slate-200">
-              {/* Data-quality warnings — surface any TB rows we dropped
-                  from the grid so the Portal Principal knows to chase
-                  the audit team. "No description" = unfair to ask
-                  about; "unclassified" = TBCYvPY never ran. */}
-              {(state.dataQuality?.droppedNoDescriptionCount > 0 || state.dataQuality?.droppedUnclassifiedCount > 0) && (
+              {/* TB rows with blank descriptions are flagged on the audit
+                  team's TBCYvPY tab, not here — the Portal Principal
+                  isn't the right person to fix TB-import issues. We
+                  still warn on rows with no FS-Line classification at
+                  all because that one is a setup blocker the Principal
+                  needs to know about. */}
+              {state.dataQuality?.droppedUnclassifiedCount > 0 && (
                 <div className="bg-amber-50 border-b border-amber-200 px-5 py-3 text-xs text-amber-800">
                   <p className="font-medium mb-1">Some TB codes were not included in the grid</p>
                   <ul className="space-y-0.5 list-disc pl-5">
-                    {state.dataQuality.droppedNoDescriptionCount > 0 && (
-                      <li>
-                        <strong>{state.dataQuality.droppedNoDescriptionCount}</strong> TB code{state.dataQuality.droppedNoDescriptionCount === 1 ? '' : 's'} with a blank description — you can&apos;t reasonably allocate staff without a description.
-                        Ask the audit team to fix the TB import.
-                        {state.dataQuality.droppedNoDescription?.length > 0 && (
-                          <span className="block text-[11px] mt-0.5 text-amber-700">
-                            Examples: {state.dataQuality.droppedNoDescription.slice(0, 8).join(', ')}{state.dataQuality.droppedNoDescription.length > 8 ? ` … (+${state.dataQuality.droppedNoDescription.length - 8} more)` : ''}
-                          </span>
-                        )}
-                      </li>
-                    )}
-                    {state.dataQuality.droppedUnclassifiedCount > 0 && (
-                      <li>
-                        <strong>{state.dataQuality.droppedUnclassifiedCount}</strong> TB code{state.dataQuality.droppedUnclassifiedCount === 1 ? '' : 's'} have no FS Line classification at all. Ask the audit team to run TBCYvPY classification on the engagement.
-                        {state.dataQuality.droppedUnclassified?.length > 0 && (
-                          <span className="block text-[11px] mt-0.5 text-amber-700">
-                            Examples: {state.dataQuality.droppedUnclassified.slice(0, 8).join(', ')}{state.dataQuality.droppedUnclassified.length > 8 ? ` … (+${state.dataQuality.droppedUnclassified.length - 8} more)` : ''}
-                          </span>
-                        )}
-                      </li>
-                    )}
+                    <li>
+                      <strong>{state.dataQuality.droppedUnclassifiedCount}</strong> TB code{state.dataQuality.droppedUnclassifiedCount === 1 ? '' : 's'} have no FS Line classification at all. Ask the audit team to run TBCYvPY classification on the engagement.
+                      {state.dataQuality.droppedUnclassified?.length > 0 && (
+                        <span className="block text-[11px] mt-0.5 text-amber-700">
+                          Examples: {state.dataQuality.droppedUnclassified.slice(0, 8).join(', ')}{state.dataQuality.droppedUnclassified.length > 8 ? ` … (+${state.dataQuality.droppedUnclassified.length - 8} more)` : ''}
+                        </span>
+                      )}
+                    </li>
                   </ul>
                 </div>
               )}
 
-              {/* Column header with escalation days */}
+              {/* Column header with escalation days — left-aligned to
+                  match the dropdown content below. Center-aligning the
+                  header text while the dropdown content sits left
+                  caused the visual mismatch the Principal flagged. */}
               <div className="grid grid-cols-[minmax(200px,3fr)_1fr_1fr_1fr] gap-3 px-5 py-3 bg-slate-50 border-b border-slate-200 text-xs text-slate-600">
                 <div className="font-medium">FS Line / TB code</div>
                 {[1, 2, 3].map(col => (
-                  <div key={col} className="text-center">
+                  <div key={col} className="text-left pl-2">
                     <div className="font-medium text-slate-700">Column {col}</div>
                     <div className="text-[11px]">{(escDays as any)[`days${col}`]} day{(escDays as any)[`days${col}`] === 1 ? '' : 's'} to escalate</div>
                   </div>
