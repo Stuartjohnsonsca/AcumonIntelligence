@@ -20,6 +20,11 @@ interface RunSummary {
   config: any;
   runBy: string;
   createdAt: string;
+  conclusion?: string;
+  conclusionAt?: string | null;
+  aiFlaggedCount?: number;
+  exceptionCount?: number;
+  errorScheduleCount?: number;
 }
 
 interface JournalEntry {
@@ -45,6 +50,10 @@ interface JournalEntry {
   testStatus: string;
   testNotes: string | null;
   testedAt: string | null;
+  aiInsight?: string | null;
+  aiFlag?: boolean | null;
+  aiProcessedAt?: string | null;
+  errorScheduleId?: string | null;
 }
 
 function fmtDate(d: string) { try { return new Date(d).toLocaleDateString('en-GB'); } catch { return d; } }
@@ -85,6 +94,17 @@ export function JournalRiskPanel({ engagementId, periodStartDate, periodEndDate 
   const [usersFile, setUsersFile] = useState<File | null>(null);
   const [accountsFile, setAccountsFile] = useState<File | null>(null);
 
+  // Xero pull mode — manual is the safer default (includes posting user
+  // names); full pulls every system-generated journal too.
+  const [xeroMode, setXeroMode] = useState<'manual' | 'full'>('manual');
+
+  // AI augmentation state + conclusion text
+  const [aiRunning, setAiRunning] = useState(false);
+  const [aiMessage, setAiMessage] = useState<string | null>(null);
+  const [conclusionDraft, setConclusionDraft] = useState('');
+  const [conclusionSaving, setConclusionSaving] = useState(false);
+  const [conclusionSavedAt, setConclusionSavedAt] = useState<string | null>(null);
+
   // Entries state
   const [entries, setEntries] = useState<JournalEntry[]>([]);
   const [entriesTotal, setEntriesTotal] = useState(0);
@@ -100,6 +120,9 @@ export function JournalRiskPanel({ engagementId, periodStartDate, periodEndDate 
       if (res.ok) {
         const data = await res.json();
         setRun(data.run || null);
+        if (data.run?.conclusion) setConclusionDraft(data.run.conclusion);
+        else setConclusionDraft('');
+        if (data.run?.conclusionAt) setConclusionSavedAt(data.run.conclusionAt);
       }
     } catch { /* ignore */ }
     finally { setLoading(false); }
@@ -128,7 +151,7 @@ export function JournalRiskPanel({ engagementId, periodStartDate, periodEndDate 
       const res = await fetch(`/api/engagements/${engagementId}/journal-risk`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: 'pull_xero' }),
+        body: JSON.stringify({ action: 'pull_xero', mode: xeroMode }),
       });
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
@@ -140,6 +163,80 @@ export function JournalRiskPanel({ engagementId, periodStartDate, periodEndDate 
       setError(err.message || 'Xero pull failed');
     } finally {
       setRunning(false);
+    }
+  }
+
+  // AI augmentation — analyses descriptions of the selected sample (or all
+  // suspicious entries) and stores commentary alongside each entry. Does
+  // NOT alter the deterministic risk score.
+  async function handleRunAi(scope: 'selected' | 'suspicious') {
+    setAiRunning(true);
+    setAiMessage(null);
+    setError(null);
+    try {
+      const res = await fetch(`/api/engagements/${engagementId}/journal-risk`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'run_ai_augmentation', scope }),
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        setError(data.error || `AI augmentation failed (${res.status})`);
+        return;
+      }
+      const data = await res.json();
+      setAiMessage(`AI commentary added to ${data.processed} of ${data.total} ${scope === 'suspicious' ? 'suspicious' : 'selected'} journals.`);
+      await loadRun();
+      await loadEntries();
+    } catch (err: any) {
+      setError(err.message || 'AI augmentation failed');
+    } finally {
+      setAiRunning(false);
+    }
+  }
+
+  // Save the auditor's overall conclusion text on the run. Feeds the
+  // Audit Summary Memo via /journal-risk?memoSummary=1.
+  async function handleSaveConclusion() {
+    setConclusionSaving(true);
+    try {
+      const res = await fetch(`/api/engagements/${engagementId}/journal-risk`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'set_conclusion', conclusion: conclusionDraft }),
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        setError(data.error || `Save failed (${res.status})`);
+      } else {
+        setConclusionSavedAt(new Date().toISOString());
+      }
+    } catch (err: any) {
+      setError(err.message || 'Save failed');
+    } finally {
+      setConclusionSaving(false);
+    }
+  }
+
+  // Raise a journal as an error onto the engagement's error schedule.
+  async function handleRaiseAsError(entry: JournalEntry) {
+    if (entry.errorScheduleId) return;
+    if (!confirm(`Raise journal ${entry.journalId} as an error on the engagement error schedule?\n\nAmount: ${fmtNum(entry.amount)}\nDescription: ${entry.description || '(none)'}\n\nThis can be reviewed and edited on the Error Schedule tab.`)) return;
+    try {
+      const res = await fetch(`/api/engagements/${engagementId}/journal-risk`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'raise_as_error', entryId: entry.id }),
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        setError(data.error || `Raise failed (${res.status})`);
+        return;
+      }
+      await loadEntries();
+      await loadRun();
+    } catch (err: any) {
+      setError(err.message || 'Raise failed');
     }
   }
 
@@ -267,25 +364,42 @@ export function JournalRiskPanel({ engagementId, periodStartDate, periodEndDate 
             live connection exists; the other two are always available. */}
         {!pickedSource && (
           <div className="grid grid-cols-3 gap-3">
-            <button
-              onClick={() => xeroConnected?.connected && handlePullFromXero()}
-              disabled={!xeroConnected?.connected || running}
-              className={`border rounded-lg p-4 text-left transition-colors ${
+            <div className={`border rounded-lg p-4 transition-colors ${
                 xeroConnected?.connected
-                  ? 'border-blue-200 bg-blue-50 hover:bg-blue-100 cursor-pointer'
-                  : 'border-slate-200 bg-slate-50 opacity-60 cursor-not-allowed'
+                  ? 'border-blue-200 bg-blue-50'
+                  : 'border-slate-200 bg-slate-50 opacity-60'
               }`}
             >
               <p className="text-xs font-semibold text-slate-700 mb-1">Pull from accounting system</p>
-              <p className="text-[10px] text-slate-500">
+              <p className="text-[10px] text-slate-500 mb-2">
                 {xeroConnected?.connected
-                  ? `Xero connected${xeroConnected.orgName ? ` — ${xeroConnected.orgName}` : ''}. Pulls all manual journals for the period and runs the risk engine.`
+                  ? `Xero connected${xeroConnected.orgName ? ` — ${xeroConnected.orgName}` : ''}.`
                   : 'No active Xero connection for this client.'}
               </p>
-              {running && (
-                <p className="text-[10px] text-blue-600 mt-2 animate-pulse">Pulling journals…</p>
+              {xeroConnected?.connected && (
+                <>
+                  <div className="flex gap-1 bg-white rounded p-0.5 mb-2 text-[10px]">
+                    <button
+                      onClick={(e) => { e.stopPropagation(); setXeroMode('manual'); }}
+                      className={`flex-1 px-2 py-1 rounded ${xeroMode === 'manual' ? 'bg-blue-600 text-white' : 'text-slate-600 hover:bg-slate-100'}`}
+                      title="Only manual journals. Posting user names are preserved."
+                    >Manual only</button>
+                    <button
+                      onClick={(e) => { e.stopPropagation(); setXeroMode('full'); }}
+                      className={`flex-1 px-2 py-1 rounded ${xeroMode === 'full' ? 'bg-blue-600 text-white' : 'text-slate-600 hover:bg-slate-100'}`}
+                      title="Full journal feed including system-posted entries. Posting user not exposed by Xero on this endpoint."
+                    >Full feed</button>
+                  </div>
+                  <button
+                    onClick={() => handlePullFromXero()}
+                    disabled={running}
+                    className="w-full px-3 py-1.5 bg-blue-600 text-white text-[11px] font-medium rounded hover:bg-blue-700 disabled:opacity-50"
+                  >
+                    {running ? 'Pulling…' : `Pull ${xeroMode === 'manual' ? 'manual journals' : 'full journal feed'}`}
+                  </button>
+                </>
               )}
-            </button>
+            </div>
 
             <button
               onClick={() => handleRequestFromClient()}
@@ -355,13 +469,41 @@ export function JournalRiskPanel({ engagementId, periodStartDate, periodEndDate 
         <div className="flex items-center gap-2">
           <h3 className="text-sm font-semibold text-slate-700">Journal Risk Assessment</h3>
           <span className="text-[9px] bg-green-100 text-green-700 px-2 py-0.5 rounded-full font-medium">Completed</span>
+          {(run.exceptionCount ?? 0) > 0 && (
+            <span className="text-[9px] bg-red-100 text-red-700 px-2 py-0.5 rounded-full font-medium" title="Exceptions identified during testing">
+              {run.exceptionCount} exception{run.exceptionCount === 1 ? '' : 's'}
+            </span>
+          )}
+          {(run.errorScheduleCount ?? 0) > 0 && (
+            <span className="text-[9px] bg-orange-100 text-orange-700 px-2 py-0.5 rounded-full font-medium" title="Raised to the engagement error schedule">
+              {run.errorScheduleCount} on error schedule
+            </span>
+          )}
+          {(run.aiFlaggedCount ?? 0) > 0 && (
+            <span className="text-[9px] bg-purple-100 text-purple-700 px-2 py-0.5 rounded-full font-medium" title="AI commentary flagged the description">
+              AI flagged {run.aiFlaggedCount}
+            </span>
+          )}
         </div>
         <div className="flex items-center gap-2">
+          <button
+            onClick={() => handleRunAi('selected')}
+            disabled={aiRunning}
+            className="text-[10px] px-2.5 py-1 bg-purple-50 text-purple-700 rounded hover:bg-purple-100 disabled:opacity-50"
+            title="Adds linguistic commentary to each selected journal description. Does not change the deterministic risk score."
+          >
+            {aiRunning ? 'Running AI…' : 'AI augment selected'}
+          </button>
           <button onClick={() => handleExport('csv')} className="text-[10px] px-2.5 py-1 bg-slate-100 text-slate-600 rounded hover:bg-slate-200">Export CSV</button>
           <button onClick={() => handleExport('markdown')} className="text-[10px] px-2.5 py-1 bg-slate-100 text-slate-600 rounded hover:bg-slate-200">Export Summary</button>
           <button onClick={() => { setRun(null); setEntries([]); }} className="text-[10px] px-2.5 py-1 bg-amber-50 text-amber-600 rounded hover:bg-amber-100">Re-run</button>
         </div>
       </div>
+      {aiMessage && (
+        <div className="text-[10px] text-purple-700 bg-purple-50 border border-purple-200 rounded px-3 py-1.5">
+          {aiMessage} <span className="text-purple-500">— shown as a purple ‘AI’ tag and tooltip in the table below.</span>
+        </div>
+      )}
 
       {/* Stats cards */}
       <div className="grid grid-cols-6 gap-2">
@@ -435,10 +577,37 @@ export function JournalRiskPanel({ engagementId, periodStartDate, periodEndDate 
                 isExpanded={expandedEntry === entry.id}
                 onToggle={() => setExpandedEntry(expandedEntry === entry.id ? null : entry.id)}
                 onUpdateStatus={updateEntryStatus}
+                onRaiseAsError={() => handleRaiseAsError(entry)}
               />
             ))}
           </tbody>
         </table>
+      </div>
+
+      {/* Conclusion text — feeds the Audit Summary Memo */}
+      <div className="border border-slate-200 rounded-lg p-3 bg-white">
+        <div className="flex items-center justify-between mb-1.5">
+          <p className="text-xs font-semibold text-slate-700">Auditor's conclusion on management override</p>
+          <span className="text-[9px] text-slate-400">
+            Feeds the Audit Summary Memo → Significant Risks → Management Override of controls
+            {conclusionSavedAt && <> · saved {new Date(conclusionSavedAt).toLocaleString('en-GB')}</>}
+          </span>
+        </div>
+        <textarea
+          value={conclusionDraft}
+          onChange={e => setConclusionDraft(e.target.value)}
+          placeholder="e.g. Tested 25 selected journals; no evidence of management override identified. Two adjusting entries by the Finance Director were corroborated to supporting evidence and approved by the CFO."
+          className="w-full text-xs border border-slate-200 rounded px-2 py-1.5 resize-y min-h-[60px] focus:outline-none focus:ring-1 focus:ring-blue-300"
+        />
+        <div className="flex justify-end mt-2">
+          <button
+            onClick={handleSaveConclusion}
+            disabled={conclusionSaving}
+            className="text-[10px] px-3 py-1 bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50"
+          >
+            {conclusionSaving ? 'Saving…' : 'Save conclusion'}
+          </button>
+        </div>
       </div>
 
       {/* Pagination */}
@@ -501,9 +670,10 @@ function StatCard({ label, value, accent, colour }: { label: string; value: numb
   );
 }
 
-function EntryRow({ entry, isExpanded, onToggle, onUpdateStatus }: {
+function EntryRow({ entry, isExpanded, onToggle, onUpdateStatus, onRaiseAsError }: {
   entry: JournalEntry; isExpanded: boolean; onToggle: () => void;
   onUpdateStatus: (id: string, status: string, notes?: string) => void;
+  onRaiseAsError: () => void;
 }) {
   const [notes, setNotes] = useState(entry.testNotes || '');
 
@@ -527,11 +697,17 @@ function EntryRow({ entry, isExpanded, onToggle, onUpdateStatus }: {
           <span className="text-[9px] text-slate-500">{LAYER_LABELS[entry.selectionLayer] || entry.selectionLayer}</span>
         </td>
         <td className="px-2 py-2">
-          <div className="flex gap-0.5 flex-wrap">
+          <div className="flex gap-0.5 flex-wrap items-center">
             {(entry.riskTags || []).slice(0, 3).map((tag, i) => (
               <span key={i} className="text-[8px] bg-slate-100 text-slate-500 px-1 py-0.5 rounded">{tag}</span>
             ))}
             {(entry.riskTags || []).length > 3 && <span className="text-[8px] text-slate-400">+{entry.riskTags.length - 3}</span>}
+            {entry.aiFlag && (
+              <span className="text-[8px] bg-purple-100 text-purple-700 px-1 py-0.5 rounded font-bold" title={entry.aiInsight || 'AI flagged'}>AI</span>
+            )}
+            {entry.errorScheduleId && (
+              <span className="text-[8px] bg-orange-100 text-orange-700 px-1 py-0.5 rounded font-bold" title="Raised to the error schedule">ERR</span>
+            )}
           </div>
         </td>
         <td className="px-2 py-2 text-center" onClick={e => e.stopPropagation()}>
@@ -584,16 +760,43 @@ function EntryRow({ entry, isExpanded, onToggle, onUpdateStatus }: {
                 </div>
               )}
 
-              {/* Test notes */}
+              {/* AI insight — non-binding linguistic commentary. Shown
+                  with a clear "AI" prefix and a tone that distinguishes
+                  it from the deterministic rule drivers above. */}
+              {entry.aiInsight && (
+                <div className={`text-[10px] rounded px-2 py-1.5 border ${
+                  entry.aiFlag
+                    ? 'bg-purple-50 text-purple-800 border-purple-200'
+                    : 'bg-slate-50 text-slate-600 border-slate-200'
+                }`}>
+                  <span className="font-semibold">AI commentary{entry.aiFlag ? ' (flagged)' : ''}:</span> {entry.aiInsight}
+                </div>
+              )}
+
+              {/* Test notes + Raise-as-error */}
               {entry.selected && (
-                <div className="flex items-start gap-2">
-                  <textarea
-                    value={notes}
-                    onChange={e => setNotes(e.target.value)}
-                    onBlur={() => { if (notes !== entry.testNotes) onUpdateStatus(entry.id, entry.testStatus, notes); }}
-                    placeholder="Test notes..."
-                    className="flex-1 text-[10px] border border-slate-200 rounded px-2 py-1.5 resize-none h-12 focus:outline-none focus:ring-1 focus:ring-blue-300"
-                  />
+                <div className="space-y-2">
+                  <div className="flex items-start gap-2">
+                    <textarea
+                      value={notes}
+                      onChange={e => setNotes(e.target.value)}
+                      onBlur={() => { if (notes !== entry.testNotes) onUpdateStatus(entry.id, entry.testStatus, notes); }}
+                      placeholder="Test notes..."
+                      className="flex-1 text-[10px] border border-slate-200 rounded px-2 py-1.5 resize-none h-12 focus:outline-none focus:ring-1 focus:ring-blue-300"
+                    />
+                  </div>
+                  <div className="flex justify-end">
+                    {entry.errorScheduleId ? (
+                      <span className="text-[10px] text-orange-700 italic">Raised to the engagement error schedule.</span>
+                    ) : (
+                      <button
+                        onClick={onRaiseAsError}
+                        className="text-[10px] px-2.5 py-1 bg-orange-50 text-orange-700 border border-orange-200 rounded hover:bg-orange-100"
+                      >
+                        Raise as error
+                      </button>
+                    )}
+                  </div>
                 </div>
               )}
             </div>

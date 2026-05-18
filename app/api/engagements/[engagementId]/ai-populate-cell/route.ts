@@ -87,6 +87,64 @@ export async function POST(req: NextRequest, ctx: Ctx) {
   }
   const runMode = mode === 'procedure' || mode === 'references' ? mode : 'references';
 
+  // ── Short-circuit for Significant Risks → Management Override of controls.
+  // The MOC test produces a deterministic, structured run; route the cell
+  // directly to the journal-risk module rather than asking the LLM to
+  // synthesise from generic context.
+  const isMocRow = /management\s+override\s+of\s+controls/i.test(questionText)
+    && (sectionLabel ? /significant\s+risks/i.test(sectionLabel) : true);
+  if (isMocRow) {
+    const latestRun = await prisma.journalRiskRun.findFirst({
+      where: { engagementId, status: 'completed' },
+      orderBy: { createdAt: 'desc' },
+    });
+    if (latestRun) {
+      const exceptionCount = await prisma.journalRiskEntry.count({ where: { runId: latestRun.id, testStatus: 'exception' } });
+      const testedCount = await prisma.journalRiskEntry.count({
+        where: { runId: latestRun.id, selected: true, testStatus: { in: ['tested', 'no_exception', 'exception'] } },
+      });
+      const errorScheduleCount = await prisma.journalRiskEntry.count({
+        where: { runId: latestRun.id, errorScheduleId: { not: null } },
+      });
+      const aiFlagged = await prisma.journalRiskEntry.count({ where: { runId: latestRun.id, aiFlag: true } });
+      const pop = latestRun.populationEvidence as { sourceSystem?: string; coverage?: { fromDate?: string; toDate?: string } };
+      const ss = latestRun.selectionSummary as { layer1?: number; layer2?: number; layer3?: number };
+
+      const sourceLabel = pop?.sourceSystem === 'xero' ? 'live Xero pull (manual journals)'
+        : pop?.sourceSystem === 'xero_full' ? 'live Xero pull (full journals feed)'
+        : pop?.sourceSystem === 'csv' ? 'client-provided CSV extract'
+        : 'source system extract';
+
+      const header = (columnHeader || '').toLowerCase();
+      let text = '';
+      if (header.includes('identified risk') || header.includes('risk')) {
+        text = 'Management override of controls (ISA 240) — risk that management overrides controls to perpetrate fraud through inappropriate journal entries.';
+      } else if (header.includes('procedure')) {
+        text = [
+          `Obtained the complete population of ${latestRun.totalJournals.toLocaleString()} journals (${pop?.coverage?.fromDate || ''} – ${pop?.coverage?.toDate || ''}, ${sourceLabel}).`,
+          `Applied firm ISA 240 risk model across timing, user/access, content, description, accounting-risk and behaviour dimensions.`,
+          `Selected ${latestRun.totalSelected.toLocaleString()} for testing: ${ss?.layer1 || 0} mandatory, ${ss?.layer2 || 0} targeted, ${ss?.layer3 || 0} unpredictable.`,
+          aiFlagged > 0 ? `AI commentary flagged ${aiFlagged} additional description${aiFlagged === 1 ? '' : 's'} as vague/unusual; corroborated against the deterministic scoring.` : '',
+          `Inspected supporting evidence for each selected journal and assessed business rationale and posting authority.`,
+        ].filter(Boolean).join(' ');
+      } else if (header.includes('conclusion')) {
+        text = latestRun.conclusion || (exceptionCount === 0
+          ? `Of the ${latestRun.totalSelected} journals selected, ${testedCount} tested with no exceptions identified. No evidence of management override of controls.`
+          : `Of the ${latestRun.totalSelected} journals selected, ${testedCount} tested; ${exceptionCount} exception${exceptionCount === 1 ? '' : 's'} identified${errorScheduleCount > 0 ? ` (${errorScheduleCount} raised to the error schedule)` : ''}.`);
+      } else if (header.includes('wp') || header.includes('ref')) {
+        text = `MOC-${latestRun.runId.slice(0, 8)}`;
+      } else {
+        text = `MOC run ${latestRun.runId.slice(0, 8)} — ${latestRun.totalSelected} of ${latestRun.totalJournals} journals selected; ${exceptionCount} exceptions.`;
+      }
+
+      return NextResponse.json({
+        text,
+        references: [{ tab: 'audit-plan', anchor: 'management-override', label: 'MOC tab' }],
+      });
+    }
+    // No run yet — fall through to AI populate, which will say so in plain English.
+  }
+
   // ── Assemble engagement context ────────────────────────────────────────
   // We pull summary / aggregate data across the main audit areas so the
   // AI can reason about what's covered where. We deliberately avoid huge

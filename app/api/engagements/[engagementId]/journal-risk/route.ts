@@ -67,6 +67,73 @@ export async function GET(req: Request, { params }: { params: Promise<{ engageme
     });
   }
 
+  // Build a memo-ready summary text for the Audit Summary Memo. Pulled by
+  // the Completion → Audit Summary Memo → Significant Risks → "Management
+  // Override of controls" row so the auditor doesn't have to retype the
+  // population evidence and selection rationale.
+  if (url.searchParams.get('memoSummary')) {
+    const latestRun = await prisma.journalRiskRun.findFirst({
+      where: { engagementId, status: 'completed' },
+      orderBy: { createdAt: 'desc' },
+      include: { runBy: { select: { name: true } } },
+    });
+    if (!latestRun) {
+      return NextResponse.json({
+        available: false,
+        message: 'No completed journal risk run on this engagement yet.',
+      });
+    }
+    const exceptionCount = await prisma.journalRiskEntry.count({
+      where: { runId: latestRun.id, testStatus: 'exception' },
+    });
+    const testedCount = await prisma.journalRiskEntry.count({
+      where: { runId: latestRun.id, selected: true, testStatus: { in: ['tested', 'no_exception', 'exception'] } },
+    });
+    const errorScheduleCount = await prisma.journalRiskEntry.count({
+      where: { runId: latestRun.id, errorScheduleId: { not: null } },
+    });
+    const aiFlaggedCount = await prisma.journalRiskEntry.count({
+      where: { runId: latestRun.id, aiFlag: true },
+    });
+    const pop = latestRun.populationEvidence as { recordCount?: number; sourceSystem?: string; coverage?: { fromDate?: string; toDate?: string } };
+    const ss = latestRun.selectionSummary as { layer1?: number; layer2?: number; layer3?: number };
+
+    const sourceLabel = pop?.sourceSystem === 'xero' ? 'pulled live from Xero (manual journals)'
+      : pop?.sourceSystem === 'xero_full' ? 'pulled live from Xero (full journals feed)'
+      : pop?.sourceSystem === 'csv' ? 'extracted from client-provided CSV'
+      : 'extracted from source system';
+
+    const procedures = [
+      `Procedures performed (ISA 240, paras 32–33):`,
+      `- Obtained the complete population of ${latestRun.totalJournals.toLocaleString()} journal entr${latestRun.totalJournals === 1 ? 'y' : 'ies'} for the period (${pop?.coverage?.fromDate || ''} to ${pop?.coverage?.toDate || ''}), ${sourceLabel}.`,
+      `- Applied the firm's ISA 240 risk model (timing, user/access, content, description, accounting-risk and behaviour dimensions) to the full population.`,
+      `- Selected ${latestRun.totalSelected.toLocaleString()} journal${latestRun.totalSelected === 1 ? '' : 's'} for inspection across three layers: ${ss?.layer1 || 0} mandatory (high-risk score / critical tag), ${ss?.layer2 || 0} targeted (risk-tag coverage), ${ss?.layer3 || 0} unpredictable.`,
+      aiFlaggedCount > 0 ? `- Reviewed AI-augmented commentary on description quality; ${aiFlaggedCount} entr${aiFlaggedCount === 1 ? 'y was' : 'ies were'} flagged as vague or unusual and corroborated against the deterministic scoring.` : '',
+      `- Inspected supporting evidence for each selected journal and assessed the business rationale, posting authority and accounting treatment.`,
+    ].filter(Boolean).join('\n');
+
+    const conclusionDefault = exceptionCount === 0
+      ? `Of the ${latestRun.totalSelected.toLocaleString()} journals selected, ${testedCount.toLocaleString()} ha${testedCount === 1 ? 's' : 've'} been tested with no exceptions identified. No evidence of management override of controls was identified.`
+      : `Of the ${latestRun.totalSelected.toLocaleString()} journals selected, ${testedCount.toLocaleString()} ha${testedCount === 1 ? 's' : 've'} been tested and ${exceptionCount.toLocaleString()} exception${exceptionCount === 1 ? '' : 's'} ${exceptionCount === 1 ? 'was' : 'were'} identified${errorScheduleCount > 0 ? ` (${errorScheduleCount} raised to the error schedule)` : ''}. See WP reference below.`;
+
+    return NextResponse.json({
+      available: true,
+      runId: latestRun.runId,
+      runAt: latestRun.createdAt,
+      runBy: latestRun.runBy?.name || 'Unknown',
+      identifiedRisk: 'Management override of controls (ISA 240) — risk that management can override controls to perpetrate fraud through inappropriate journal entries.',
+      proceduresPerformed: procedures,
+      conclusion: latestRun.conclusion || conclusionDefault,
+      wpReference: `MOC-${latestRun.runId.slice(0, 8)}`,
+      population: latestRun.totalJournals,
+      selected: latestRun.totalSelected,
+      tested: testedCount,
+      exceptions: exceptionCount,
+      errorScheduleCount,
+      aiFlagged: aiFlaggedCount,
+    });
+  }
+
   // Also return default config if requested
   if (url.searchParams.get('defaultConfig')) {
     const period = await prisma.clientPeriod.findUnique({ where: { id: engagement.periodId } });
@@ -90,6 +157,14 @@ export async function GET(req: Request, { params }: { params: Promise<{ engageme
 
   if (!run) return NextResponse.json({ run: null });
 
+  // Aggregate AI / exception / error-schedule counts so the panel header
+  // can show them without a separate round-trip.
+  const [aiCount, exceptionCount, errorScheduleCount] = await Promise.all([
+    prisma.journalRiskEntry.count({ where: { runId: run.id, aiFlag: true } }),
+    prisma.journalRiskEntry.count({ where: { runId: run.id, testStatus: 'exception' } }),
+    prisma.journalRiskEntry.count({ where: { runId: run.id, errorScheduleId: { not: null } } }),
+  ]);
+
   return NextResponse.json({ run: {
     id: run.id,
     runId: run.runId,
@@ -101,6 +176,11 @@ export async function GET(req: Request, { params }: { params: Promise<{ engageme
     config: run.config,
     runBy: run.runBy?.name || 'Unknown',
     createdAt: run.createdAt,
+    conclusion: run.conclusion || '',
+    conclusionAt: run.conclusionAt,
+    aiFlaggedCount: aiCount,
+    exceptionCount,
+    errorScheduleCount,
   }});
 }
 
@@ -306,17 +386,21 @@ export async function POST(req: Request, { params }: { params: Promise<{ engagem
       const periodEnd = new Date(period.endDate).toISOString().slice(0, 10);
       const client = await prisma.client.findUnique({ where: { id: engagement.clientId }, select: { clientName: true } });
 
+      const mode: 'manual' | 'full' = body?.mode === 'full' ? 'full' : 'manual';
       const pull = await pullFromXero({
         clientId: engagement.clientId,
         periodStart,
         periodEnd,
         entity: client?.clientName || 'Unknown',
         baseCurrency: 'GBP',
+        mode,
       });
 
       if (pull.journals.length === 0) {
         return NextResponse.json({
-          error: 'No manual journals found in Xero for this period.',
+          error: mode === 'manual'
+            ? 'No manual journals found in Xero for this period.'
+            : 'No journals found in Xero for this period.',
           skipped: pull.skipped,
         }, { status: 400 });
       }
@@ -331,7 +415,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ engagem
         users: pull.users,
         accounts: pull.accounts,
         baseCurrency: 'GBP',
-        sourceLabel: 'xero',
+        sourceLabel: mode === 'full' ? 'xero_full' : 'xero',
       });
 
       return NextResponse.json({
@@ -342,6 +426,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ engagem
           totalSelected: out.totalSelected,
           selectionSummary: out.selectionSummary,
           source: 'xero',
+          mode,
           skipped: pull.skipped,
         },
       }, { status: 201 });
@@ -349,6 +434,186 @@ export async function POST(req: Request, { params }: { params: Promise<{ engagem
       console.error('[Journal Risk] Xero pull failed:', err);
       return NextResponse.json({ error: err.message || 'Xero pull failed' }, { status: 400 });
     }
+  }
+
+  // Run AI augmentation across all selected entries (or all medium/high
+  // band entries if `scope: 'suspicious'`). Strictly supplementary — the
+  // deterministic risk score does NOT change. Stores aiInsight / aiFlag /
+  // aiProcessedAt on each entry. Idempotent: re-running overwrites the
+  // commentary, doesn't append.
+  if (action === 'run_ai_augmentation') {
+    try {
+      const run = await prisma.journalRiskRun.findFirst({
+        where: { engagementId, status: 'completed' },
+        orderBy: { createdAt: 'desc' },
+      });
+      if (!run) return NextResponse.json({ error: 'No completed run found' }, { status: 404 });
+
+      const scope: 'selected' | 'suspicious' = body?.scope === 'suspicious' ? 'suspicious' : 'selected';
+      const where = scope === 'suspicious'
+        ? { runId: run.id, riskBand: { in: ['medium', 'high'] } }
+        : { runId: run.id, selected: true };
+      const entries = await prisma.journalRiskEntry.findMany({
+        where,
+        orderBy: { riskScore: 'desc' },
+        select: {
+          id: true, journalId: true, description: true, amount: true, period: true,
+          debitAccountId: true, creditAccountId: true, riskBand: true, riskTags: true,
+        },
+      });
+
+      if (entries.length === 0) {
+        return NextResponse.json({ processed: 0 });
+      }
+
+      const OpenAI = (await import('openai')).default;
+      const client = new OpenAI({
+        apiKey: process.env.TOGETHER_API_KEY || '',
+        baseURL: 'https://api.together.xyz/v1',
+      });
+
+      // Process in batches of 20 so a single completion call sees enough
+      // context (vague-description detection is calibrated against the
+      // batch) but stays well inside the token budget.
+      const BATCH = 20;
+      let processed = 0;
+      for (let i = 0; i < entries.length; i += BATCH) {
+        const batch = entries.slice(i, i + BATCH);
+        const items = batch.map((e, idx) => ({
+          idx,
+          desc: e.description || '',
+          amount: e.amount,
+          period: e.period,
+          tags: (e.riskTags as string[]) || [],
+        }));
+
+        const prompt = [
+          'You are an audit assistant supporting an ISA 240 management-override test.',
+          'For each numbered journal below, judge whether the **description text alone** is unusual, vague, evasive, or out-of-distribution compared to typical accounting narrations.',
+          'Be strict: descriptions like "adjustment", "per CFO", "to fix", "as agreed", "off books", "true up", with no further detail are flags. Specific narrations referencing invoices, payroll periods, supplier names, or reconciliations are NOT flags by themselves.',
+          'You MUST return one JSON object per input, in input order, in a JSON array. Each object must have:',
+          '  - "idx": the input index number',
+          '  - "flag": true if the description is genuinely concerning, false otherwise',
+          '  - "insight": one short sentence explaining your judgement (cite specific words you saw)',
+          'Return ONLY the JSON array, no preamble or trailing text.',
+          '',
+          'Journals:',
+          JSON.stringify(items, null, 2),
+        ].join('\n');
+
+        let raw = '';
+        try {
+          const resp = await client.chat.completions.create({
+            model: 'meta-llama/Llama-3.3-70B-Instruct-Turbo',
+            messages: [
+              { role: 'system', content: 'You return JSON arrays only. No commentary.' },
+              { role: 'user', content: prompt },
+            ],
+            max_tokens: 2000,
+            temperature: 0.1,
+          });
+          raw = resp.choices[0]?.message?.content || '';
+        } catch (err: any) {
+          console.error('[Journal Risk AI] Together AI call failed:', err);
+          continue; // skip this batch — keep going so partial progress lands
+        }
+
+        // Extract the JSON array — Llama sometimes adds a code fence even
+        // when told not to.
+        const cleaned = raw.replace(/```(?:json)?/g, '').trim();
+        let parsed: Array<{ idx: number; flag: boolean; insight: string }> = [];
+        try {
+          parsed = JSON.parse(cleaned);
+        } catch {
+          // Fallback: try to extract the first JSON array substring.
+          const m = cleaned.match(/\[[\s\S]*\]/);
+          if (m) {
+            try { parsed = JSON.parse(m[0]); } catch { parsed = []; }
+          }
+        }
+
+        for (const p of parsed) {
+          if (typeof p?.idx !== 'number') continue;
+          const target = batch[p.idx];
+          if (!target) continue;
+          await prisma.journalRiskEntry.update({
+            where: { id: target.id },
+            data: {
+              aiInsight: typeof p.insight === 'string' ? p.insight.slice(0, 1000) : null,
+              aiFlag: p.flag === true,
+              aiProcessedAt: new Date(),
+            },
+          });
+          processed++;
+        }
+      }
+
+      return NextResponse.json({ processed, total: entries.length });
+    } catch (err: any) {
+      console.error('[Journal Risk] AI augmentation failed:', err);
+      return NextResponse.json({ error: err.message || 'AI augmentation failed' }, { status: 500 });
+    }
+  }
+
+  // Record the auditor's overall conclusion on the MOC test. Surfaced
+  // into the Audit Summary Memo by the completion-memo endpoint.
+  if (action === 'set_conclusion') {
+    const conclusion = typeof body?.conclusion === 'string' ? body.conclusion : '';
+    const run = await prisma.journalRiskRun.findFirst({
+      where: { engagementId, status: 'completed' },
+      orderBy: { createdAt: 'desc' },
+    });
+    if (!run) return NextResponse.json({ error: 'No completed run found' }, { status: 404 });
+    await prisma.journalRiskRun.update({
+      where: { id: run.id },
+      data: {
+        conclusion: conclusion || null,
+        conclusionById: conclusion ? session.user.id : null,
+        conclusionAt: conclusion ? new Date() : null,
+      },
+    });
+    return NextResponse.json({ ok: true });
+  }
+
+  // Raise a single journal entry as an error onto the engagement's error
+  // schedule. Stores the cross-link in both directions so the panel can
+  // show "Raised on schedule" and the schedule can show "From MOC test".
+  if (action === 'raise_as_error') {
+    const { entryId, fsLine, accountCode, errorType, explanation, errorAmount } = body || {};
+    if (!entryId) return NextResponse.json({ error: 'entryId required' }, { status: 400 });
+    const entry = await prisma.journalRiskEntry.findUnique({ where: { id: entryId } });
+    if (!entry) return NextResponse.json({ error: 'Entry not found' }, { status: 404 });
+    if (entry.errorScheduleId) {
+      return NextResponse.json({ error: 'Entry already raised as an error' }, { status: 409 });
+    }
+
+    const created = await prisma.auditErrorSchedule.create({
+      data: {
+        engagementId,
+        fsLine: typeof fsLine === 'string' && fsLine ? fsLine : 'Management Override',
+        accountCode: typeof accountCode === 'string' ? accountCode : entry.debitAccountId,
+        description: `MOC test — journal ${entry.journalId}: ${entry.description || '(no description)'}`,
+        errorAmount: typeof errorAmount === 'number' ? errorAmount : entry.amount,
+        errorType: typeof errorType === 'string' && ['factual', 'judgemental', 'projected'].includes(errorType)
+          ? errorType
+          : 'factual',
+        explanation: typeof explanation === 'string' ? explanation : (entry.testNotes || entry.rationale || ''),
+        linkedFromType: 'journal_risk_entry',
+        linkedFromId: entry.id,
+      },
+    });
+
+    await prisma.journalRiskEntry.update({
+      where: { id: entry.id },
+      data: {
+        errorScheduleId: created.id,
+        testStatus: 'exception',
+        testedById: session.user.id,
+        testedAt: new Date(),
+      },
+    });
+
+    return NextResponse.json({ errorScheduleId: created.id });
   }
 
   // Create a PortalRequest asking the client to upload a journal export.

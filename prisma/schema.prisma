@@ -4377,18 +4377,24 @@ model TestActionStep {
 // ─── Journal Risk (ISA 240 Management Override) ────────────────────────────
 
 model JournalRiskRun {
-  id                 String   @id @default(uuid())
-  engagementId       String   @map("engagement_id")
-  runId              String   @unique @map("run_id")
-  status             String   @default("completed") // completed | superseded
+  id                 String    @id @default(uuid())
+  engagementId       String    @map("engagement_id")
+  runId              String    @unique @map("run_id")
+  status             String    @default("completed") // completed | superseded
   config             Json // Frozen Config snapshot
-  populationEvidence Json     @map("population_evidence") // PopulationEvidence
-  selectionSummary   Json     @map("selection_summary") // { layer1, layer2, layer3, notSelected }
-  riskModelSnapshot  Json     @map("risk_model_snapshot") // rules, thresholds, weights
-  totalJournals      Int      @map("total_journals")
-  totalSelected      Int      @map("total_selected")
-  runById            String   @map("run_by_id")
-  createdAt          DateTime @default(now()) @map("created_at")
+  populationEvidence Json      @map("population_evidence") // PopulationEvidence
+  selectionSummary   Json      @map("selection_summary") // { layer1, layer2, layer3, notSelected }
+  riskModelSnapshot  Json      @map("risk_model_snapshot") // rules, thresholds, weights
+  totalJournals      Int       @map("total_journals")
+  totalSelected      Int       @map("total_selected")
+  runById            String    @map("run_by_id")
+  createdAt          DateTime  @default(now()) @map("created_at")
+  // Auditor's written conclusion on the MOC test as a whole — surfaced
+  // into the Audit Summary Memo under Significant Risks → Management
+  // Override of controls.
+  conclusion         String?   @db.Text
+  conclusionById     String?   @map("conclusion_by_id")
+  conclusionAt       DateTime? @map("conclusion_at")
 
   engagement AuditEngagement    @relation(fields: [engagementId], references: [id], onDelete: Cascade)
   runBy      User               @relation("JournalRiskRunBy", fields: [runById], references: [id])
@@ -4424,10 +4430,23 @@ model JournalRiskEntry {
   testedById       String?   @map("tested_by_id")
   testedAt         DateTime? @map("tested_at")
 
+  // AI augmentation — non-binding linguistic commentary on the description.
+  // Does NOT influence the deterministic risk score; surfaced alongside as a
+  // supplementary view per ISA 240's "AI cannot make the audit conclusion"
+  // governance requirement.
+  aiInsight       String?   @map("ai_insight") @db.Text
+  aiFlag          Boolean?  @map("ai_flag")
+  aiProcessedAt   DateTime? @map("ai_processed_at")
+
+  // Cross-link to AuditErrorSchedule when the auditor raises this journal
+  // as an error from the panel. Null when no error has been raised.
+  errorScheduleId String?   @map("error_schedule_id")
+
   run JournalRiskRun @relation(fields: [runId], references: [id], onDelete: Cascade)
 
   @@index([runId])
   @@index([runId, selected])
+  @@index([errorScheduleId])
   @@map("journal_risk_entries")
 }
 
