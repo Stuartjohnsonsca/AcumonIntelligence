@@ -19,7 +19,7 @@
  * partial-fill session lives across page reloads.
  */
 
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import {
   Loader2, X, Upload, Cloud, History, UserPlus, FileText, Plus, Trash2,
   AlertTriangle, ChevronRight, ChevronLeft, Calculator,
@@ -129,37 +129,78 @@ export function LoanCalculatorPanel({ engagementId, fsLineName, initialSide, per
   }, [engagementId, initialSide, fsLineName]);
 
   // ── Save (group-scoped, shallow-merge at root level) ───────────────
-  const save = async (patch: Partial<LoanCalcData>) => {
+  //
+  // Local state updates are applied SYNCHRONOUSLY so inputs feel
+  // responsive on every keystroke. The actual server PUT is debounced
+  // by 600 ms — multiple rapid edits coalesce into a single network
+  // call. Previously this fired a fetch on every keystroke, which
+  // made the whole panel feel sluggish whenever the user typed a
+  // long lender name or rate value.
+  const saveTimerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  const pendingRootRef = useRef<LoanCalcRoot | null>(null);
+  const save = useCallback((patch: Partial<LoanCalcData>) => {
+    // 1) Apply locally — both the active group's `data` and the
+    //    root-wide `root` state. Use functional setters so concurrent
+    //    saves within the same tick correctly stack.
+    setData(prevData => {
+      const nextData: LoanCalcData = { ...prevData, ...patch };
+      setRoot(prevRoot => {
+        const updatedGroup: LoanGroup = {
+          ...nextData,
+          id: groupId,
+          label: groupLabelState,
+          fsLines: (prevRoot.groups.find(g => g.id === groupId)?.fsLines) || [fsLineName],
+          createdAt: (prevRoot.groups.find(g => g.id === groupId)?.createdAt) || new Date().toISOString(),
+        };
+        const nextRoot = upsertGroup(prevRoot, updatedGroup);
+        pendingRootRef.current = nextRoot;
+        // Refresh the label if upsertGroup shifted it (rare; only
+        // when a new group sneaks in ahead of this one).
+        const refreshedGroup = nextRoot.groups.find(g => g.id === groupId);
+        if (refreshedGroup && refreshedGroup.label !== groupLabelState) {
+          setGroupLabelState(refreshedGroup.label);
+        }
+        return nextRoot;
+      });
+      return nextData;
+    });
+
+    // 2) Debounce the server PUT. The latest `pendingRootRef.current`
+    //    captures the cumulative state to flush. `setSaving` flips on
+    //    immediately so the UI's "saving" pip stays accurate.
     setSaving(true);
-    try {
-      const next: LoanCalcData = { ...data, ...patch };
-      setData(next);
-      // Merge the edited group back into the root, then PUT only the
-      // `groups` key so the API's shallow merge doesn't touch any
-      // other top-level keys (audit trail markers, requests, etc.).
-      const updatedGroup: LoanGroup = {
-        ...next,
-        id: groupId,
-        label: groupLabelState,
-        fsLines: (root.groups.find(g => g.id === groupId)?.fsLines) || [fsLineName],
-        createdAt: (root.groups.find(g => g.id === groupId)?.createdAt) || new Date().toISOString(),
-      };
-      const nextRoot = upsertGroup(root, updatedGroup);
-      setRoot(nextRoot);
-      // After upsertGroup, the group's label may have shifted (only if
-      // a new group was inserted ahead of it, which can't happen here)
-      // — read it back so the badge stays correct.
-      const refreshedGroup = nextRoot.groups.find(g => g.id === groupId);
-      if (refreshedGroup) setGroupLabelState(refreshedGroup.label);
-      await fetch(`/api/engagements/${engagementId}/loan-calculator`, {
+    if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
+    saveTimerRef.current = setTimeout(async () => {
+      const toFlush = pendingRootRef.current;
+      if (!toFlush) { setSaving(false); return; }
+      try {
+        await fetch(`/api/engagements/${engagementId}/loan-calculator`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ data: { groups: toFlush.groups } }),
+        });
+      } finally {
+        setSaving(false);
+      }
+    }, 600);
+  }, [engagementId, fsLineName, groupId, groupLabelState]);
+
+  // Flush any pending debounced save when the panel unmounts so a
+  // hurried close doesn't drop the last keystroke. Best-effort —
+  // we don't await it because unmount cleanup can't be async.
+  useEffect(() => {
+    return () => {
+      if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
+      const toFlush = pendingRootRef.current;
+      if (!toFlush) return;
+      fetch(`/api/engagements/${engagementId}/loan-calculator`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ data: { groups: nextRoot.groups } }),
-      });
-    } finally {
-      setSaving(false);
-    }
-  };
+        body: JSON.stringify({ data: { groups: toFlush.groups } }),
+      }).catch(() => {});
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // Lead summary — re-aggregated whenever loans change.
   const leadRow = useMemo(() => {
@@ -553,8 +594,23 @@ export function LoanCalculatorPanel({ engagementId, fsLineName, initialSide, per
       save({ loans: data.loans.map(l => l.id === loan.id ? { ...l, schedule: nextSched } : l) });
     };
     const regenSchedule = () => {
-      if (!loan.header.drawdownDate || !periodEndDate) return;
+      // Surface the precondition reason so the auditor knows WHY the
+      // click was a no-op when it doesn't fire. Previously this just
+      // returned silently if either date was missing.
+      if (!loan.header.drawdownDate) {
+        setError('Set the First drawdown date on the loan header before generating rows.');
+        return;
+      }
+      if (!periodEndDate) {
+        setError('Engagement period end is missing — set it on the Opening tab before generating rows.');
+        return;
+      }
       const rows = generateScheduleRows(loan.header.drawdownDate, periodEndDate.slice(0,10), loan.header.loanPeriodicity);
+      if (rows.length === 0) {
+        setError('Could not generate rows — the drawdown date is on or after the engagement period end.');
+        return;
+      }
+      setError('');
       save({ loans: data.loans.map(l => l.id === loan.id ? { ...l, schedule: rows } : l) });
     };
 
@@ -1182,12 +1238,16 @@ function DotTestRow({ label, result, onChange }: { label: string; result: TestRe
 }
 
 function DotPicker({ value, onChange }: { value: DotStatus; onChange: (s: DotStatus) => void }) {
-  const opts: DotStatus[] = ['green', 'orange', 'red', 'hollow'];
+  // Order matches the rest of the tool's traffic-light convention:
+  //   hollow (not tested) → red (fail) → amber (caution) → green (pass).
+  // Colours are aligned to the firm-wide palette (green-500, amber-400,
+  // red-500) so the dots look consistent next to other panels' dots.
+  const opts: DotStatus[] = ['hollow', 'red', 'orange', 'green'];
   const colour = (s: DotStatus) => {
-    if (s === 'green') return 'bg-emerald-500';
-    if (s === 'orange') return 'bg-amber-500';
-    if (s === 'red') return 'bg-red-500';
-    return 'bg-transparent border-2 border-slate-300';
+    if (s === 'green')  return 'bg-green-500';
+    if (s === 'orange') return 'bg-amber-400';
+    if (s === 'red')    return 'bg-red-500';
+    return 'bg-white border-2 border-slate-300';
   };
   return (
     <div className="flex items-center gap-1">
@@ -1195,7 +1255,7 @@ function DotPicker({ value, onChange }: { value: DotStatus; onChange: (s: DotSta
         <button
           key={o}
           onClick={() => onChange(o)}
-          title={o === 'hollow' ? 'Cannot perform test' : `${o[0].toUpperCase()}${o.slice(1)}`}
+          title={o === 'hollow' ? 'Not tested / cannot perform' : `${o[0].toUpperCase()}${o.slice(1)}`}
           className={`h-4 w-4 rounded-full transition-transform ${colour(o)} ${value === o ? 'scale-125 ring-2 ring-slate-400' : 'opacity-60 hover:opacity-100'}`}
         />
       ))}

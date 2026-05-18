@@ -648,9 +648,14 @@ export const PERIODICITY_MONTHS: Record<Periodicity, number> = {
 };
 
 /** Walk from `loanStartIso` forward in `periodicity` increments until
- *  we pass `cutoffIso`. Each row's [from, to] is the period boundary.
- *  Used to seed the schedule for a brand-new loan; the auditor can then
- *  edit individual cells. */
+ *  we pass `cutoffIso`. Each row spans a single period — `fromDate`
+ *  is the first day of the period and `toDate` is the LAST day of
+ *  the period (i.e. the day before the next period starts). This
+ *  matches how auditors think of a quarter ("Q1 = 01/01 to 31/03"),
+ *  rather than the previous behaviour where toDate was the first day
+ *  of the next quarter and the same date appeared in two adjacent
+ *  rows. Used to seed the schedule for a brand-new loan; the auditor
+ *  can then edit individual cells. */
 export function generateScheduleRows(
   loanStartIso: string,
   cutoffIso: string,
@@ -663,10 +668,16 @@ export function generateScheduleRows(
   const stepMonths = PERIODICITY_MONTHS[periodicity];
   const rows: LoanScheduleRow[] = [];
   let cur = new Date(start);
+  const MS_PER_DAY = 86_400_000;
   while (cur < end) {
     const next = new Date(cur);
     next.setUTCMonth(next.getUTCMonth() + stepMonths);
-    const rowEnd = next > end ? end : next;
+    // Period closes on the day BEFORE the next period starts, unless
+    // the next period would overshoot the cutoff — in which case the
+    // final row simply clamps to the cutoff.
+    const rowEnd = next > end
+      ? end
+      : new Date(next.getTime() - MS_PER_DAY);
     rows.push({
       fromDate: cur.toISOString().slice(0, 10),
       toDate: rowEnd.toISOString().slice(0, 10),
