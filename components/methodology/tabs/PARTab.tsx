@@ -3,13 +3,13 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import { useAutoSave } from '@/hooks/useAutoSave';
 import {
-  DEFAULT_ROUNDING_ORDER,
-  ROUNDING_LABELS,
   type RoundingMode,
   formatRounded,
   parseRoundedInput,
   roundingUnitSuffix,
 } from '@/lib/audit-rounding';
+import { useEngagementRounding } from '@/hooks/useEngagementRounding';
+import { RoundingDropdown } from '../RoundingDropdown';
 
 interface Props {
   engagementId: string;
@@ -143,36 +143,13 @@ export function PARTab({ engagementId, userId, userName, userRole }: Props) {
 
   // ── Rounding mode — display only. Raw values always stored in £. The
   // selected mode divides the display (e.g. "thousands" shows 12.5 for a
-  // stored value of 12,500). Persisted per engagement in permanent-file
-  // section `par_rounding` so it also flows through to RMM / plans /
-  // completion once those tabs adopt the shared util.
-  const [rounding, setRounding] = useState<RoundingMode>('unrounded');
-  const [roundingOptions, setRoundingOptions] = useState<RoundingMode[]>(DEFAULT_ROUNDING_ORDER);
-  useEffect(() => {
-    fetch(`/api/engagements/${engagementId}/permanent-file?section=par_rounding`)
-      .then(r => r.ok ? r.json() : null)
-      .then(d => {
-        const mode = d?.data?.mode as RoundingMode | undefined;
-        if (mode && DEFAULT_ROUNDING_ORDER.includes(mode)) setRounding(mode);
-      })
-      .catch(() => {});
-    // Seed list of allowed options from firm assumptions if configured;
-    // fall back to the four defaults otherwise.
-    fetch('/api/methodology-admin/risk-tables?tableType=rounding_options')
-      .then(r => r.ok ? r.json() : null)
-      .then(d => {
-        const opts = d?.table?.data?.options as RoundingMode[] | undefined;
-        if (Array.isArray(opts) && opts.length) setRoundingOptions(opts.filter(o => DEFAULT_ROUNDING_ORDER.includes(o)));
-      })
-      .catch(() => {});
-  }, [engagementId]);
-  function onRoundingChange(next: RoundingMode) {
-    setRounding(next);
-    fetch(`/api/engagements/${engagementId}/permanent-file`, {
-      method: 'PUT', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ sectionKey: 'par_rounding', data: { mode: next } }),
-    }).catch(() => {});
-  }
+  // stored value of 12,500). Now via the engagement-wide
+  // `useEngagementRounding` hook so changing the selection here
+  // updates every other tab that reads the same hook (TBCYvPY,
+  // Materiality, Audit Plan totals, etc.). The hook also handles
+  // legacy fallback to the old `par_rounding` permanent-file section
+  // so existing data is never lost.
+  const { mode: rounding } = useEngagementRounding(engagementId);
 
   const { saving, lastSaved, error } = useAutoSave(
     `/api/engagements/${engagementId}/par`,
@@ -567,17 +544,7 @@ export function PARTab({ engagementId, userId, userName, userRole }: Props) {
           )}
         </div>
         <div className="flex items-center gap-2">
-          <label className="inline-flex items-center gap-1 text-xs text-slate-500">
-            Rounding
-            <select
-              value={rounding}
-              onChange={e => onRoundingChange(e.target.value as RoundingMode)}
-              className="border border-slate-200 rounded px-1.5 py-0.5 text-xs bg-white focus:outline-none focus:border-blue-400"
-              title="Display all amounts in this unit. Raw pounds are always stored."
-            >
-              {roundingOptions.map(o => <option key={o} value={o}>{ROUNDING_LABELS[o]}</option>)}
-            </select>
-          </label>
+          <RoundingDropdown engagementId={engagementId} />
           {saving && <span className="text-xs text-blue-500 animate-pulse">Saving...</span>}
           {lastSaved && !saving && <span className="text-xs text-green-500">Saved</span>}
           {error && <span className="text-xs text-red-500">{error}</span>}

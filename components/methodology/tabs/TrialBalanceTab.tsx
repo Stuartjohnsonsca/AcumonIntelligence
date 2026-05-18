@@ -3,6 +3,7 @@
 import { useState, useEffect, useCallback, useMemo, useRef, Fragment, lazy, Suspense } from 'react';
 import { useAutoSave } from '@/hooks/useAutoSave';
 import { useScrollToAnchor } from '@/lib/hooks/useScrollToAnchor';
+import { RoundingDropdown } from '../RoundingDropdown';
 
 const FixedAssetRegisterPopup = lazy(() => import('../FixedAssetRegisterPopup').then(m => ({ default: m.FixedAssetRegisterPopup })));
 const GeneralLedgerModal = lazy(() => import('../GeneralLedgerModal').then(m => ({ default: m.GeneralLedgerModal })));
@@ -1234,6 +1235,13 @@ export function TrialBalanceTab({ engagementId, isGroupAudit = false, showCatego
             <input type="checkbox" checked={showCategory} onChange={e => setShowCategory(e.target.checked)} className="w-3 h-3 rounded" />
             Show Category
           </label>
+          {/* Rounding mode — shared engagement-wide via
+              useEngagementRounding. Changing it here updates every
+              other tab (PAR, Materiality grid, Audit Plan totals,
+              Error Schedule etc.) that reads the same hook. The TB
+              cells themselves still show raw pounds during editing —
+              the dropdown is the system-wide display preference. */}
+          <RoundingDropdown engagementId={engagementId} />
         </div>
         <div className="flex items-center gap-2">
           {/* Bulk-action buttons — surface when EITHER rows or columns

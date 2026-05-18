@@ -98,6 +98,20 @@ function isPnL(category: string | undefined): boolean {
   return (category || '').toLowerCase() === 'pnl' || (category || '').toLowerCase().includes('p&l') || (category || '').toLowerCase().includes('profit');
 }
 
+/** Resolve an FS Line category to one of the four statement buckets
+ *  the totals strip groups by. Anything that doesn't match BS / CF /
+ *  Notes (including the fallback for un-categorised lines) lands in
+ *  P&L vs BS via isPnL, with BS as the safest fallback so a stray row
+ *  never disappears from the totals. */
+type StatementBucket = 'pl' | 'bs' | 'cf' | 'notes';
+function statementBucket(category: string | undefined): StatementBucket {
+  const c = (category || '').toLowerCase();
+  if (c === 'cashflow' || c.includes('cash')) return 'cf';
+  if (c === 'notes' || c.includes('note')) return 'notes';
+  if (isPnL(c)) return 'pl';
+  return 'bs';
+}
+
 export function ErrorSchedulePanel({ engagementId, materiality = 0, performanceMateriality = 0, clearlyTrivial = 0, userRole, onClose }: Props) {
   const [errors, setErrors] = useState<ErrorEntry[]>([]);
   const [meta, setMeta] = useState<ErrorMeta>({});
@@ -174,28 +188,30 @@ export function ErrorSchedulePanel({ engagementId, materiality = 0, performanceM
     return errors.filter(e => e.resolution !== 'in_tb');
   }, [errors, view]);
 
-  // Decide where each row's amount lands in the BS / P&L columns.
-  function rowSplit(e: ErrorEntry): { isPL: boolean; amount: number; isDr: boolean } {
+  // Decide where each row's amount lands across the four statement
+  // buckets (P&L / BS / CF / Notes) and on the Dr vs Cr side. `isPL`
+  // is kept for back-compat with the row rendering below — it's true
+  // for the PL bucket only, false for everything else.
+  function rowSplit(e: ErrorEntry): { isPL: boolean; bucket: StatementBucket; amount: number; isDr: boolean } {
     const cat = fsCategoryByName.get((e.fsLine || '').toLowerCase().trim());
-    const isPL = isPnL(cat);
+    const bucket = statementBucket(cat);
     const isDr = e.errorAmount >= 0;
-    return { isPL, amount: Math.abs(e.errorAmount), isDr };
+    return { isPL: bucket === 'pl', bucket, amount: Math.abs(e.errorAmount), isDr };
   }
 
   // Column totals across the *visible* rows. The Save check + the
-  // top-of-tab strip both read from these.
+  // top-of-tab strip both read from these. Tracks Dr / Cr for each
+  // of the four statement buckets.
   const totals = useMemo(() => {
-    let drA = 0, crA = 0, drBS = 0, crBS = 0, drPL = 0, crPL = 0;
+    let drA = 0, crA = 0;
+    const drBy: Record<StatementBucket, number> = { pl: 0, bs: 0, cf: 0, notes: 0 };
+    const crBy: Record<StatementBucket, number> = { pl: 0, bs: 0, cf: 0, notes: 0 };
     for (const e of visibleErrors) {
-      const { isPL, amount, isDr } = rowSplit(e);
-      if (isDr) drA += amount; else crA += amount;
-      if (isPL) {
-        if (isDr) drPL += amount; else crPL += amount;
-      } else {
-        if (isDr) drBS += amount; else crBS += amount;
-      }
+      const { bucket, amount, isDr } = rowSplit(e);
+      if (isDr) { drA += amount; drBy[bucket] += amount; }
+      else      { crA += amount; crBy[bucket] += amount; }
     }
-    return { drA, crA, drBS, crBS, drPL, crPL, balanced: Math.abs(drA - crA) < 0.005 };
+    return { drA, crA, drBy, crBy, balanced: Math.abs(drA - crA) < 0.005 };
   }, [visibleErrors, fsCategoryByName]);
 
   // Show the BS / P&L Dr/Cr columns only in Combined and Unadjusted
@@ -512,28 +528,63 @@ export function ErrorSchedulePanel({ engagementId, materiality = 0, performanceM
       </div>
 
       {/* Column totals strip — pinned at the top per spec.
-          Highlights when Dr ≠ Cr so the imbalance is visible before
-          the user attempts to save. */}
-      <div className={`flex items-center gap-3 px-3 py-2 rounded border ${totals.balanced ? 'bg-slate-50 border-slate-200' : 'bg-red-50 border-red-300'}`}>
-        <span className="text-[10px] uppercase tracking-wide text-slate-500 font-semibold">Totals</span>
-        <TotalCell label="Dr" value={totals.drA} />
-        <TotalCell label="Cr" value={totals.crA} />
-        {showSplit && (
-          <>
-            <span className="w-px h-5 bg-slate-300" />
-            <TotalCell label="BS Dr" value={totals.drBS} muted />
-            <TotalCell label="BS Cr" value={totals.crBS} muted />
-            <TotalCell label="P&L Dr" value={totals.drPL} muted />
-            <TotalCell label="P&L Cr" value={totals.crPL} muted />
-          </>
+          Three-row layout: statement header (P&L / BS / CF / Notes),
+          Dr / Cr sub-header per statement, and right-aligned amounts.
+          Highlights red when Dr ≠ Cr so the imbalance is visible
+          before the user attempts to save. */}
+      <div className={`px-3 py-2 rounded border ${totals.balanced ? 'bg-slate-50 border-slate-200' : 'bg-red-50 border-red-300'}`}>
+        <div className="flex items-center justify-between mb-1.5">
+          <span className="text-[10px] uppercase tracking-wide text-slate-500 font-semibold">Totals</span>
+          <span className="text-[10px]">
+            {totals.balanced ? (
+              <span className="text-green-700 inline-flex items-center gap-1"><CheckCircle2 className="h-3 w-3" /> Balanced — Dr {fmt(totals.drA)} = Cr {fmt(totals.crA)}</span>
+            ) : (
+              <span className="text-red-700 font-semibold inline-flex items-center gap-1"><AlertTriangle className="h-3 w-3" /> Out by {fmt(Math.abs(totals.drA - totals.crA))} (Dr {fmt(totals.drA)} vs Cr {fmt(totals.crA)})</span>
+            )}
+          </span>
+        </div>
+        {showSplit ? (
+          // 8-column grid → four statement groups, each with a Dr +
+          // Cr sub-column. Internal borders separate the groups so
+          // the eye can find the P&L / BS / CF / Notes pairing
+          // even on a wide table.
+          <div className="grid grid-cols-8 gap-x-2 text-[11px]">
+            {/* Row 1 — statement headers, each spans 2 columns */}
+            <div className="col-span-2 text-center text-[10px] uppercase tracking-wide text-slate-500 font-semibold border-r border-slate-200">P&amp;L</div>
+            <div className="col-span-2 text-center text-[10px] uppercase tracking-wide text-slate-500 font-semibold border-r border-slate-200">BS</div>
+            <div className="col-span-2 text-center text-[10px] uppercase tracking-wide text-slate-500 font-semibold border-r border-slate-200">CF</div>
+            <div className="col-span-2 text-center text-[10px] uppercase tracking-wide text-slate-500 font-semibold">Notes</div>
+
+            {/* Row 2 — Dr / Cr sub-headers under each statement */}
+            <div className="text-right text-[9px] uppercase tracking-wide text-slate-400 font-semibold">Dr</div>
+            <div className="text-right text-[9px] uppercase tracking-wide text-slate-400 font-semibold border-r border-slate-200 pr-2">Cr</div>
+            <div className="text-right text-[9px] uppercase tracking-wide text-slate-400 font-semibold">Dr</div>
+            <div className="text-right text-[9px] uppercase tracking-wide text-slate-400 font-semibold border-r border-slate-200 pr-2">Cr</div>
+            <div className="text-right text-[9px] uppercase tracking-wide text-slate-400 font-semibold">Dr</div>
+            <div className="text-right text-[9px] uppercase tracking-wide text-slate-400 font-semibold border-r border-slate-200 pr-2">Cr</div>
+            <div className="text-right text-[9px] uppercase tracking-wide text-slate-400 font-semibold">Dr</div>
+            <div className="text-right text-[9px] uppercase tracking-wide text-slate-400 font-semibold">Cr</div>
+
+            {/* Row 3 — amounts (right-aligned, monospaced for column ties) */}
+            <div className="text-right font-mono tabular-nums text-slate-800 font-semibold">{totals.drBy.pl    > 0 ? fmt(totals.drBy.pl)    : '—'}</div>
+            <div className="text-right font-mono tabular-nums text-slate-800 font-semibold border-r border-slate-200 pr-2">{totals.crBy.pl    > 0 ? fmt(totals.crBy.pl)    : '—'}</div>
+            <div className="text-right font-mono tabular-nums text-slate-800 font-semibold">{totals.drBy.bs    > 0 ? fmt(totals.drBy.bs)    : '—'}</div>
+            <div className="text-right font-mono tabular-nums text-slate-800 font-semibold border-r border-slate-200 pr-2">{totals.crBy.bs    > 0 ? fmt(totals.crBy.bs)    : '—'}</div>
+            <div className="text-right font-mono tabular-nums text-slate-800 font-semibold">{totals.drBy.cf    > 0 ? fmt(totals.drBy.cf)    : '—'}</div>
+            <div className="text-right font-mono tabular-nums text-slate-800 font-semibold border-r border-slate-200 pr-2">{totals.crBy.cf    > 0 ? fmt(totals.crBy.cf)    : '—'}</div>
+            <div className="text-right font-mono tabular-nums text-slate-800 font-semibold">{totals.drBy.notes > 0 ? fmt(totals.drBy.notes) : '—'}</div>
+            <div className="text-right font-mono tabular-nums text-slate-800 font-semibold">{totals.crBy.notes > 0 ? fmt(totals.crBy.notes) : '—'}</div>
+          </div>
+        ) : (
+          // Adjusted view drops the per-statement split — show the
+          // single Dr / Cr pair in the same grid shape as a baseline.
+          <div className="grid grid-cols-2 gap-x-2 text-[11px]">
+            <div className="text-right text-[9px] uppercase tracking-wide text-slate-400 font-semibold">Dr</div>
+            <div className="text-right text-[9px] uppercase tracking-wide text-slate-400 font-semibold">Cr</div>
+            <div className="text-right font-mono tabular-nums text-slate-800 font-semibold">{totals.drA > 0 ? fmt(totals.drA) : '—'}</div>
+            <div className="text-right font-mono tabular-nums text-slate-800 font-semibold">{totals.crA > 0 ? fmt(totals.crA) : '—'}</div>
+          </div>
         )}
-        <span className="ml-auto text-[10px]">
-          {totals.balanced ? (
-            <span className="text-green-700 inline-flex items-center gap-1"><CheckCircle2 className="h-3 w-3" /> Balanced</span>
-          ) : (
-            <span className="text-red-700 font-semibold inline-flex items-center gap-1"><AlertTriangle className="h-3 w-3" /> Out by {fmt(Math.abs(totals.drA - totals.crA))}</span>
-          )}
-        </span>
       </div>
 
       {/* Add-new form */}
@@ -930,15 +981,6 @@ export function ErrorSchedulePanel({ engagementId, materiality = 0, performanceM
 }
 
 // ───────────────────────────────────────────────────────────────────
-
-function TotalCell({ label, value, muted }: { label: string; value: number; muted?: boolean }) {
-  return (
-    <div className="inline-flex items-baseline gap-1">
-      <span className={`text-[9px] uppercase tracking-wide ${muted ? 'text-slate-400' : 'text-slate-500'} font-semibold`}>{label}</span>
-      <span className={`font-mono tabular-nums text-[11px] font-semibold ${muted ? 'text-slate-600' : 'text-slate-800'}`}>{value > 0 ? fmt(value) : '—'}</span>
-    </div>
-  );
-}
 
 function SignOffPill({ label, count, total }: { label: string; count: number; total: number }) {
   const all = count === total && total > 0;

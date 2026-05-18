@@ -348,7 +348,14 @@ export function OutstandingTab({ clientId, token, engagementId, onCountChange, v
                           {item.chatHistory && item.chatHistory.length > 0 && (
                             <div className="mb-2 space-y-1.5 max-h-40 overflow-y-auto">
                               {item.chatHistory.map((msg, mi) => (
-                                <div key={mi} className={`flex ${msg.from === 'client' ? 'justify-end' : 'justify-start'}`}>
+                                // Larger indent between speakers — `pl-12` /
+                                // `pr-12` on the outer row enforces a visible
+                                // gap on the OPPOSITE side of each bubble so
+                                // the conversation reads as a back-and-forth
+                                // chat rather than two stacked paragraphs.
+                                // Bubble itself stays max-w-[80%] of the
+                                // reduced row width.
+                                <div key={mi} className={`flex ${msg.from === 'client' ? 'justify-end pl-12' : 'justify-start pr-12'}`}>
                                   <div className={`max-w-[80%] px-3 py-1.5 rounded-lg text-xs ${
                                     msg.from === 'client' ? 'bg-blue-100 text-blue-900' : 'bg-slate-100 text-slate-800'
                                   }`}>
