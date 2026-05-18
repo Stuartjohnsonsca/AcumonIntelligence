@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useMemo, Fragment } from 'react';
+import { useState, useEffect, useMemo, useCallback, Fragment } from 'react';
 import { Loader2, ArrowLeft, FileText, Play, ClipboardList, ChevronDown, ChevronRight, CheckCircle2, XCircle, Clock, AlertTriangle, GitBranch, Calculator } from 'lucide-react';
 import { useScrollToAnchor } from '@/lib/hooks/useScrollToAnchor';
 import { TestExecutionPanel } from './TestExecutionPanel';
@@ -1025,22 +1025,25 @@ export function AuditPlanPanel({ engagementId, clientId, periodId, onClose, peri
     }
     return map;
   }, [tbRows, fsLevelMap]);
+  // Shared rollup helper — counts P / R / RI sign-offs across a
+  // filtered set of `dbConclusions` and returns the three dot states.
+  // Pulled out so the Level-1 (statement / other) and Level-2 (FS
+  // level) rollups stay in sync without duplicating logic.
+  const rollupFromConclusions = useCallback((subset: any[]): { preparer: RollupDot; reviewer: RollupDot; ri: RollupDot } => {
+    if (subset.length === 0) return { preparer: 'pending', reviewer: 'pending', ri: 'pending' };
+    const sP = subset.filter(c => !!c.conclusion || !!c.preparerSignedAt).length;
+    const sR = subset.filter(c => !!c.reviewedBy || !!c.riSignedBy).length;
+    const sI = subset.filter(c => !!c.riSignedBy).length;
+    const dot = (count: number): RollupDot => count === subset.length ? 'green' : count > 0 ? 'orange' : 'pending';
+    return { preparer: dot(sP), reviewer: dot(sR), ri: dot(sI) };
+  }, []);
   const tabRollups = useMemo(() => {
     const out: Record<string, { preparer: RollupDot; reviewer: RollupDot; ri: RollupDot }> = {};
-    function rollupFor(predicate: (c: any) => boolean): { preparer: RollupDot; reviewer: RollupDot; ri: RollupDot } {
-      const subset = dbConclusions.filter(predicate);
-      if (subset.length === 0) return { preparer: 'pending', reviewer: 'pending', ri: 'pending' };
-      const sP = subset.filter(c => !!c.conclusion || !!c.preparerSignedAt).length;
-      const sR = subset.filter(c => !!c.reviewedBy || !!c.riSignedBy).length;
-      const sI = subset.filter(c => !!c.riSignedBy).length;
-      const dot = (count: number): RollupDot => count === subset.length ? 'green' : count > 0 ? 'orange' : 'pending';
-      return { preparer: dot(sP), reviewer: dot(sR), ri: dot(sI) };
-    }
     // Statement tabs — filter dbConclusions to those whose fsLine name
     // is in this statement's levels set.
     for (const stmt of statements) {
       const lvlSet = statementLevels[stmt];
-      out[stmt] = rollupFor(c => !!lvlSet && lvlSet.has(c.fsLine));
+      out[stmt] = rollupFromConclusions(dbConclusions.filter(c => !!lvlSet && lvlSet.has(c.fsLine)));
     }
     // Other tabs — Taxation comes from its own state; everything else
     // is pending until backend signoffs are wired.
@@ -1050,7 +1053,19 @@ export function AuditPlanPanel({ engagementId, clientId, periodId, onClose, peri
       if (!out[t]) out[t] = { preparer: 'pending', reviewer: 'pending', ri: 'pending' };
     }
     return out;
-  }, [statements, statementLevels, dbConclusions, taxationRollup]);
+  }, [statements, statementLevels, dbConclusions, taxationRollup, rollupFromConclusions]);
+
+  // Level-2 sub-tab rollups (FS Levels like Revenue, Cost of Sales).
+  // Each row in the parent statement rolls up its own conclusions —
+  // this is the data the statement rollup aggregates over, surfaced
+  // per-level so each sub-tab also shows the three dots.
+  const levelRollups = useMemo(() => {
+    const out: Record<string, { preparer: RollupDot; reviewer: RollupDot; ri: RollupDot }> = {};
+    for (const lvl of levels) {
+      out[lvl] = rollupFromConclusions(dbConclusions.filter(c => c.fsLine === lvl));
+    }
+    return out;
+  }, [levels, dbConclusions, rollupFromConclusions]);
 
   // Notes — only for 3-level statements (Balance Sheet), filtered by value/risk
   const notes = useMemo(() => {
@@ -1065,6 +1080,18 @@ export function AuditPlanPanel({ engagementId, clientId, periodId, onClose, peri
       .filter(n => noteAmounts[n] > 0 || significantRiskItems.has(n))
       .sort((a, b) => getStatutoryPosition(framework || 'FRS102', activeStatement, a) - getStatutoryPosition(framework || 'FRS102', activeStatement, b));
   }, [tbRows, activeStatement, activeLevel, significantRiskItems, framework, fsLevelMap]);
+
+  // Level-3 sub-tab rollups (Notes — Balance Sheet only). Filter by
+  // both the active level (parent) AND the note name on the
+  // conclusion so a sibling level's note doesn't bleed in. Declared
+  // after `notes` to avoid the TDZ on the deps array.
+  const noteRollups = useMemo(() => {
+    const out: Record<string, { preparer: RollupDot; reviewer: RollupDot; ri: RollupDot }> = {};
+    for (const note of notes) {
+      out[note] = rollupFromConclusions(dbConclusions.filter(c => c.fsLine === activeLevel && c.fsNote === note));
+    }
+    return out;
+  }, [notes, activeLevel, dbConclusions, rollupFromConclusions]);
 
   const filteredRows = useMemo(() => {
     return tbRows.filter(row => {
@@ -1482,16 +1509,19 @@ export function AuditPlanPanel({ engagementId, clientId, periodId, onClose, peri
         ))}
       </div>
 
-      {/* Level 2: FS Level sub-tabs */}
+      {/* Level 2: FS Level sub-tabs. Same dots-underneath pattern
+          as the parent statement row — each level's three dots roll
+          up into the statement above. */}
       {!activeOtherTab && levels.length > 0 && (
         <div className="flex flex-wrap gap-0.5 gap-y-0.5 bg-slate-100 rounded p-0.5">
           {levels.map(level => (
             <button key={level}
               onClick={() => { setActiveLevel(level); setActiveNote(''); }}
-              className={`px-2 py-1 text-[10px] font-medium rounded whitespace-nowrap transition-colors ${
+              className={`px-2 py-1 text-[10px] font-medium rounded whitespace-nowrap transition-colors flex flex-col items-center gap-0.5 ${
                 activeLevel === level ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-700'
               }`}>
-              {level}
+              <span>{level}</span>
+              <TabRollupDots rollup={levelRollups[level]} />
             </button>
           ))}
         </div>
@@ -1662,11 +1692,12 @@ export function AuditPlanPanel({ engagementId, clientId, periodId, onClose, peri
             const isSig = significantRiskItems.has(note);
             return (
               <button key={note} onClick={() => setActiveNote(note)}
-                className={`px-2 py-0.5 text-[9px] font-medium rounded border transition-colors ${
+                className={`px-2 py-0.5 text-[9px] font-medium rounded border transition-colors flex flex-col items-center gap-0.5 ${
                   activeNote === note ? 'bg-blue-100 text-blue-700 border-blue-300' :
                   isSig ? 'bg-red-50 text-red-700 border-red-200' : 'bg-white text-slate-500 border-slate-200'
                 }`}>
-                {note}{isSig && <span className="ml-0.5 text-red-500">⚠</span>}
+                <span>{note}{isSig && <span className="ml-0.5 text-red-500">⚠</span>}</span>
+                <TabRollupDots rollup={noteRollups[note]} />
               </button>
             );
           })}
