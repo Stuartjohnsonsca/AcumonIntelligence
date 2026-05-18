@@ -21,7 +21,7 @@ import {
   type NodeTypes,
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
-import { Plus, Trash2, Diamond, Circle, Square, X, FileText as FileIcon, User, ArrowDownToLine, ArrowUpFromLine, MapPin, Paperclip, Camera, Upload, Eye } from 'lucide-react';
+import { Plus, Trash2, Diamond, Circle, Square, X, FileText as FileIcon, User, ArrowDownToLine, ArrowUpFromLine, MapPin, Paperclip, Camera, Upload, Eye, MoveHorizontal, MoveVertical } from 'lucide-react';
 import { ScreenCaptureModal } from './ScreenCaptureModal';
 import { expandZipFile } from '@/lib/client-unzip';
 
@@ -43,6 +43,23 @@ interface WalkthroughFlowEditorProps {
   readOnly?: boolean;
   userRole?: string;
   engagementId?: string;
+}
+
+/** Direction of the flow's auto-layout + node handle positions.
+ *  Horizontal (left → right) is the default since most audit
+ *  walkthroughs read more naturally as a left-to-right process
+ *  diagram than a top-down one. Persisted to localStorage so a user
+ *  who toggled to vertical gets it back on the next visit. */
+type FlowDirection = 'horizontal' | 'vertical';
+const DIRECTION_STORAGE_KEY = 'walkthrough-flow-direction';
+
+function loadStoredDirection(): FlowDirection {
+  if (typeof window === 'undefined') return 'horizontal';
+  try {
+    const v = window.localStorage.getItem(DIRECTION_STORAGE_KEY);
+    if (v === 'vertical' || v === 'horizontal') return v;
+  } catch { /* ignore */ }
+  return 'horizontal';
 }
 
 // ─── Shared: Metadata badges + Sign-off dots ───
@@ -338,6 +355,7 @@ function WtStartNode({ id, data }: NodeProps) {
     setNodes(nds => nds.filter(n => n.id !== id));
   }, [id, setNodes]);
 
+  const direction = (data._direction as FlowDirection) || 'horizontal';
   return (
     <div className="relative px-6 py-2 rounded-full bg-green-100 border-2 border-green-400 text-green-800 text-xs font-semibold text-center min-w-[120px] group">
       {String(data.label || '') || 'Process Start'}
@@ -346,7 +364,7 @@ function WtStartNode({ id, data }: NodeProps) {
           <X className="h-2.5 w-2.5" />
         </button>
       )}
-      <Handle type="source" position={Position.Bottom} className="!bg-green-500 !w-2.5 !h-2.5" />
+      <Handle type="source" position={direction === 'horizontal' ? Position.Right : Position.Bottom} className="!bg-green-500 !w-2.5 !h-2.5" />
     </div>
   );
 }
@@ -360,9 +378,10 @@ function WtActionNode({ id, data, selected }: NodeProps) {
     setNodes(nds => nds.filter(n => n.id !== id));
   }, [id, setNodes]);
 
+  const direction = (data._direction as FlowDirection) || 'horizontal';
   return (
     <div className={`relative px-4 py-2 rounded-lg bg-blue-50 border-2 text-blue-800 text-xs text-center min-w-[180px] max-w-[280px] group ${selected ? 'border-blue-500 shadow-md' : 'border-blue-300'}`}>
-      <Handle type="target" position={Position.Top} className="!bg-blue-400 !w-2.5 !h-2.5" />
+      <Handle type="target" position={direction === 'horizontal' ? Position.Left : Position.Top} className="!bg-blue-400 !w-2.5 !h-2.5" />
       <div onDoubleClick={() => !readOnly && setEditing(true)} className="cursor-text">
         {String(data.label || '')}
       </div>
@@ -378,7 +397,7 @@ function WtActionNode({ id, data, selected }: NodeProps) {
         </button>
       )}
       {editing && <StepEditPanel data={data} nodeId={id} onClose={() => setEditing(false)} />}
-      <Handle type="source" position={Position.Bottom} className="!bg-blue-400 !w-2.5 !h-2.5" />
+      <Handle type="source" position={direction === 'horizontal' ? Position.Right : Position.Bottom} className="!bg-blue-400 !w-2.5 !h-2.5" />
     </div>
   );
 }
@@ -392,9 +411,10 @@ function WtDecisionNode({ id, data, selected }: NodeProps) {
     setNodes(nds => nds.filter(n => n.id !== id));
   }, [id, setNodes]);
 
+  const direction = (data._direction as FlowDirection) || 'horizontal';
   return (
     <div className={`relative px-4 py-2 rounded-lg bg-amber-50 border-dashed text-amber-800 text-xs text-center min-w-[200px] max-w-[300px] group ${data.isSignificantControl ? 'border-[3px] border-red-600 shadow-red-100 shadow-md' : `border-2 ${selected ? 'border-amber-500 shadow-md' : 'border-amber-400'}`}`}>
-      <Handle type="target" position={Position.Top} className="!bg-amber-500 !w-2.5 !h-2.5" />
+      <Handle type="target" position={direction === 'horizontal' ? Position.Left : Position.Top} className="!bg-amber-500 !w-2.5 !h-2.5" />
       <div className="flex items-center justify-center gap-1">
         <span className="text-[8px] text-amber-500 font-bold">DECISION</span>
         {data.isSignificantControl ? <span className="text-[7px] px-1 bg-red-100 text-red-700 rounded font-bold">SIGNIFICANT CONTROL</span> : null}
@@ -431,8 +451,21 @@ function WtDecisionNode({ id, data, selected }: NodeProps) {
         </button>
       )}
       {editing && <StepEditPanel data={data} nodeId={id} onClose={() => setEditing(false)} isDecision />}
-      <Handle type="source" position={Position.Bottom} id="yes" className="!bg-green-500 !w-2.5 !h-2.5" style={{ left: '30%' }} />
-      <Handle type="source" position={Position.Bottom} id="no" className="!bg-red-500 !w-2.5 !h-2.5" style={{ left: '70%' }} />
+      {/* Yes / No source handles. In horizontal mode they both leave
+          on the right edge with vertical offsets (top:30% = Yes
+          higher, top:70% = No lower). In vertical mode they sit on
+          the bottom edge with horizontal offsets. */}
+      {direction === 'horizontal' ? (
+        <>
+          <Handle type="source" position={Position.Right} id="yes" className="!bg-green-500 !w-2.5 !h-2.5" style={{ top: '30%' }} />
+          <Handle type="source" position={Position.Right} id="no"  className="!bg-red-500 !w-2.5 !h-2.5"   style={{ top: '70%' }} />
+        </>
+      ) : (
+        <>
+          <Handle type="source" position={Position.Bottom} id="yes" className="!bg-green-500 !w-2.5 !h-2.5" style={{ left: '30%' }} />
+          <Handle type="source" position={Position.Bottom} id="no"  className="!bg-red-500 !w-2.5 !h-2.5"   style={{ left: '70%' }} />
+        </>
+      )}
     </div>
   );
 }
@@ -442,9 +475,10 @@ function WtEndNode({ id, data, selected }: NodeProps) {
   const { setNodes } = useReactFlow();
   const readOnly = data._readOnly as boolean;
 
+  const direction = (data._direction as FlowDirection) || 'horizontal';
   return (
     <div className={`relative px-6 py-2 rounded-full bg-red-100 border-2 text-red-800 text-xs font-semibold text-center min-w-[120px] ${selected ? 'border-red-500 shadow-md' : 'border-red-300'}`}>
-      <Handle type="target" position={Position.Top} className="!bg-red-400 !w-2.5 !h-2.5" />
+      <Handle type="target" position={direction === 'horizontal' ? Position.Left : Position.Top} className="!bg-red-400 !w-2.5 !h-2.5" />
       <div onDoubleClick={() => !readOnly && setEditing(true)} className="cursor-text">
         {String(data.label || '') || 'Process End'}
       </div>
@@ -475,7 +509,7 @@ function normalizeNext(next: any): string[] {
   return [];
 }
 
-function flowStepsToReactFlow(steps: FlowStep[]): { nodes: Node[]; edges: Edge[] } {
+function flowStepsToReactFlow(steps: FlowStep[], direction: FlowDirection = 'horizontal'): { nodes: Node[]; edges: Edge[] } {
   if (!steps.length) return { nodes: [], edges: [] };
 
   // Normalize next field — AI sometimes returns a string instead of array
@@ -484,7 +518,10 @@ function flowStepsToReactFlow(steps: FlowStep[]): { nodes: Node[]; edges: Edge[]
   const nodes: Node[] = [];
   const edges: Edge[] = [];
 
-  // BFS for top-down layout
+  // BFS for auto-layout. `levels` holds the BFS depth groupings; each
+  // entry is an array of step ids at that level. Layout then maps
+  // level → axis-1 position and within-level index → axis-2 position,
+  // swapping x ↔ y based on `direction`.
   const startStep = normalized.find(s => s.type === 'start') || normalized[0];
   const visited = new Set<string>();
   const levels: string[][] = [];
@@ -515,22 +552,35 @@ function flowStepsToReactFlow(steps: FlowStep[]): { nodes: Node[]; edges: Edge[]
     }
   }
 
-  // Position nodes
-  const Y_GAP = 130;
-  const X_GAP = 260;
-  const CENTER_X = 400;
+  // Position nodes. Two axes:
+  //   • level-axis: distance from the Start node (BFS depth).
+  //   • peer-axis: position within the same level (siblings).
+  // Vertical layout (top-down):  level → y, peer → x.
+  // Horizontal layout (left-right): level → x, peer → y.
+  // Gaps differ on each axis because node footprints are wider
+  // than they are tall — horizontal needs a wider level gap so
+  // arrows have room to render, vertical needs more peer-axis room.
+  const LEVEL_GAP_H = 320;  // x gap between BFS levels (horizontal)
+  const LEVEL_GAP_V = 130;  // y gap between BFS levels (vertical)
+  const PEER_GAP_H  = 160;  // y gap between peers (horizontal)
+  const PEER_GAP_V  = 260;  // x gap between peers (vertical)
+  const CENTER = 400;       // axis centre for centring the peer cluster
 
   for (let lvl = 0; lvl < levels.length; lvl++) {
     const ids = levels[lvl];
-    const totalWidth = (ids.length - 1) * X_GAP;
-    const startX = CENTER_X - totalWidth / 2;
+    const peerGap = direction === 'horizontal' ? PEER_GAP_H : PEER_GAP_V;
+    const totalSpan = (ids.length - 1) * peerGap;
+    const startPeer = CENTER - totalSpan / 2;
 
     for (let col = 0; col < ids.length; col++) {
       const step = stepMap.get(ids[col])!;
+      const position = direction === 'horizontal'
+        ? { x: lvl * LEVEL_GAP_H, y: startPeer + col * peerGap }
+        : { x: startPeer + col * peerGap, y: lvl * LEVEL_GAP_V };
       nodes.push({
         id: step.id,
         type: step.type,
-        position: { x: startX + col * X_GAP, y: lvl * Y_GAP },
+        position,
         data: { label: step.label, condition: step.condition, sourceDoc: step.sourceDoc, outputDoc: step.outputDoc, responsible: step.responsible, docLocation: step.docLocation, isSignificantControl: step.isSignificantControl, approvalChain: step.approvalChain, attachments: step.attachments, stepSignOffs: step.stepSignOffs },
       });
     }
@@ -620,17 +670,53 @@ function nextId(prefix = 'step') {
 // ─── Main Editor (inner, needs ReactFlowProvider) ───
 
 function FlowEditorInner({ steps, onStepsChange, readOnly = false, userRole, engagementId }: WalkthroughFlowEditorProps) {
-  const { nodes: initialNodes, edges: initialEdges } = useMemo(() => flowStepsToReactFlow(steps), []);
+  // Flow direction — defaults to horizontal but the user can toggle.
+  // Lazy init so localStorage is only read on first render (SSR safe).
+  const [direction, setDirectionState] = useState<FlowDirection>(loadStoredDirection);
+  const { nodes: initialNodes, edges: initialEdges } = useMemo(() => flowStepsToReactFlow(steps, direction), []);
   const [nodes, setNodes, onNodesChange] = useNodesState(initialNodes);
   const [edges, setEdges, onEdgesChange] = useEdgesState(initialEdges);
   const reactFlowInstance = useReactFlow();
   const changeTimerRef = useRef<ReturnType<typeof setTimeout>>();
 
-  // Inject readOnly flag, userRole, and engagementId into all node data
+  // Inject readOnly flag, userRole, engagementId, and flow direction
+  // into every node's data so the node components can read them via
+  // `data._direction` etc. without needing context plumbing.
   const enrichedNodes = useMemo(() =>
-    nodes.map(n => ({ ...n, data: { ...n.data, _readOnly: readOnly, _userRole: userRole || '', _engagementId: engagementId || '' } })),
-    [nodes, readOnly, userRole, engagementId]
+    nodes.map(n => ({ ...n, data: { ...n.data, _readOnly: readOnly, _userRole: userRole || '', _engagementId: engagementId || '', _direction: direction } })),
+    [nodes, readOnly, userRole, engagementId, direction]
   );
+
+  /** Toggle the layout direction. Recomputes the BFS auto-layout so
+   *  existing nodes flip from a top-down arrangement to a left-right
+   *  one (or vice-versa) without the user having to drag each node.
+   *  User-edited positions are lost on toggle — this is acceptable
+   *  because the alternative (preserving custom positions) leaves a
+   *  rotated flow looking exactly as bad as if no re-layout had run.
+   *  Persists the choice to localStorage so it sticks across visits. */
+  const toggleDirection = useCallback(() => {
+    setDirectionState(prev => {
+      const next: FlowDirection = prev === 'horizontal' ? 'vertical' : 'horizontal';
+      try { window.localStorage.setItem(DIRECTION_STORAGE_KEY, next); } catch { /* ignore */ }
+      // Recompute layout using the current edges → steps round-trip,
+      // applied with the new direction. Faster than fetching fresh
+      // server state — we already hold the canonical model in-memory.
+      const currentSteps = reactFlowToFlowSteps(nodesRef.current, edgesRef.current);
+      const { nodes: relaidOut } = flowStepsToReactFlow(currentSteps, next);
+      // Preserve node ids — relaidOut produces brand new node objects
+      // with the same ids, but we want to keep any in-flight selection
+      // / drag state attached to the existing nodes. Merge positions
+      // back over the originals.
+      setNodes(curr => {
+        const byId = new Map(relaidOut.map(n => [n.id, n.position]));
+        return curr.map(n => byId.has(n.id) ? { ...n, position: byId.get(n.id)! } : n);
+      });
+      // Fit the new layout into view next tick so any axis change is
+      // visible without manual zoom-out.
+      setTimeout(() => reactFlowInstance.fitView?.({ padding: 0.3 }), 0);
+      return next;
+    });
+  }, [reactFlowInstance, setNodes]);
 
   // Propagate changes back (debounced, flush on unmount). The
   // callback is held in a ref so the debounce/flush logic only
@@ -751,11 +837,43 @@ function FlowEditorInner({ steps, onStepsChange, readOnly = false, userRole, eng
             nodeType="decision" data={{ label: 'New Decision', condition: '' }} />
           <DraggableItem label="End" icon={<Circle className="h-3 w-3 text-red-500" />} color="bg-red-50 border-red-200"
             nodeType="end" data={{ label: 'Process End' }} />
+          {/* Layout direction — flips the auto-layout between
+              left-to-right and top-down. Sits at the bottom of the
+              palette so it's always reachable without crowding the
+              canvas overlay. */}
+          <div className="pt-2 mt-2 border-t border-slate-200">
+            <p className="text-[9px] font-bold text-slate-500 uppercase mb-1">Layout</p>
+            <button
+              type="button"
+              onClick={toggleDirection}
+              className="w-full inline-flex items-center justify-center gap-1.5 px-2 py-1.5 rounded-md border border-slate-300 bg-white text-[10px] text-slate-700 hover:bg-slate-50"
+              title={direction === 'horizontal' ? 'Switch to top-down (vertical)' : 'Switch to left-right (horizontal)'}
+            >
+              {direction === 'horizontal'
+                ? <><MoveHorizontal className="h-3 w-3" /> Horizontal</>
+                : <><MoveVertical className="h-3 w-3" /> Vertical</>}
+            </button>
+          </div>
         </div>
       )}
 
       {/* Canvas */}
-      <div className="flex-1 border border-slate-200 rounded-lg overflow-hidden bg-white" onKeyDown={onKeyDown} tabIndex={0}>
+      <div className="flex-1 border border-slate-200 rounded-lg overflow-hidden bg-white relative" onKeyDown={onKeyDown} tabIndex={0}>
+        {/* Direction toggle is also surfaced as a small floating chip
+            on the canvas itself, so read-only viewers (and anyone
+            who's collapsed the palette) can still flip the layout. */}
+        {readOnly && (
+          <button
+            type="button"
+            onClick={toggleDirection}
+            className="absolute top-2 right-2 z-10 inline-flex items-center gap-1 px-2 py-1 rounded-md border border-slate-300 bg-white/95 text-[10px] text-slate-700 hover:bg-white shadow-sm"
+            title={direction === 'horizontal' ? 'Switch to top-down (vertical)' : 'Switch to left-right (horizontal)'}
+          >
+            {direction === 'horizontal'
+              ? <><MoveHorizontal className="h-3 w-3" /> Horizontal</>
+              : <><MoveVertical className="h-3 w-3" /> Vertical</>}
+          </button>
+        )}
         <ReactFlow
           proOptions={{ hideAttribution: true }}
           nodes={enrichedNodes}
