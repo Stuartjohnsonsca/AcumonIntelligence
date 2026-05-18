@@ -22,7 +22,7 @@
 
 import { use, useCallback, useEffect, useMemo, useState, Fragment } from 'react';
 import { useSearchParams, useRouter } from 'next/navigation';
-import { ChevronDown, ChevronRight, UserPlus, UserX, CheckCircle2, AlertCircle, Loader2, Save, MessageSquare, ArrowLeft, Shield } from 'lucide-react';
+import { ChevronDown, ChevronRight, UserPlus, UserX, CheckCircle2, AlertCircle, Loader2, Save, MessageSquare, ArrowLeft, Shield, X } from 'lucide-react';
 import { MessagingChannelsEditor, type ChannelsState } from '@/components/portal/MessagingChannelsEditor';
 
 interface Staff {
@@ -43,6 +43,22 @@ interface Staff {
   smsNumber?: string | null;
   smsOptIn?: boolean;
   wechatOptIn?: boolean;
+  // Cross-engagement allocation — one entry per Client.Period the
+  // staff member is on (within engagements the calling Portal
+  // Principal has access to). `isCurrent` flags the engagement
+  // being edited so the UI can highlight it; `staffId` is the row id
+  // on that engagement (used by the pill's remove action).
+  allocations?: Array<{ staffId: string; engagementId: string; accessConfirmed: boolean; isCurrent: boolean }>;
+}
+
+/** One engagement the calling Portal Principal has access to. Drives
+ *  the per-staff allocation pills + "+ Allocate to…" dropdown. */
+interface PrincipalEngagement {
+  id: string;
+  clientName: string;
+  label: string;
+  auditType: string;
+  isCurrent: boolean;
 }
 interface Suggestion {
   sourceEngagementId: string | null;
@@ -169,6 +185,54 @@ export default function PortalSetupPage({ params }: { params: Promise<{ engageme
       setError(err?.message || 'Failed to add staff');
     } finally {
       setAdding(false);
+    }
+  }
+
+  // Allocate an existing staff member (by email + name) to another
+  // engagement the calling Portal Principal also has access to. Reuses
+  // the same POST /staff endpoint that the local "Add" flow uses —
+  // the server takes the engagementId from the body, so the request
+  // is principal-guarded on the target engagement.
+  async function allocateStaffToEngagement(s: Staff, targetEngagementId: string) {
+    try {
+      const r = await fetch(`/api/portal/setup/staff?token=${encodeURIComponent(token)}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          engagementId: targetEngagementId,
+          name: s.name,
+          email: s.email,
+          role: s.role || null,
+          // Inherit the access state from the source engagement so the
+          // Principal doesn't have to re-confirm somebody they've
+          // already approved on a sibling period.
+          accessConfirmed: !!s.accessConfirmed,
+          inheritedFromEngagementId: engagementId,
+        }),
+      });
+      if (!r.ok) {
+        const data = await r.json().catch(() => ({}));
+        throw new Error(data?.error || `Failed (${r.status})`);
+      }
+      await load();
+    } catch (err: any) {
+      setError(err?.message || 'Failed to allocate');
+    }
+  }
+
+  // Remove a staff member from a non-current engagement (the pill's
+  // X button). Soft-delete via the same DELETE handler the local
+  // "remove" button uses — server checks the caller is the Portal
+  // Principal for the target engagement, which we already know is
+  // true (we only render pills for principal engagements).
+  async function unallocateStaffFromEngagement(targetStaffId: string, label: string) {
+    if (!confirm(`Remove this staff member from "${label}"? Their access will be revoked on that period only.`)) return;
+    try {
+      const r = await fetch(`/api/portal/setup/staff/${targetStaffId}?token=${encodeURIComponent(token)}`, { method: 'DELETE' });
+      if (!r.ok) throw new Error(`Failed (${r.status})`);
+      await load();
+    } catch (err: any) {
+      setError(err?.message || 'Failed to unallocate');
     }
   }
 
@@ -515,7 +579,14 @@ export default function PortalSetupPage({ params }: { params: Promise<{ engageme
                       <th className="text-left font-medium py-2">Name</th>
                       <th className="text-left font-medium">Email</th>
                       <th className="text-left font-medium">Role</th>
-                      <th className="text-center font-medium">Access</th>
+                      {/* Cross-period allocation pills — one per
+                          Client.Period the staff is on (within the
+                          principal's set of engagements). Lets the
+                          principal see access at a glance and add /
+                          remove from the same screen instead of
+                          tab-switching across engagements. */}
+                      <th className="text-left font-medium">Allocated to</th>
+                      <th className="text-center font-medium">Access (this period)</th>
                       <th className="text-right font-medium"></th>
                     </tr>
                   </thead>
@@ -559,6 +630,15 @@ export default function PortalSetupPage({ params }: { params: Promise<{ engageme
                             </td>
                             <td className="text-slate-600 align-top">{s.email}</td>
                             <td className="text-slate-500 align-top">{s.role || '—'}</td>
+                            <td className="align-top py-2">
+                              <AllocationPills
+                                staff={s}
+                                currentEngagementId={engagementId}
+                                principalEngagements={(state.principalEngagements || []) as PrincipalEngagement[]}
+                                onAllocate={(targetEngId) => allocateStaffToEngagement(s, targetEngId)}
+                                onUnallocate={unallocateStaffFromEngagement}
+                              />
+                            </td>
                             <td className="text-center align-top">
                               <button
                                 onClick={() => updateStaff(s.id, { accessConfirmed: !s.accessConfirmed })}
@@ -577,7 +657,7 @@ export default function PortalSetupPage({ params }: { params: Promise<{ engageme
                           {isExpanded && (
                             <tr className="bg-slate-50/60 border-b border-slate-100">
                               <td></td>
-                              <td colSpan={5} className="py-3 pr-3">
+                              <td colSpan={6} className="py-3 pr-3">
                                 <MessagingChannelsEditor
                                   mode="staff"
                                   token={token}
@@ -1040,6 +1120,138 @@ function WeComJoinCard({
           </div>
         </div>
       </div>
+    </div>
+  );
+}
+
+// ─── Allocation pills ────────────────────────────────────────────────
+//
+// Renders one pill per Client.Period the staff member is allocated to,
+// with the current period highlighted blue and other periods shown as
+// neutral chips. Periods the staff is NOT yet on appear in a "+
+// Allocate to…" dropdown that fires the cross-period allocation flow.
+//
+// Pill colour key:
+//   blue + (this period)    — the engagement being edited now
+//   slate                   — other principal-managed engagements the
+//                             staff is on; the dot inside marks
+//                             whether access has been confirmed on
+//                             that period (green = confirmed, amber =
+//                             pending)
+//   "+ Allocate to…"        — dropdown of remaining periods
+
+interface AllocationPillsProps {
+  staff: Staff;
+  currentEngagementId: string;
+  principalEngagements: PrincipalEngagement[];
+  onAllocate: (targetEngagementId: string) => void | Promise<void>;
+  onUnallocate: (targetStaffId: string, label: string) => void | Promise<void>;
+}
+
+function AllocationPills({ staff, currentEngagementId, principalEngagements, onAllocate, onUnallocate }: AllocationPillsProps) {
+  const [pickerOpen, setPickerOpen] = useState(false);
+  const allocations = staff.allocations ?? [];
+
+  // Index allocations by engagementId for O(1) lookups when rendering.
+  const allocByEng = new Map(allocations.map(a => [a.engagementId, a]));
+
+  // Engagements the staff is NOT yet on — these populate the picker.
+  const availableToAdd = principalEngagements.filter(e => !allocByEng.has(e.id));
+
+  // Engagements the staff IS on — render in a stable order: current
+  // engagement first, then by client name / period label.
+  const labelById = new Map(principalEngagements.map(e => [e.id, e.label]));
+  const allocatedEngagements = principalEngagements.filter(e => allocByEng.has(e.id));
+
+  // If the staff has allocations on engagements we don't have label
+  // metadata for (shouldn't normally happen — would mean a sibling
+  // engagement we don't have read access to leaked in), surface them
+  // as plain "Other period" chips so they don't disappear silently.
+  const orphanAllocations = allocations.filter(a => !labelById.has(a.engagementId));
+
+  if (allocatedEngagements.length === 0 && orphanAllocations.length === 0 && availableToAdd.length === 0) {
+    // Single-engagement principal — nothing to show. Render a soft
+    // hint instead of an empty cell so the layout doesn't collapse.
+    return <span className="text-[11px] text-slate-400 italic">—</span>;
+  }
+
+  return (
+    <div className="flex flex-wrap items-center gap-1.5">
+      {allocatedEngagements.map(e => {
+        const a = allocByEng.get(e.id)!;
+        if (a.isCurrent) {
+          return (
+            <span
+              key={e.id}
+              className="inline-flex items-center gap-1 px-2 py-0.5 text-[11px] rounded-full bg-blue-100 text-blue-800 border border-blue-200"
+              title="The Client.Period currently being edited"
+            >
+              <span className="w-1.5 h-1.5 rounded-full bg-blue-500" />
+              {e.label}
+              <span className="text-[10px] text-blue-500 ml-0.5">(this)</span>
+            </span>
+          );
+        }
+        return (
+          <span
+            key={e.id}
+            className="inline-flex items-center gap-1 px-2 py-0.5 text-[11px] rounded-full bg-slate-50 text-slate-700 border border-slate-200"
+            title={a.accessConfirmed ? `${e.label} — access confirmed` : `${e.label} — access pending`}
+          >
+            <span className={`w-1.5 h-1.5 rounded-full ${a.accessConfirmed ? 'bg-emerald-500' : 'bg-amber-400'}`} />
+            {e.label}
+            <button
+              type="button"
+              onClick={() => onUnallocate(a.staffId, e.label)}
+              className="text-slate-400 hover:text-red-600 -mr-0.5"
+              title={`Remove from ${e.label}`}
+            >
+              <X className="w-2.5 h-2.5" />
+            </button>
+          </span>
+        );
+      })}
+
+      {orphanAllocations.map(a => (
+        <span
+          key={a.engagementId}
+          className="inline-flex items-center gap-1 px-2 py-0.5 text-[11px] rounded-full bg-slate-50 text-slate-500 border border-slate-200"
+          title="Allocated on a period outside this Portal Principal's set"
+        >
+          Other period
+        </span>
+      ))}
+
+      {availableToAdd.length > 0 && (
+        <div className="relative">
+          <button
+            type="button"
+            onClick={() => setPickerOpen(o => !o)}
+            className="inline-flex items-center gap-1 px-2 py-0.5 text-[11px] rounded-full border border-dashed border-slate-300 text-slate-500 hover:border-blue-400 hover:text-blue-600 hover:bg-blue-50"
+          >
+            <UserPlus className="w-2.5 h-2.5" /> Allocate to…
+          </button>
+          {pickerOpen && (
+            <div className="absolute z-20 mt-1 right-0 w-64 bg-white border border-slate-200 rounded-md shadow-lg p-1">
+              <p className="text-[10px] text-slate-400 px-2 py-1 uppercase tracking-wide">Add to another period</p>
+              {availableToAdd.map(e => (
+                <button
+                  key={e.id}
+                  type="button"
+                  onClick={async () => {
+                    setPickerOpen(false);
+                    await onAllocate(e.id);
+                  }}
+                  className="w-full text-left px-2 py-1.5 text-xs rounded hover:bg-blue-50 hover:text-blue-700 flex items-center gap-2"
+                >
+                  <UserPlus className="w-3 h-3 flex-shrink-0" />
+                  <span className="truncate">{e.label}</span>
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 }

@@ -73,6 +73,84 @@ export async function GET(req: Request) {
     orderBy: [{ accessConfirmed: 'desc' }, { name: 'asc' }],
   }).catch(() => [] as any[]);
 
+  // Cross-engagement allocations — for every engagement where the
+  // calling user is the Portal Principal, fetch the staff list so the
+  // setup screen can show a pill for each Client.Period the staff is
+  // allocated to. Lets the Principal see at a glance which staff have
+  // access where, and lets them add a staff to another engagement
+  // from this same screen via the "+ allocate to…" dropdown.
+  const principalEngagementsRaw = await prisma.auditEngagement.findMany({
+    where: { portalPrincipalId: user.id },
+    select: {
+      id: true,
+      client: { select: { clientName: true } },
+      period: { select: { startDate: true, endDate: true } },
+      auditType: true,
+    },
+    orderBy: { updatedAt: 'desc' },
+  }).catch(() => [] as any[]);
+
+  // Build a friendly label per engagement: "Acme Ltd · FY25 (audit)".
+  function periodLabel(period: { startDate: Date | null; endDate: Date | null } | null): string {
+    if (!period?.endDate) return '';
+    const end = new Date(period.endDate);
+    // If start + end are in the same calendar year, render "FY{YY}";
+    // otherwise show end-date day/month/year to disambiguate stub years.
+    if (period.startDate) {
+      const start = new Date(period.startDate);
+      if (start.getFullYear() === end.getFullYear()) {
+        return `FY${String(end.getFullYear()).slice(-2)}`;
+      }
+    }
+    return end.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
+  }
+  const principalEngagements = principalEngagementsRaw.map(e => ({
+    id: e.id,
+    clientName: e.client?.clientName || 'Unknown',
+    label: `${e.client?.clientName || 'Unknown'} · ${periodLabel(e.period)}`,
+    auditType: e.auditType,
+    isCurrent: e.id === engagementId,
+  }));
+
+  // For every email on the current engagement's staff list, find
+  // which OTHER principal engagements they're also allocated to.
+  // `id` is the ClientPortalStaffMember row id — the page needs it
+  // to call DELETE /api/portal/setup/staff/[staffId] when the
+  // Principal removes the pill.
+  const otherEngIds = principalEngagements.filter(e => !e.isCurrent).map(e => e.id);
+  const allocationsAcross: Record<string, Array<{ staffId: string; engagementId: string; accessConfirmed: boolean }>> = {};
+  if (otherEngIds.length > 0 && staff.length > 0) {
+    const staffEmails = staff.map(s => s.email).filter(Boolean);
+    const others = await prisma.clientPortalStaffMember.findMany({
+      where: {
+        engagementId: { in: otherEngIds },
+        isActive: true,
+        email: { in: staffEmails },
+      },
+      select: { id: true, engagementId: true, email: true, accessConfirmed: true },
+    }).catch(() => [] as any[]);
+    for (const o of others) {
+      if (!allocationsAcross[o.email]) allocationsAcross[o.email] = [];
+      allocationsAcross[o.email].push({ staffId: o.id, engagementId: o.engagementId, accessConfirmed: o.accessConfirmed });
+    }
+  }
+
+  // Attach the cross-engagement allocation summary to each staff row.
+  const staffEnriched = staff.map(s => ({
+    ...s,
+    // Always include the current engagement first so the UI renders
+    // "this period" as the leftmost pill.
+    allocations: [
+      { staffId: s.id, engagementId, accessConfirmed: s.accessConfirmed, isCurrent: true },
+      ...(allocationsAcross[s.email] || []).map(a => ({
+        staffId: a.staffId,
+        engagementId: a.engagementId,
+        accessConfirmed: a.accessConfirmed,
+        isCurrent: false,
+      })),
+    ],
+  }));
+
   // Suggestions come from three places, de-duplicated by email so the
   // Principal never sees the same person twice:
   //
@@ -252,11 +330,17 @@ export async function GET(req: Request) {
       portal2faTrustDays: eng.portal2faTrustDays,
       wecomJoinUrl: eng.wecomJoinUrl,
     },
-    staff,
+    staff: staffEnriched,
     suggestions,
     fsLineGroups,
     allocations,
     escalationDays: resolved,
+    // Master list of engagements the calling Portal Principal has
+    // access to. Powers the cross-period allocation pills on the
+    // Staff table — each staff member gets one pill per engagement
+    // they're on (current period first), and a "+ Allocate to…"
+    // dropdown lists the engagements they're NOT yet on.
+    principalEngagements,
     // Data-quality signals — non-blocking, but worth warning the
     // Portal Principal about since they directly affect whether
     // the grid is complete / coherent.
