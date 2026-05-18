@@ -994,6 +994,64 @@ export function AuditPlanPanel({ engagementId, clientId, periodId, onClose, peri
       .sort((a, b) => getStatutoryPosition(framework || 'FRS102', activeStatement, a) - getStatutoryPosition(framework || 'FRS102', activeStatement, b));
   }, [tbRows, activeStatement, significantRiskItems, fsLevelMap]);
 
+  // ── Tab-level P / R / RI rollup dots ───────────────────────────────
+  //
+  // Every Level-1 tab (statements + "Other" tabs) now shows three dots
+  // beneath its label representing the aggregate sign-off state of
+  // everything inside that tab:
+  //   green   — all conclusions / items signed at that role
+  //   orange  — partially signed
+  //   hollow  — none signed (pending)
+  //
+  // Sources:
+  //   Statement tabs (P&L, BS, CF, Notes): rolled up from
+  //     `dbConclusions` filtered to FS Lines belonging to that
+  //     statement. Reviewer & RI use the existing reviewedBy /
+  //     riSignedBy fields; Preparer uses conclusion-saved
+  //     (`!!c.conclusion`) since saving a conclusion is the implicit
+  //     preparer act.
+  //   Taxation: uses the existing `taxationRollup` state.
+  //   Other tabs (Going Concern, Management Override, etc.): show
+  //     hollow until their respective sign-off backend exists.
+  type RollupDot = 'green' | 'orange' | 'pending';
+  const statementLevels = useMemo(() => {
+    // statement → Set of fsLevel names that belong to it (used to
+    // filter dbConclusions per statement).
+    const map: Record<string, Set<string>> = {};
+    for (const row of tbRows) {
+      if (!row.fsStatement || !row.fsLevel) continue;
+      if (!map[row.fsStatement]) map[row.fsStatement] = new Set();
+      map[row.fsStatement].add(canonicalLevel(row));
+    }
+    return map;
+  }, [tbRows, fsLevelMap]);
+  const tabRollups = useMemo(() => {
+    const out: Record<string, { preparer: RollupDot; reviewer: RollupDot; ri: RollupDot }> = {};
+    function rollupFor(predicate: (c: any) => boolean): { preparer: RollupDot; reviewer: RollupDot; ri: RollupDot } {
+      const subset = dbConclusions.filter(predicate);
+      if (subset.length === 0) return { preparer: 'pending', reviewer: 'pending', ri: 'pending' };
+      const sP = subset.filter(c => !!c.conclusion || !!c.preparerSignedAt).length;
+      const sR = subset.filter(c => !!c.reviewedBy || !!c.riSignedBy).length;
+      const sI = subset.filter(c => !!c.riSignedBy).length;
+      const dot = (count: number): RollupDot => count === subset.length ? 'green' : count > 0 ? 'orange' : 'pending';
+      return { preparer: dot(sP), reviewer: dot(sR), ri: dot(sI) };
+    }
+    // Statement tabs — filter dbConclusions to those whose fsLine name
+    // is in this statement's levels set.
+    for (const stmt of statements) {
+      const lvlSet = statementLevels[stmt];
+      out[stmt] = rollupFor(c => !!lvlSet && lvlSet.has(c.fsLine));
+    }
+    // Other tabs — Taxation comes from its own state; everything else
+    // is pending until backend signoffs are wired.
+    out.Taxation = taxationRollup;
+    for (const t of OTHER_TABS) {
+      if (t === 'Taxation') continue;
+      if (!out[t]) out[t] = { preparer: 'pending', reviewer: 'pending', ri: 'pending' };
+    }
+    return out;
+  }, [statements, statementLevels, dbConclusions, taxationRollup]);
+
   // Notes — only for 3-level statements (Balance Sheet), filtered by value/risk
   const notes = useMemo(() => {
     if (!activeLevel || !THREE_LEVEL_STATEMENTS.has(activeStatement)) return [];
@@ -1392,55 +1450,36 @@ export function AuditPlanPanel({ engagementId, clientId, periodId, onClose, peri
       </div>
 
       {/* Level 1: FS Statement tabs + Other.
-          flex-wrap so when there are too many tabs to fit a single
-          row they wrap to a second row instead of forcing the user
-          to scroll horizontally. gap-y-0.5 keeps wrapped rows tight
-          but visually separated. */}
+          Each tab renders the label on top and a row of three small
+          P/R/RI rollup dots UNDERNEATH (no text labels — same dot
+          convention as the rest of the tool). Putting the dots below
+          keeps each tab narrow so the row fits without forcing a
+          horizontal scrollbar; flex-wrap still kicks in if the
+          firm's framework produces an unusually wide tab set.
+          gap-y-0.5 keeps wrapped rows tight but visually separated. */}
       <div className="flex flex-wrap gap-0.5 gap-y-0.5 border-b border-slate-200">
         {statements.map(stmt => (
           <button key={stmt}
             onClick={() => { setActiveStatement(stmt); setActiveLevel(''); setActiveNote(''); setActiveOtherTab(''); }}
-            className={`px-3 py-1.5 text-[11px] font-medium border-b-2 whitespace-nowrap transition-colors ${
+            className={`px-3 py-1 text-[11px] font-medium border-b-2 whitespace-nowrap transition-colors flex flex-col items-center gap-0.5 ${
               activeStatement === stmt && !activeOtherTab ? 'border-blue-600 text-blue-700' : 'border-transparent text-slate-500 hover:text-slate-700'
             }`}>
-            {stmt}
+            <span>{stmt}</span>
+            <TabRollupDots rollup={tabRollups[stmt]} />
           </button>
         ))}
         <div className="w-px bg-slate-300 mx-1.5 my-1" />
         <span className="px-1 py-1.5 text-[10px] font-semibold text-slate-400 uppercase tracking-wide self-center">Other</span>
-        {OTHER_TABS.map(tab => {
-          // Roll-up dots only on the Taxation tab today — other tabs
-          // either don't have a P/R/RI concept (Going Concern,
-          // Disclosure stubs) or have their own internal aggregates.
-          // Easy to extend the map below if more roll-ups arrive.
-          const showTaxationDots = tab === 'Taxation';
-          const dotColor = (s: TaxRollupDot) => s === 'green' ? 'bg-green-500' : s === 'orange' ? 'bg-orange-400' : 'bg-transparent border border-slate-300';
-          return (
-            <button key={tab}
-              onClick={() => { setActiveOtherTab(tab); setActiveStatement(''); setActiveLevel(''); setActiveNote(''); }}
-              className={`px-3 py-1.5 text-[11px] font-medium border-b-2 whitespace-nowrap transition-colors inline-flex items-center gap-1.5 ${
-                activeOtherTab === tab ? 'border-purple-600 text-purple-700' : 'border-transparent text-slate-500 hover:text-slate-700'
-              }`}>
-              <span>{tab}</span>
-              {showTaxationDots && (
-                <span className="inline-flex items-center gap-1 ml-0.5">
-                  <span title={`Preparer rollup: ${taxationRollup.preparer}`} className="inline-flex items-center gap-0.5 text-[9px] text-slate-500">
-                    <span>P</span>
-                    <span className={`inline-block w-2 h-2 rounded-full ${dotColor(taxationRollup.preparer)}`} />
-                  </span>
-                  <span title={`Reviewer rollup: ${taxationRollup.reviewer}`} className="inline-flex items-center gap-0.5 text-[9px] text-slate-500">
-                    <span>R</span>
-                    <span className={`inline-block w-2 h-2 rounded-full ${dotColor(taxationRollup.reviewer)}`} />
-                  </span>
-                  <span title={`RI rollup: ${taxationRollup.ri}`} className="inline-flex items-center gap-0.5 text-[9px] text-slate-500">
-                    <span>RI</span>
-                    <span className={`inline-block w-2 h-2 rounded-full ${dotColor(taxationRollup.ri)}`} />
-                  </span>
-                </span>
-              )}
-            </button>
-          );
-        })}
+        {OTHER_TABS.map(tab => (
+          <button key={tab}
+            onClick={() => { setActiveOtherTab(tab); setActiveStatement(''); setActiveLevel(''); setActiveNote(''); }}
+            className={`px-3 py-1 text-[11px] font-medium border-b-2 whitespace-nowrap transition-colors flex flex-col items-center gap-0.5 ${
+              activeOtherTab === tab ? 'border-purple-600 text-purple-700' : 'border-transparent text-slate-500 hover:text-slate-700'
+            }`}>
+            <span>{tab}</span>
+            <TabRollupDots rollup={tabRollups[tab]} />
+          </button>
+        ))}
       </div>
 
       {/* Level 2: FS Level sub-tabs */}
@@ -2502,5 +2541,32 @@ export function AuditPlanPanel({ engagementId, clientId, periodId, onClose, peri
         />
       )}
     </div>
+  );
+}
+
+// ─── Tab rollup dots ────────────────────────────────────────────────
+//
+// Three small circles rendered as a horizontal row underneath a tab
+// label. Each circle represents the aggregate sign-off state of one
+// role (Preparer / Reviewer / RI) across everything in that tab:
+//   green  — all sign-offs in place
+//   orange — partial
+//   hollow — none yet
+//
+// No text labels — the dot convention is already used throughout the
+// tool (Test Bank, Walkthroughs, etc.) and the user explicitly asked
+// for the labels to be removed to keep the tab strip narrow.
+function TabRollupDots({ rollup }: { rollup?: { preparer: 'green' | 'orange' | 'pending'; reviewer: 'green' | 'orange' | 'pending'; ri: 'green' | 'orange' | 'pending' } }) {
+  const r = rollup || { preparer: 'pending' as const, reviewer: 'pending' as const, ri: 'pending' as const };
+  const cls = (s: 'green' | 'orange' | 'pending') =>
+    s === 'green'  ? 'bg-green-500'
+    : s === 'orange' ? 'bg-amber-400'
+    : 'bg-white border border-slate-300';
+  return (
+    <span className="inline-flex items-center gap-1 leading-none">
+      <span className={`inline-block w-2 h-2 rounded-full ${cls(r.preparer)}`} title={`Preparer: ${r.preparer}`} />
+      <span className={`inline-block w-2 h-2 rounded-full ${cls(r.reviewer)}`} title={`Reviewer: ${r.reviewer}`} />
+      <span className={`inline-block w-2 h-2 rounded-full ${cls(r.ri)}`}       title={`RI: ${r.ri}`} />
+    </span>
   );
 }
