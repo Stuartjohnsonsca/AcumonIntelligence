@@ -12,7 +12,7 @@
 
 import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/db';
-import { resolvePortalUserFromToken } from '@/lib/portal-session';
+import { resolvePortalUserFromToken, requirePortalWriteAccess } from '@/lib/portal-session';
 
 export async function GET(req: Request) {
   const { searchParams } = new URL(req.url);
@@ -45,6 +45,8 @@ export async function PUT(req: Request) {
   const body = await req.json().catch(() => ({}));
   const me = await resolvePortalUserFromToken(body.token);
   if (!me) return NextResponse.json({ error: 'Invalid or expired session' }, { status: 401 });
+  const writeGuard = requirePortalWriteAccess(me);
+  if (!writeGuard.ok) return NextResponse.json(writeGuard.body, { status: writeGuard.status });
 
   // Whitelisted writeable fields. telegramChatId is intentionally
   // NOT writeable here — only the bot webhook can set it via the

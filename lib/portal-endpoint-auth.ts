@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 import { auth } from './auth';
 import { prisma } from './db';
-import { resolvePortalUserFromToken } from './portal-session';
+import { resolvePortalUserFromToken, requirePortalWriteAccess } from './portal-session';
 
 // Shared authorisation guard for /api/portal/* endpoints that are
 // called BOTH from the client portal (with a session token in the
@@ -18,8 +18,8 @@ import { resolvePortalUserFromToken } from './portal-session';
 //   // …continue with the trusted clientId…
 
 export type PortalAuthResult =
-  | { ok: true; kind: 'firm'; userId: string; firmId: string | undefined }
-  | { ok: true; kind: 'portal'; portalUserId: string; portalEmail: string }
+  | { ok: true; kind: 'firm'; userId: string; firmId: string | undefined; isReadOnly: false }
+  | { ok: true; kind: 'portal'; portalUserId: string; portalEmail: string; isReadOnly: boolean }
   | { ok: false; response: NextResponse };
 
 interface AuthoriseArgs {
@@ -51,7 +51,7 @@ export async function authorisePortalTenant(req: Request, args: AuthoriseArgs = 
         return { ok: false, response: NextResponse.json({ error: 'Forbidden — client not in your portal access list' }, { status: 403 }) };
       }
     }
-    return { ok: true, kind: 'portal', portalUserId: user.id, portalEmail: user.email };
+    return { ok: true, kind: 'portal', portalUserId: user.id, portalEmail: user.email, isReadOnly: !!user.isReadOnly };
   }
 
   // Firm path — fall back to the standard auth session. No clientId
@@ -59,8 +59,48 @@ export async function authorisePortalTenant(req: Request, args: AuthoriseArgs = 
   // verifyAccess helpers at the next layer down, same as before.
   const session = await auth();
   if (session?.user?.twoFactorVerified) {
-    return { ok: true, kind: 'firm', userId: session.user.id!, firmId: session.user.firmId };
+    return { ok: true, kind: 'firm', userId: session.user.id!, firmId: session.user.firmId, isReadOnly: false };
   }
 
   return { ok: false, response: NextResponse.json({ error: 'Authentication required' }, { status: 401 }) };
+}
+
+/**
+ * Mutation-only variant: runs `authorisePortalTenant` and additionally
+ * returns 403 if the caller is a firm-issued preview impersonation.
+ * Use this on every portal route that writes to the DB.
+ */
+export async function authorisePortalTenantWritable(req: Request, args: AuthoriseArgs = {}): Promise<PortalAuthResult> {
+  const result = await authorisePortalTenant(req, args);
+  if (!result.ok) return result;
+  if (result.kind === 'portal' && result.isReadOnly) {
+    return {
+      ok: false,
+      response: NextResponse.json({
+        error: 'This action is blocked because you are viewing the portal in read-only preview mode. Open the real portal to make changes.',
+        reason: 'preview-readonly',
+      }, { status: 403 }),
+    };
+  }
+  return result;
+}
+
+/**
+ * Block writes when the caller is in a firm-issued preview session.
+ * Best-effort: reads the token from the URL query, then from the
+ * `X-Portal-Preview-Token` header. Returns a 403 NextResponse the
+ * caller should early-return, or null to proceed. Use this on legacy
+ * portal mutation endpoints that don't already authenticate the
+ * caller — it gates preview tokens explicitly without changing the
+ * existing legacy behaviour for tokenless requests.
+ */
+export async function rejectIfPreviewReadOnly(req: Request): Promise<NextResponse | null> {
+  const { searchParams } = new URL(req.url);
+  const token = searchParams.get('token') || req.headers.get('x-portal-preview-token');
+  if (!token) return null;
+  const user = await resolvePortalUserFromToken(token);
+  if (!user) return null;
+  const guard = requirePortalWriteAccess(user);
+  if (!guard.ok) return NextResponse.json(guard.body, { status: guard.status });
+  return null;
 }

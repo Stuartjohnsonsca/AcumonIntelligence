@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/db';
 import { fireTrigger } from '@/lib/trigger-engine';
 import { resumeExecution, resumePipelineExecution } from '@/lib/flow-engine';
-import { authorisePortalTenant } from '@/lib/portal-endpoint-auth';
+import { authorisePortalTenant, rejectIfPreviewReadOnly } from '@/lib/portal-endpoint-auth';
 import { extractVatReturnsFromUploads, mergeExtractionsIntoPeriodRows } from '@/lib/vat-returns-extractor';
 import type { VatPeriodRow } from '@/lib/vat-reconciliation';
 
@@ -50,6 +50,8 @@ export async function GET(req: Request) {
  * Body: { requestId, response, respondedByName }
  */
 export async function POST(req: Request) {
+  const blocked = await rejectIfPreviewReadOnly(req);
+  if (blocked) return blocked;
   try {
     const { requestId, response, respondedByName, respondedById, attachments } = await req.json();
 
@@ -314,6 +316,8 @@ export async function POST(req: Request) {
  * Actions on a portal request: commit, chat, elevate, assign
  */
 export async function PUT(req: Request) {
+  const blocked = await rejectIfPreviewReadOnly(req);
+  if (blocked) return blocked;
   try {
     const body = await req.json();
     const { requestId, action, message, fromUserId, assignTo, assignToName, assignToSpecialist, note, itemType, fromRole, toRole } = body;

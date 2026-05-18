@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/db';
 import { uploadToInbox, generateSasUrl } from '@/lib/azure-blob';
-import { authorisePortalTenant } from '@/lib/portal-endpoint-auth';
+import { authorisePortalTenant, rejectIfPreviewReadOnly } from '@/lib/portal-endpoint-auth';
 
 /**
  * GET /api/portal/upload?requestId=X  — uploads for a specific portal request
@@ -63,6 +63,8 @@ export async function GET(req: Request) {
  * Stores in Azure Blob and creates a PortalUpload record scoped to the engagement.
  */
 export async function POST(req: Request) {
+  const blocked = await rejectIfPreviewReadOnly(req);
+  if (blocked) return blocked;
   try {
     const formData = await req.formData();
     const file = formData.get('file') as File | null;

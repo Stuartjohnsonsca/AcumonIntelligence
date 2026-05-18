@@ -3,6 +3,7 @@ import { prisma } from '@/lib/db';
 import { uploadToInbox } from '@/lib/azure-blob';
 import { sendEvidenceUploadNotification } from '@/lib/email-portal';
 import { fireTrigger } from '@/lib/trigger-engine';
+import { resolvePortalUserFromToken, requirePortalWriteAccess } from '@/lib/portal-session';
 
 /**
  * POST /api/portal/evidence/upload
@@ -18,6 +19,16 @@ export async function POST(req: Request) {
 
     if (!file || !requestId || !evidenceType || !token) {
       return NextResponse.json({ error: 'file, requestId, evidenceType, and token are required' }, { status: 400 });
+    }
+
+    // Block firm-issued preview impersonations from uploading
+    // evidence. The token form-field doubles as the read-only signal —
+    // if it resolves to a preview session, return 403 instead of
+    // writing the upload as the impersonated client.
+    const resolved = await resolvePortalUserFromToken(token);
+    if (resolved) {
+      const guard = requirePortalWriteAccess(resolved);
+      if (!guard.ok) return NextResponse.json(guard.body, { status: guard.status });
     }
 
     // Find all portal users to get accessible client IDs

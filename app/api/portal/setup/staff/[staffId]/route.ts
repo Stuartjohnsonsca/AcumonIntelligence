@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/db';
-import { resolvePortalUserFromToken } from '@/lib/portal-session';
+import { resolvePortalUserFromToken, requirePortalWriteAccess } from '@/lib/portal-session';
 import { assertPortalPrincipal } from '@/lib/portal-principal';
 
 /**
@@ -25,6 +25,8 @@ async function guardAndLoad(req: Request, ctx: Ctx) {
   if (!token) return { error: 'token required', status: 400 } as const;
   const user = await resolvePortalUserFromToken(token);
   if (!user) return { error: 'Invalid or expired session', status: 401 } as const;
+  const writeGuard = requirePortalWriteAccess(user);
+  if (!writeGuard.ok) return { error: writeGuard.body.error, status: writeGuard.status } as const;
 
   const { staffId } = await ctx.params;
   const row = await prisma.clientPortalStaffMember.findUnique({

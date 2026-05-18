@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/db';
 import bcrypt from 'bcryptjs';
-import { resolvePortalUserFromToken, resolvePortalUserFromTokenDetailed } from '@/lib/portal-session';
+import { resolvePortalUserFromToken, resolvePortalUserFromTokenDetailed, requirePortalWriteAccess } from '@/lib/portal-session';
 
 /**
  * GET /api/portal/my-details?token=X
@@ -149,6 +149,8 @@ export async function PUT(req: Request) {
 
     const me = await resolvePortalUserFromToken(token);
     if (!me) return NextResponse.json({ error: 'Invalid or expired session' }, { status: 401 });
+    const writeGuard = requirePortalWriteAccess(me);
+    if (!writeGuard.ok) return NextResponse.json(writeGuard.body, { status: writeGuard.status });
 
     // Load the full user record — resolvePortalUserFromToken only
     // returns the safe subset; we need passwordHash to verify the

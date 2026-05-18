@@ -18,6 +18,18 @@ export interface ResolvedPortalUser {
   name: string;
   isActive: boolean;
   isClientAdmin: boolean;
+  /** True when the caller is using a firm-issued preview-impersonation
+   *  token rather than the user's own session. Mutation endpoints MUST
+   *  reject the call (via `requirePortalWriteAccess`) when this is set
+   *  — otherwise the firm could accidentally write data as the
+   *  impersonated client. False on regular client sessions. */
+  isReadOnly?: boolean;
+  /** When `isReadOnly`, the firm user who minted the preview token —
+   *  surfaced on audit-log entries so we can trace any blocked write
+   *  back to whoever opened the preview. */
+  previewFirmUserId?: string;
+  /** When `isReadOnly`, the engagement the preview was scoped to. */
+  previewEngagementId?: string;
 }
 
 /** Look up the portal user for a given session token. Returns null for
@@ -38,6 +50,38 @@ export interface ResolvePortalUserResult { user: ResolvedPortalUser | null; reas
 export async function resolvePortalUserFromTokenDetailed(token: string | null | undefined): Promise<ResolvePortalUserResult> {
   if (!token || typeof token !== 'string') return { user: null, reason: 'token-missing' };
   if (token.length < 16) return { user: null, reason: 'token-too-short' };
+
+  // Preview impersonation tokens — checked FIRST because they're
+  // explicitly read-only and we want any mutation in this code path to
+  // see `isReadOnly: true` even if the token happens to also collide
+  // with a (legitimately impossible) regular session.
+  try {
+    const preview = await prisma.clientPortalPreviewSession.findUnique({
+      where: { token },
+      select: {
+        firmUserId: true,
+        engagementId: true,
+        expiresAt: true,
+        revokedAt: true,
+        isReadOnly: true,
+        portalUser: { select: { id: true, clientId: true, email: true, name: true, isActive: true, isClientAdmin: true } },
+      },
+    }).catch(() => null);
+    if (preview && preview.portalUser && !preview.revokedAt && preview.expiresAt > new Date() && preview.portalUser.isActive) {
+      return {
+        user: {
+          ...preview.portalUser,
+          isReadOnly: preview.isReadOnly,
+          previewFirmUserId: preview.firmUserId,
+          previewEngagementId: preview.engagementId,
+        },
+        reason: 'ok-preview',
+      };
+    }
+  } catch {
+    // Table may not exist yet in dev — fall through to regular session
+    // lookup so the rest of the portal keeps working.
+  }
 
   // Full query: session token + not-expired. If Prisma fires P2022
   // (typically because session_expires_at isn't in the DB yet) we
@@ -134,6 +178,29 @@ export async function issuePortalSessionToken(userId: string): Promise<{ token: 
     }
     return { token, expiresAt, persisted: false, error: `${errCode || 'ERR'}: ${errMsg.slice(0, 200)}` };
   }
+}
+
+/**
+ * Reject mutation calls when the resolved portal user is a firm-issued
+ * preview impersonation (isReadOnly). Returns a NextResponse 403 the
+ * caller can early-return, or null to proceed. Every portal POST / PUT
+ * / DELETE / PATCH handler MUST call this between
+ * `resolvePortalUserFromToken` and any DB write.
+ */
+export function requirePortalWriteAccess(user: ResolvedPortalUser | null):
+  { ok: true } | { ok: false; status: 403; body: { error: string; reason: 'preview-readonly' } } {
+  if (!user) return { ok: true }; // null means "not authenticated" — separate concern, handled by caller
+  if (user.isReadOnly) {
+    return {
+      ok: false,
+      status: 403,
+      body: {
+        error: 'This action is blocked because you are viewing the portal in read-only preview mode. Open the real portal to make changes.',
+        reason: 'preview-readonly',
+      },
+    };
+  }
+  return { ok: true };
 }
 
 /** Revoke the current session token for a user (log-off). Best-effort. */

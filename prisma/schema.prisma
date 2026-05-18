@@ -184,6 +184,7 @@ model User {
   methodologyConfigsCreated MethodologyConfig[]
   firmEthicsPartnerOf       Firm[]                     @relation("FirmEthicsPartner")
   journalRiskRuns           JournalRiskRun[]           @relation("JournalRiskRunBy")
+  portalPreviewSessions     ClientPortalPreviewSession[] @relation("FirmUserPortalPreviewSessions")
   meetingsCreated           AuditMeeting[]             @relation("MeetingCreator")
   // Resource planning relations
   resourceStaffSetting      ResourceStaffSetting?
@@ -1260,6 +1261,7 @@ model ClientPortalUser {
   portalStaffMemberships     ClientPortalStaffMember[] @relation("StaffMemberPortalUser")
   portalMessages             PortalMessage[]           @relation("PortalUserMessages")
   trustedDevices             ClientPortalTrustedDevice[]
+  previewSessions            ClientPortalPreviewSession[]
 
   @@unique([clientId, email])
   @@index([sessionToken])
@@ -1269,6 +1271,39 @@ model ClientPortalUser {
   @@index([wechatOpenId])
   @@index([wecomExternalUserId])
   @@map("client_portal_users")
+}
+
+/// Short-lived impersonation token a firm auditor mints to view the
+/// client portal as a specific client user, in strict read-only mode.
+/// Lives in its own table so it never overwrites the real user's
+/// `ClientPortalUser.sessionToken` — both can be active at once
+/// (firm previews while the client is logged in for real).
+///
+/// Enforcement happens in two places:
+///   - `resolvePortalUserFromToken` checks this table after the regular
+///     session lookup and returns `isReadOnly: true` when matched.
+///   - `requirePortalWriteAccess(user)` rejects mutations whenever the
+///     resolver flagged the caller as a preview session. Every portal
+///     mutation handler MUST call this helper before touching the DB.
+model ClientPortalPreviewSession {
+  id            String    @id @default(uuid())
+  token         String    @unique @map("token")
+  portalUserId  String    @map("portal_user_id")
+  engagementId  String    @map("engagement_id")
+  firmUserId    String    @map("firm_user_id")
+  isReadOnly    Boolean   @default(true) @map("is_read_only")
+  expiresAt     DateTime  @map("expires_at")
+  createdAt     DateTime  @default(now()) @map("created_at")
+  revokedAt     DateTime? @map("revoked_at")
+
+  portalUser ClientPortalUser @relation(fields: [portalUserId], references: [id], onDelete: Cascade)
+  engagement AuditEngagement  @relation(fields: [engagementId], references: [id], onDelete: Cascade)
+  firmUser   User             @relation("FirmUserPortalPreviewSessions", fields: [firmUserId], references: [id], onDelete: Cascade)
+
+  @@index([token])
+  @@index([firmUserId, createdAt(sort: Desc)])
+  @@index([engagementId])
+  @@map("client_portal_preview_sessions")
 }
 
 /// A device the user has previously passed 2FA on, so subsequent
@@ -2400,6 +2435,7 @@ model AuditEngagement {
   portalPrincipal       ClientPortalUser?            @relation("PortalPrincipalForEngagement", fields: [portalPrincipalId], references: [id], onDelete: SetNull)
   portalStaffMembers    ClientPortalStaffMember[]
   portalWorkAllocations ClientPortalWorkAllocation[]
+  portalPreviewSessions ClientPortalPreviewSession[]
   teamMembers           AuditTeamMember[]
   pdfReports            AuditPdfReport[]
   memberIndependence    AuditMemberIndependence[]

@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/db';
-import { resolvePortalUserFromToken } from '@/lib/portal-session';
+import { resolvePortalUserFromToken, requirePortalWriteAccess } from '@/lib/portal-session';
 
 /**
  * GET  /api/portal/ai-search/saved?token=X
@@ -45,6 +45,8 @@ export async function POST(req: Request) {
   if (!token) return NextResponse.json({ error: 'token required' }, { status: 400 });
   const user = await resolvePortalUserFromToken(token);
   if (!user) return NextResponse.json({ error: 'Invalid or expired session' }, { status: 401 });
+  const writeGuard = requirePortalWriteAccess(user);
+  if (!writeGuard.ok) return NextResponse.json(writeGuard.body, { status: writeGuard.status });
 
   const body = await req.json().catch(() => ({}));
   const { logId, label } = body as { logId: string; label: string };

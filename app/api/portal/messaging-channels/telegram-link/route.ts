@@ -13,7 +13,7 @@
  */
 
 import { NextResponse } from 'next/server';
-import { resolvePortalUserFromToken } from '@/lib/portal-session';
+import { resolvePortalUserFromToken, requirePortalWriteAccess } from '@/lib/portal-session';
 import {
   generateTelegramLinkCode,
   buildTelegramConnectUrl,
@@ -31,6 +31,8 @@ export async function POST(req: Request) {
   const body = await req.json().catch(() => ({}));
   const me = await resolvePortalUserFromToken(body.token);
   if (!me) return NextResponse.json({ error: 'Invalid or expired session' }, { status: 401 });
+  const writeGuard = requirePortalWriteAccess(me);
+  if (!writeGuard.ok) return NextResponse.json(writeGuard.body, { status: writeGuard.status });
 
   const code = await generateTelegramLinkCode(me.id);
   const url = await buildTelegramConnectUrl(code);

@@ -25,7 +25,7 @@
  */
 
 import { NextResponse } from 'next/server';
-import { resolvePortalUserFromToken } from '@/lib/portal-session';
+import { resolvePortalUserFromToken, requirePortalWriteAccess } from '@/lib/portal-session';
 import {
   generateWeChatLinkCode,
   generateWeComBindCode,
@@ -40,6 +40,8 @@ export async function POST(req: Request) {
   const body = await req.json().catch(() => ({}));
   const me = await resolvePortalUserFromToken(body.token);
   if (!me) return NextResponse.json({ error: 'Invalid or expired session' }, { status: 401 });
+  const writeGuard = requirePortalWriteAccess(me);
+  if (!writeGuard.ok) return NextResponse.json(writeGuard.body, { status: writeGuard.status });
 
   // WeCom Pro path — mint a bind code, hand it (and the firm's
   // connector URL, if configured) back to the UI. The UI / firm's

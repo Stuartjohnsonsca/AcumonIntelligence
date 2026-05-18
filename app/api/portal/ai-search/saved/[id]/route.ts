@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/db';
-import { resolvePortalUserFromToken } from '@/lib/portal-session';
+import { resolvePortalUserFromToken, requirePortalWriteAccess } from '@/lib/portal-session';
 
 /**
  * DELETE /api/portal/ai-search/saved/[id]?token=X
@@ -18,6 +18,8 @@ export async function DELETE(req: Request, ctx: Ctx) {
   if (!token) return NextResponse.json({ error: 'token required' }, { status: 400 });
   const user = await resolvePortalUserFromToken(token);
   if (!user) return NextResponse.json({ error: 'Invalid or expired session' }, { status: 401 });
+  const writeGuard = requirePortalWriteAccess(user);
+  if (!writeGuard.ok) return NextResponse.json(writeGuard.body, { status: writeGuard.status });
 
   const { id } = await ctx.params;
   const row = await prisma.portalSearchLog.findUnique({
