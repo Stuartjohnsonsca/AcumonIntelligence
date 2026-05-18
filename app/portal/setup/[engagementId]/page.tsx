@@ -497,6 +497,25 @@ export default function PortalSetupPage({ params }: { params: Promise<{ engageme
 
           {openStaff && (
             <div className="border-t border-slate-200 p-5 space-y-4">
+              {/* Cross-link to the dashboard's Team Management view.
+                  That view edits service / period allocations on a
+                  per-user basis (different surface, same underlying
+                  ClientPortalUser rows) — handy when the Principal
+                  wants to bulk-toggle which periods a user can see
+                  across the whole client, not just one engagement. */}
+              <div className="flex items-center justify-between border border-slate-200 rounded-md px-3 py-2 bg-slate-50/60">
+                <p className="text-[11px] text-slate-600">
+                  Need to allocate users across services and periods? Open the dashboard&apos;s Team Management view.
+                </p>
+                <a
+                  href={`/portal/dashboard?token=${encodeURIComponent(token)}&tab=team`}
+                  className="inline-flex items-center gap-1 text-[11px] font-medium text-blue-700 hover:text-blue-900 hover:underline"
+                >
+                  Open Team Management
+                  <ArrowLeft className="w-3 h-3 rotate-180" />
+                </a>
+              </div>
+
               {/* Suggestions — split by source. Prior-period pills are
                   blue (strong recommendation: same team, same client);
                   contacts pills are slate (weaker: the audit team added

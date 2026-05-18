@@ -48,7 +48,11 @@ function formatPeriod(p: PeriodInfo) {
 function DashboardContent() {
   const searchParams = useSearchParams();
   const token = searchParams.get('token') || '';
-  const [activeTab, setActiveTab] = useState<'services' | 'team'>('services');
+  // Deep-link support: `?tab=team` lands directly on the Team
+  // Management view. Used by the cross-link from the Portal Setup
+  // page's Staff section.
+  const initialTab: 'services' | 'team' = searchParams.get('tab') === 'team' ? 'team' : 'services';
+  const [activeTab, setActiveTab] = useState<'services' | 'team'>(initialTab);
   const [isAdmin, setIsAdmin] = useState(false);
 
   // Portal Principal state — drives the "Finish setup" banner and
@@ -278,6 +282,38 @@ function DashboardContent() {
       {/* Team Management tab */}
       {activeTab === 'team' && (
         <div className="max-w-4xl mx-auto">
+          {/* Cross-link back to per-engagement Staff setup. Service +
+              period allocation here is a user-wide view; the
+              engagement-scoped Staff list (channels, access
+              confirmation, work allocation grid) lives on the Setup
+              page. One chip per engagement the user is Portal
+              Principal for, so they can jump to the right setup
+              screen without going via the dashboard tile. */}
+          {principalFor.length > 0 && (
+            <div className="border border-slate-200 rounded-md px-3 py-2 bg-slate-50/60 mb-4">
+              <p className="text-[11px] text-slate-600 mb-1.5">
+                Need engagement-level controls (access confirmation, messaging channels, work allocation)? Open the Staff setup for a period:
+              </p>
+              <div className="flex flex-wrap gap-1.5">
+                {principalFor.map(e => {
+                  const periodLabel = e.periodEnd
+                    ? new Date(e.periodEnd).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })
+                    : '';
+                  return (
+                    <Link
+                      key={e.id}
+                      href={`/portal/setup/${e.id}?token=${encodeURIComponent(token)}`}
+                      className="inline-flex items-center gap-1 px-2.5 py-1 text-[11px] rounded-full bg-white border border-slate-300 text-slate-700 hover:border-blue-400 hover:text-blue-700 hover:bg-blue-50"
+                    >
+                      {e.clientName}{periodLabel ? ` · ${periodLabel}` : ''}
+                      <ArrowRight className="w-2.5 h-2.5" />
+                    </Link>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
           {/* Client selector if multiple */}
           {clients.filter(c => c.isClientAdmin).length > 1 && (
             <div className="flex items-center gap-2 mb-4">
