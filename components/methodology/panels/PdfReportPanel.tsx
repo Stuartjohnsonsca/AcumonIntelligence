@@ -91,17 +91,22 @@ export function PdfReportPanel({ engagementId }: { engagementId: string }) {
 
   return (
     <div className="bg-white border border-slate-200 rounded-lg p-4">
-      <div className="flex items-center justify-between mb-3 gap-2">
-        <h3 className="text-sm font-semibold text-slate-800 flex items-center gap-2">
-          <FileText className="h-4 w-4 text-blue-600" /> Audit File — PDF Snapshots
+      {/* Header — flex-wrap on the outer row so the action buttons drop
+          to a new line when the container is too narrow to fit them
+          alongside the title. Each button is whitespace-nowrap so its
+          own label never wraps inside the chip. */}
+      <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-2 mb-3">
+        <h3 className="text-sm font-semibold text-slate-800 flex items-center gap-2 min-w-0">
+          <FileText className="h-4 w-4 text-blue-600 flex-shrink-0" />
+          <span className="truncate">Audit File — PDF Snapshots</span>
         </h3>
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
           {/* InterrogateBot — Q&A surface over the engagement's content.
               Available to anyone with read access (the bot itself is
               bounded to AUDIT_FILE so it can't expose new data). */}
           <button
             onClick={() => setInterrogating(true)}
-            className="inline-flex items-center gap-1 text-xs px-3 py-1 bg-indigo-600 text-white rounded hover:bg-indigo-700"
+            className="inline-flex items-center gap-1 text-xs px-3 py-1.5 bg-indigo-600 text-white rounded hover:bg-indigo-700 whitespace-nowrap"
             title="Ask questions about this audit file — answers are strictly from the file content"
           >
             <MessageSquare className="h-3 w-3" /> InterrogateBot
@@ -112,7 +117,7 @@ export function PdfReportPanel({ engagementId }: { engagementId: string }) {
               without having to open the bot every Monday morning. */}
           <button
             onClick={() => setMonitoring(true)}
-            className="inline-flex items-center gap-1 text-xs px-3 py-1 bg-purple-600 text-white rounded hover:bg-purple-700"
+            className="inline-flex items-center gap-1 text-xs px-3 py-1.5 bg-purple-600 text-white rounded hover:bg-purple-700 whitespace-nowrap"
             title="Define questions that run on a schedule and produce a recurring report"
           >
             <Sparkles className="h-3 w-3" /> Monitoring Reports
@@ -121,7 +126,7 @@ export function PdfReportPanel({ engagementId }: { engagementId: string }) {
             <button
               onClick={generate}
               disabled={generating}
-              className="inline-flex items-center gap-1 text-xs px-3 py-1 bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50"
+              className="inline-flex items-center gap-1 text-xs px-3 py-1.5 bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50 whitespace-nowrap"
             >
               {generating ? <Loader2 className="h-3 w-3 animate-spin" /> : <FileText className="h-3 w-3" />}
               {generating ? 'Generating…' : 'Generate PDF Report'}
