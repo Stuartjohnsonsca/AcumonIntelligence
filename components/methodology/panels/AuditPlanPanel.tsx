@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect, useMemo, useCallback, Fragment } from 'react';
-import { Loader2, ArrowLeft, FileText, Play, ClipboardList, ChevronDown, ChevronRight, CheckCircle2, XCircle, Clock, AlertTriangle, GitBranch, Calculator } from 'lucide-react';
+import { Loader2, ArrowLeft, FileText, Play, ClipboardList, ChevronDown, ChevronRight, CheckCircle2, XCircle, Clock, AlertTriangle, GitBranch, Calculator, X } from 'lucide-react';
 import { useScrollToAnchor } from '@/lib/hooks/useScrollToAnchor';
 import { TestExecutionPanel } from './TestExecutionPanel';
 import { TestResultsPanel } from './TestResultsPanel';
@@ -435,13 +435,17 @@ export function AuditPlanPanel({ engagementId, clientId, periodId, onClose, peri
   // (which is normal practice — AR is a substantive procedure
   // available regardless of materiality classification). Keyed by
   // rowKey to match the rest of the expansion state.
-  const [arOpenRows, setArOpenRows] = useState<Set<string>>(new Set());
-  function toggleArPanel(rowKey: string) {
-    setArOpenRows(prev => {
-      const next = new Set(prev);
-      if (next.has(rowKey)) next.delete(rowKey); else next.add(rowKey);
-      return next;
-    });
+  // Analytical Review — opens as a modal popup so the formula
+  // builder, expectation, threshold checks and sign-off controls
+  // have room to render. Previously expanded inline beneath the row
+  // which left the panel cramped and most actions invisible until
+  // the user scrolled.
+  const [arModal, setArModal] = useState<{ rowKey: string; fsLine: string; accountCode: string } | null>(null);
+  function openArModal(rowKey: string, fsLine: string, accountCode: string) {
+    setArModal({ rowKey, fsLine, accountCode });
+  }
+  function closeArModal() {
+    setArModal(null);
   }
   const [excludedTests, setExcludedTests] = useState<Set<string>>(new Set());
   // Per-test data source — where the auditor expects the evidence
@@ -2379,39 +2383,31 @@ export function AuditPlanPanel({ engagementId, clientId, periodId, onClose, peri
                       const classOk = !isSig && !isAoF;
                       const arEligible = classOk && ctOk && pmOk;
                       if (!arEligible) return null;
-                      const arOpen = isAR || arOpenRows.has(rowKey);
+                      // Click the button to launch the AR workspace
+                      // in a modal popup. Auto-AR rows (below PM, no
+                      // RMM) get the same button but with an "auto"
+                      // tag so the auditor knows AR is required for
+                      // that balance.
+                      const arFsLine = effectiveFsLevel || activeLevel || activeStatement;
                       return (
-                        <>
-                          <tr>
-                            <td colSpan={isThreeLevel ? 13 : 12} className="px-3 py-1 bg-green-50/20 border-t border-green-100">
-                              <button
-                                type="button"
-                                onClick={() => toggleArPanel(rowKey)}
-                                className="text-[10px] font-medium px-2 py-1 rounded border border-green-300 bg-white text-green-700 hover:bg-green-50 inline-flex items-center gap-1.5"
-                                title={
-                                  isAR
-                                    ? 'AR-classified row (below PM, no RMM) — panel always open. Click to hide / show.'
-                                    : 'Open the Substantive Analytical Review workspace for this balance — formula builder, expectation, threshold check and sign-offs.'
-                                }
-                              >
-                                <span>{arOpen ? '▾' : '▸'}</span>
-                                <span>Analytical Review</span>
-                                {isAR && <span className="text-[8px] uppercase tracking-wide text-green-600">auto</span>}
-                              </button>
-                            </td>
-                          </tr>
-                          {arOpen && (
-                            <tr>
-                              <td colSpan={isThreeLevel ? 13 : 12} className="p-2 bg-green-50/30">
-                                <AnalyticalReviewPanel
-                                  engagementId={engagementId}
-                                  fsLine={effectiveFsLevel || activeLevel || activeStatement}
-                                  accountCodes={[row.accountCode]}
-                                />
-                              </td>
-                            </tr>
-                          )}
-                        </>
+                        <tr>
+                          <td colSpan={isThreeLevel ? 13 : 12} className="px-3 py-1 bg-green-50/20 border-t border-green-100">
+                            <button
+                              type="button"
+                              onClick={() => openArModal(rowKey, arFsLine, row.accountCode)}
+                              className="text-[10px] font-medium px-2 py-1 rounded border border-green-300 bg-white text-green-700 hover:bg-green-50 inline-flex items-center gap-1.5"
+                              title={
+                                isAR
+                                  ? 'AR-classified row (below PM, no RMM) — open the Substantive Analytical Review workspace.'
+                                  : 'Open the Substantive Analytical Review workspace for this balance — formula builder, expectation, threshold check and sign-offs.'
+                              }
+                            >
+                              <span>▸</span>
+                              <span>Analytical Review</span>
+                              {isAR && <span className="text-[8px] uppercase tracking-wide text-green-600">auto</span>}
+                            </button>
+                          </td>
+                        </tr>
                       );
                     })()}
                   </Fragment>
@@ -2570,6 +2566,41 @@ export function AuditPlanPanel({ engagementId, clientId, periodId, onClose, peri
           periodEndDate={periodEndDate}
           onClose={() => setLoanCalcOpen(false)}
         />
+      )}
+
+      {/* Analytical Review modal — opens when the row's "Analytical
+          Review" button is clicked. Full-screen overlay so the
+          formula builder, expectation calc, threshold checks and
+          sign-off controls have room to render without the row /
+          table cramping them. Click the backdrop or X to close. */}
+      {arModal && (
+        <div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4" onClick={closeArModal}>
+          <div className="bg-white rounded-lg shadow-2xl w-full max-w-5xl max-h-[90vh] overflow-hidden flex flex-col" onClick={e => e.stopPropagation()}>
+            <div className="flex items-center justify-between px-4 py-3 border-b border-slate-200 bg-slate-50">
+              <div>
+                <h3 className="text-sm font-semibold text-slate-800">Substantive Analytical Review</h3>
+                <p className="text-[11px] text-slate-500 mt-0.5">
+                  {arModal.fsLine} · account {arModal.accountCode}
+                </p>
+              </div>
+              <button
+                onClick={closeArModal}
+                className="text-slate-400 hover:text-slate-700 p-1 rounded hover:bg-slate-200"
+                title="Close"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+            <div className="flex-1 overflow-y-auto p-4">
+              <AnalyticalReviewPanel
+                engagementId={engagementId}
+                fsLine={arModal.fsLine}
+                accountCodes={[arModal.accountCode]}
+                onClose={closeArModal}
+              />
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );
