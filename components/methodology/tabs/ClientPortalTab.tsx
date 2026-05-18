@@ -27,13 +27,8 @@
  * so no portal session is needed.
  */
 
-import { useEffect, useMemo, useState } from 'react';
-import {
-  Loader2, BarChart3, Users, ArrowRight, ClipboardCheck, Calculator,
-  Briefcase, Receipt, Monitor, Eye, ChevronDown, ChevronRight,
-  CheckCircle2, AlertCircle, Clock, Filter, RefreshCw, Settings,
-  AlertTriangle,
-} from 'lucide-react';
+import { useEffect, useState } from 'react';
+import { Loader2, Users, Eye, AlertCircle, RefreshCw } from 'lucide-react';
 
 interface Engagement {
   id: string;
@@ -45,29 +40,10 @@ interface Engagement {
 }
 interface PrincipalUser { id: string; name: string; email: string; role: string | null; }
 interface Staff { id: string; name: string; email: string; role: string | null; accessConfirmed: boolean; portalUserId: string | null; }
-interface Allocation { id: string; fsLineId: string | null; tbAccountCode: string | null; staff1UserId: string | null; staff2UserId: string | null; staff3UserId: string | null; }
-interface FsGroup { fsLineId: string | null; fsLineName: string; tbRows: Array<{ accountCode: string; description: string }>; }
-interface PortalReq {
-  id: string;
-  section: string;
-  question: string;
-  status: string;
-  requestedAt: string;
-  respondedAt?: string | null;
-  respondedByName?: string | null;
-  routingFsLineId: string | null;
-  routingTbAccountCode: string | null;
-  assignedPortalUserId: string | null;
-  escalationLevel: number;
-}
 interface PreviewData {
   engagement: Engagement | null;
   principal: PrincipalUser | null;
   staff: Staff[];
-  allocations: Allocation[];
-  fsLineGroups: FsGroup[];
-  requests: PortalReq[];
-  escalationDays: { days1: number; days2: number; days3: number; source: string };
 }
 
 interface Props {
@@ -75,54 +51,87 @@ interface Props {
   clientName: string;
 }
 
-type View = 'home' | 'dashboard' | 'manage';
-
-const HOME_TILES = [
-  { title: 'Audit Client Support', description: 'View and respond to audit evidence requests, upload documents, and track progress.',              icon: ClipboardCheck, color: 'bg-blue-50 border-blue-200',     iconBg: 'bg-blue-100',     iconColor: 'text-blue-600' },
-  { title: 'Accounting Support',   description: 'Get help with bookkeeping, financial reporting, and accounting queries.',                           icon: Calculator,     color: 'bg-teal-50 border-teal-200',     iconBg: 'bg-teal-100',     iconColor: 'text-teal-600' },
-  { title: 'Consulting Support',   description: 'Business advisory, strategy, and operational improvement assistance.',                               icon: Briefcase,      color: 'bg-purple-50 border-purple-200', iconBg: 'bg-purple-100',   iconColor: 'text-purple-600' },
-  { title: 'Tax Support',          description: 'Tax planning, compliance, VAT queries, and tax return assistance.',                                  icon: Receipt,        color: 'bg-amber-50 border-amber-200',   iconBg: 'bg-amber-100',    iconColor: 'text-amber-600' },
-  { title: 'Technology Support',   description: 'IT systems, software, digital transformation, and tech infrastructure help.',                        icon: Monitor,        color: 'bg-indigo-50 border-indigo-200', iconBg: 'bg-indigo-100',   iconColor: 'text-indigo-600' },
-];
-
-function formatPeriod(p: { startDate: string; endDate: string } | null): string {
-  if (!p) return '';
-  const f = (d: string) => new Date(d).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
-  return `${f(p.startDate)} – ${f(p.endDate)}`;
-}
-
 export function ClientPortalTab({ engagementId, clientName }: Props) {
-  const [view, setView] = useState<View>('home');
   const [data, setData] = useState<PreviewData | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  // Which portal user the auditor is impersonating in the replica.
-  // 'all' is the unscoped view (default) — shows the Principal's full
-  // experience plus Manage Staff. Selecting an individual user filters
-  // the available sub-views to what THAT user actually sees in the
-  // real portal: Principals get all three; regular staff see only the
-  // Home tiles + their service area.
-  const [viewingAs, setViewingAs] = useState<string>('all');
 
-  // Snap the active view back to Home whenever the auditor picks a
-  // portal user who can't see Principal-only sub-views. Done in an
-  // effect (not during render) so we never call setState mid-render.
-  useEffect(() => {
-    if (!data) return;
-    const principalId = data.principal?.id || null;
-    const isPrincipalSelected = viewingAs === 'all' || viewingAs === principalId;
-    if (!isPrincipalSelected && view !== 'home') {
-      setView('home');
-    }
-  }, [viewingAs, data, view]);
+  // Which client-portal user the auditor is impersonating inside the
+  // iframe. Set after data load — defaults to the Portal Principal so
+  // the auditor lands on the most-featured view; falls back to the
+  // first access-confirmed staff member if there's no Principal.
+  const [viewingAs, setViewingAs] = useState<string>('');
+
+  // Iframe state — the preview session token + the URL the iframe is
+  // currently pointed at. Each time `viewingAs` changes we mint a new
+  // token via the firm-side endpoint and refresh the iframe src. The
+  // token is short-lived (1 hour) and read-only by construction:
+  // every portal mutation endpoint rejects it via
+  // `requirePortalWriteAccess`.
+  const [previewToken, setPreviewToken] = useState<string | null>(null);
+  const [tokenLoading, setTokenLoading] = useState(false);
+  const [tokenError, setTokenError] = useState<string | null>(null);
+  const [iframeKey, setIframeKey] = useState(0);
 
   useEffect(() => {
     setLoading(true); setError(null);
     fetch(`/api/engagements/${engagementId}/portal-preview`, { cache: 'no-store' })
       .then(r => r.ok ? r.json() : Promise.reject(new Error(`Load failed (${r.status})`)))
-      .then(d => setData(d))
+      .then(d => {
+        setData(d);
+        // Default to the Portal Principal, else the first
+        // access-confirmed staff member, else nothing (iframe
+        // disabled).
+        const principalId = d.principal?.id || null;
+        const confirmedStaffId = d.staff.find((s: Staff) => s.accessConfirmed && s.portalUserId)?.portalUserId || null;
+        setViewingAs(principalId || confirmedStaffId || '');
+      })
       .catch(err => setError(err?.message || 'Load failed'))
       .finally(() => setLoading(false));
+  }, [engagementId]);
+
+  // Mint (or re-mint) a preview session token whenever the impersonated
+  // user changes. Cleans up previous tokens on the way out so we don't
+  // leak active read-only sessions for users the auditor stopped
+  // viewing as.
+  useEffect(() => {
+    if (!viewingAs) { setPreviewToken(null); return; }
+    let cancelled = false;
+    setTokenLoading(true);
+    setTokenError(null);
+    (async () => {
+      try {
+        const res = await fetch(`/api/engagements/${engagementId}/portal-preview-session`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ portalUserId: viewingAs }),
+        });
+        if (!res.ok) {
+          const body = await res.json().catch(() => ({}));
+          throw new Error(body.error || `Could not start preview (${res.status})`);
+        }
+        const body = await res.json();
+        if (!cancelled) {
+          setPreviewToken(body.token);
+          setIframeKey(k => k + 1); // force iframe reload on user switch
+        }
+      } catch (err: any) {
+        if (!cancelled) setTokenError(err?.message || 'Could not start preview');
+      } finally {
+        if (!cancelled) setTokenLoading(false);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [engagementId, viewingAs]);
+
+  // Revoke the active preview session when the tab unmounts so a
+  // page-leak doesn't keep the impersonation alive past the auditor
+  // moving on.
+  useEffect(() => {
+    return () => {
+      // best-effort — fire-and-forget, no error handling
+      fetch(`/api/engagements/${engagementId}/portal-preview-session`, { method: 'DELETE' }).catch(() => {});
+    };
   }, [engagementId]);
 
   if (loading) {
@@ -141,6 +150,13 @@ export function ClientPortalTab({ engagementId, clientName }: Props) {
   }
   if (!data) return null;
 
+  const pickableStaff = data.staff.filter(s => !!s.portalUserId);
+  const principalId = data.principal?.id || null;
+  const noUsers = !data.principal && pickableStaff.length === 0;
+  const iframeSrc = previewToken
+    ? `/portal/dashboard?token=${encodeURIComponent(previewToken)}`
+    : null;
+
   return (
     <div className="space-y-3">
       {/* Firm-side context header — what the auditor sees (NOT the client) */}
@@ -151,7 +167,7 @@ export function ClientPortalTab({ engagementId, clientName }: Props) {
             Client Portal Preview
           </h2>
           <p className="text-xs text-slate-500 mt-0.5">
-            Read-only replica of what <strong>{clientName}</strong> sees in their portal. Use it on a screen-share to walk the client through each view without needing their login. Buttons and inputs look real but don&apos;t save anything.
+            Live, navigable view of <strong>{clientName}</strong>&apos;s portal as the selected user would see it. Every page is the real portal — but every write is blocked server-side because this session is a firm-issued read-only impersonation. Open as a screen-share to walk the client through the experience without needing their password.
           </p>
         </div>
         <a
@@ -166,13 +182,8 @@ export function ClientPortalTab({ engagementId, clientName }: Props) {
       </div>
 
       {/* Simulated browser chrome — establishes clearly that what's
-          below is a REPLICA, not the audit tool. */}
+          below is the live portal, in preview mode. */}
       <div className="rounded-lg border border-slate-300 overflow-hidden bg-white shadow-sm">
-        {/* Viewing-as picker — drops down the client's portal users
-            so the auditor can replicate exactly what one specific
-            person sees. Selecting a regular staff member hides the
-            Principal-only sub-views (Manage Staff, Principal
-            Dashboard) and snaps the active view to Home. */}
         <div className="bg-slate-100 border-b border-slate-200 px-3 py-2 flex items-center gap-2">
           <div className="flex items-center gap-1">
             <span className="w-2.5 h-2.5 rounded-full bg-red-400" />
@@ -180,477 +191,94 @@ export function ClientPortalTab({ engagementId, clientName }: Props) {
             <span className="w-2.5 h-2.5 rounded-full bg-emerald-400" />
           </div>
           <div className="flex-1 bg-white border border-slate-300 rounded px-2 py-0.5 text-[11px] text-slate-500 font-mono truncate">
-            acumon-website.vercel.app
-            {view === 'home'      && '/portal/dashboard'}
-            {view === 'dashboard' && `/portal/principal/${engagementId}`}
-            {view === 'manage'    && `/portal/setup/${engagementId}`}
+            acumon-website.vercel.app{iframeSrc?.split('?')[0] || '/portal/dashboard'}
           </div>
-          <span className="text-[10px] uppercase tracking-wide px-2 py-0.5 rounded-full bg-amber-50 border border-amber-200 text-amber-700 font-medium">Preview — read only</span>
+          <span className="text-[10px] uppercase tracking-wide px-2 py-0.5 rounded-full bg-amber-50 border border-amber-200 text-amber-700 font-medium">Read-only preview</span>
         </div>
 
-        {/* Viewing-as + sub-view switcher row. Auditor picks which
-            client-portal user to impersonate, and which page in that
-            user's experience to show. */}
-        {(() => {
-          const pickableStaff = data.staff.filter(s => !!s.portalUserId);
-          const principalId = data.principal?.id || null;
-          const isPrincipalSelected = viewingAs === 'all' || viewingAs === principalId;
-          const showPrincipalViews = isPrincipalSelected;
-          return (
-            <div className="px-3 py-2 border-b border-slate-200 bg-slate-50 flex flex-wrap gap-2 text-xs items-center">
-              <label className="text-[10px] uppercase tracking-wide text-slate-500 font-semibold">Viewing as</label>
-              <select
-                value={viewingAs}
-                onChange={e => setViewingAs(e.target.value)}
-                className="text-xs border border-slate-300 rounded px-2 py-1 bg-white"
-                title="Pick which client-portal user's experience to replicate"
-              >
-                <option value="all">— Whole portal (auditor view) —</option>
-                {data.principal && (
-                  <option value={data.principal.id}>{data.principal.name} (Portal Principal)</option>
-                )}
-                {pickableStaff.length > 0 && (
-                  <optgroup label="Staff">
-                    {pickableStaff.map(s => (
-                      <option key={s.id} value={s.portalUserId || s.id}>
-                        {s.name}{s.role ? ` — ${s.role}` : ''}
-                      </option>
-                    ))}
-                  </optgroup>
-                )}
-              </select>
-              <span className="mx-1 h-4 w-px bg-slate-300" />
-              <button
-                onClick={() => setView('home')}
-                className={`px-2.5 py-1 rounded ${view === 'home' ? 'bg-white border border-slate-300 text-slate-800 font-medium' : 'text-slate-600 hover:bg-white'}`}
-              >Home</button>
-              {showPrincipalViews && (
-                <>
-                  <button
-                    onClick={() => setView('dashboard')}
-                    className={`px-2.5 py-1 rounded ${view === 'dashboard' ? 'bg-white border border-slate-300 text-slate-800 font-medium' : 'text-slate-600 hover:bg-white'}`}
-                  >Principal Dashboard</button>
-                  <button
-                    onClick={() => setView('manage')}
-                    className={`px-2.5 py-1 rounded ${view === 'manage' ? 'bg-white border border-slate-300 text-slate-800 font-medium' : 'text-slate-600 hover:bg-white'}`}
-                  >Manage Staff</button>
-                </>
-              )}
-              {!showPrincipalViews && (
-                <span className="text-[10px] text-slate-500 italic ml-1">
-                  Regular staff only see Home + their service area — Principal Dashboard and Manage Staff are hidden.
-                </span>
-              )}
-            </div>
-          );
-        })()}
-
-        {/* The replica itself. pointer-events-none on the outer frame
-             makes every visible control inert; visible styles kept
-             so the client sees exactly what they'll see. */}
-        <div className="p-6 bg-slate-50 pointer-events-none select-text">
-          {view === 'home'      && <HomeView data={data} />}
-          {view === 'dashboard' && <DashboardView data={data} />}
-          {view === 'manage'    && <ManageView data={data} />}
-        </div>
-      </div>
-    </div>
-  );
-}
-
-// ─── Home view replica ────────────────────────────────────────────
-
-function HomeView({ data }: { data: PreviewData }) {
-  const setupComplete = !!data.engagement?.portalSetupCompletedAt;
-  const hasPrincipal = !!data.principal;
-
-  return (
-    <div className="max-w-4xl mx-auto">
-      <div className="text-center mb-5">
-        <h1 className="text-2xl font-bold text-slate-900">Welcome to your Client Portal</h1>
-        <p className="text-sm text-slate-500 mt-1">Access your services and — if you&apos;re a Portal Principal — manage your staff and review engagement activity.</p>
-      </div>
-
-      {/* Outstanding-setup banner (only when relevant) */}
-      {hasPrincipal && !setupComplete && (
-        <div className="mb-4 bg-amber-50 border-2 border-amber-200 rounded-xl p-4">
-          <div className="flex items-start gap-3">
-            <AlertTriangle className="h-5 w-5 text-amber-600 flex-shrink-0 mt-0.5" />
-            <div className="flex-1">
-              <p className="text-sm font-semibold text-amber-800">Portal Principal setup outstanding</p>
-              <p className="text-xs text-amber-700 mt-0.5">
-                You are the Portal Principal for this engagement. Staff members cannot log in until you complete setup.
-              </p>
-              <div className="mt-3">
-                <span className="inline-flex items-center gap-1 text-xs font-medium text-white bg-amber-600 px-3 py-1.5 rounded-md">
-                  Finish setup — {data.engagement?.client.clientName}
-                  <ArrowRight className="h-3 w-3" />
-                </span>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Horizontal Dashboard bar (if Principal + setup complete) */}
-      {hasPrincipal && setupComplete && (
-        <div className="mb-5">
-          <div className="block bg-gradient-to-r from-emerald-50 to-teal-50 border-2 border-emerald-200 rounded-xl p-4">
-            <div className="flex items-center gap-4">
-              <div className="bg-emerald-100 rounded-xl p-3 flex-shrink-0">
-                <BarChart3 className="h-6 w-6 text-emerald-700" />
-              </div>
-              <div className="flex-1 min-w-0">
-                <h2 className="text-base font-semibold text-slate-900">Portal Principal Dashboard</h2>
-                <p className="text-xs text-slate-600 mt-0.5">
-                  Review requests, responses and staff performance for {data.engagement?.client.clientName}.
-                </p>
-              </div>
-              <ArrowRight className="h-5 w-5 text-emerald-600 flex-shrink-0" />
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* 3×2 service-tile grid — 5 services + Manage Staff (if Principal) */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-        {HOME_TILES.map(t => (
-          <div key={t.title} className={`block p-7 rounded-xl border-2 shadow-sm ${t.color}`}>
-            <div className={`inline-flex items-center justify-center w-12 h-12 rounded-xl ${t.iconBg} mb-3`}>
-              <t.icon className={`h-6 w-6 ${t.iconColor}`} />
-            </div>
-            <h2 className="text-lg font-semibold text-slate-900 mb-1">{t.title}</h2>
-            <p className="text-sm text-slate-600">{t.description}</p>
-          </div>
-        ))}
-        {hasPrincipal && setupComplete && (
-          <div className="block p-7 rounded-xl border-2 shadow-sm bg-rose-50 border-rose-200">
-            <div className="inline-flex items-center justify-center w-12 h-12 rounded-xl bg-rose-100 mb-3">
-              <Users className="h-6 w-6 text-rose-600" />
-            </div>
-            <h2 className="text-lg font-semibold text-slate-900 mb-1">Manage Staff</h2>
-            <p className="text-sm text-slate-600">Curate who can access the portal, confirm each staff member, and map them to FS Lines / TB codes.</p>
-          </div>
-        )}
-      </div>
-
-      {!hasPrincipal && (
-        <div className="mt-4 text-xs text-slate-500 bg-white border border-dashed border-slate-300 rounded p-3 text-center">
-          No Portal Principal designated for this engagement yet — the Dashboard bar and Manage Staff tile won&apos;t appear for this client until one is nominated on the Opening tab.
-        </div>
-      )}
-    </div>
-  );
-}
-
-// ─── Principal Dashboard view replica ─────────────────────────────
-
-function DashboardView({ data }: { data: PreviewData }) {
-  const sla = data.escalationDays;
-  const now = new Date();
-  const requests = data.requests;
-  const outstanding = requests.filter(r => r.status === 'outstanding');
-  const responded = requests.filter(r => r.status === 'responded' || !!r.respondedAt);
-  const escalated = outstanding.filter(r => (r.escalationLevel ?? 0) > 0);
-  const overdue = outstanding.filter(r => {
-    // Simplified overdue calc — uses the assigned-at proxy of
-    // requestedAt since we don't pull assignedAt in the preview.
-    const hours = (now.getTime() - new Date(r.requestedAt).getTime()) / 3_600_000;
-    const cs = r.escalationLevel === 0 ? sla.days1 : r.escalationLevel === 1 ? sla.days2 : sla.days3;
-    return hours > cs * 24;
-  });
-
-  const staffName = new Map(data.staff.map(s => [s.portalUserId, s.name]));
-  const fsName = new Map(data.fsLineGroups.map(g => [g.fsLineId, g.fsLineName]));
-  if (data.principal) staffName.set(data.principal.id, `${data.principal.name} (Principal)`);
-
-  return (
-    <div className="max-w-5xl mx-auto space-y-4">
-      {/* Header */}
-      <div className="flex items-start justify-between bg-white border border-slate-200 rounded-lg p-5">
-        <div>
-          <p className="text-xs text-slate-500 uppercase tracking-wide">Portal Principal Dashboard</p>
-          <h1 className="text-xl font-semibold text-slate-800 mt-0.5">{data.engagement?.client.clientName}</h1>
-          <p className="text-xs text-slate-500 mt-1">
-            SLA: <strong className="text-slate-700">{sla.days1}</strong> / <strong className="text-slate-700">{sla.days2}</strong> / <strong className="text-slate-700">{sla.days3}</strong> days
-            <span className="ml-2 text-slate-400">({sla.source.replace('-', ' ')})</span>
-          </p>
-        </div>
-        <div className="flex items-center gap-2">
-          <span className="inline-flex items-center gap-1 px-3 py-1.5 rounded-md border border-slate-300 text-sm text-slate-700 bg-white"><Settings className="w-4 h-4" />Setup</span>
-          <span className="inline-flex items-center gap-1 px-3 py-1.5 rounded-md bg-blue-600 text-white text-sm"><RefreshCw className="w-4 h-4" />Refresh</span>
-        </div>
-      </div>
-
-      {/* KPIs */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-        <Kpi label="Outstanding"              value={outstanding.length} icon={<Clock className="w-4 h-4" />} tone="blue" />
-        <Kpi label="Overdue (SLA breached)"   value={overdue.length}     icon={<AlertTriangle className="w-4 h-4" />} tone={overdue.length > 0 ? 'amber' : 'slate'} />
-        <Kpi label="Escalated"                value={escalated.length}   icon={<ArrowRight className="w-4 h-4" />}    tone={escalated.length > 0 ? 'red' : 'slate'} />
-        <Kpi label="Responded"                value={responded.length}   icon={<CheckCircle2 className="w-4 h-4" />}  tone="emerald" />
-      </div>
-
-      {/* Filter bar placeholder — replica only, non-functional. */}
-      <div className="bg-white border border-slate-200 rounded-lg p-4">
-        <div className="flex items-center gap-2 mb-3">
-          <Filter className="w-4 h-4 text-slate-500" />
-          <span className="text-sm font-medium text-slate-700">Search requests</span>
-          <span className="text-[11px] text-slate-400">— ask in plain English: &quot;overdue from Alice&quot;, &quot;bank statements outstanding&quot;, etc.</span>
-        </div>
-        <div className="flex gap-2">
-          <input placeholder="What are you looking for?" disabled className="flex-1 text-sm border border-slate-300 rounded-md px-3 py-1.5 bg-slate-50" />
-          <span className="inline-flex items-center gap-1 px-3 py-1.5 text-sm rounded-md bg-blue-600 text-white"><Filter className="w-4 h-4" />Search</span>
-        </div>
-      </div>
-
-      {/* Request list */}
-      <div className="bg-white border border-slate-200 rounded-lg">
-        <table className="w-full text-sm">
-          <thead>
-            <tr className="text-xs text-slate-500 border-b border-slate-200">
-              <th className="text-left font-medium px-4 py-2">Status</th>
-              <th className="text-left font-medium">Question</th>
-              <th className="text-left font-medium">FS Line / TB</th>
-              <th className="text-left font-medium">Assignee</th>
-              <th className="text-right font-medium pr-4">Age</th>
-            </tr>
-          </thead>
-          <tbody>
-            {requests.slice(0, 20).map(r => {
-              const assignee = r.assignedPortalUserId ? staffName.get(r.assignedPortalUserId) : null;
-              const fs = r.routingFsLineId ? fsName.get(r.routingFsLineId) : null;
-              const ageHours = (now.getTime() - new Date(r.requestedAt).getTime()) / 3_600_000;
-              const age = ageHours < 1 ? '< 1h' : ageHours < 24 ? `${Math.round(ageHours)}h` : `${Math.round(ageHours / 24)}d`;
-              return (
-                <tr key={r.id} className="border-b border-slate-100 last:border-0">
-                  <td className="px-4 py-2">
-                    {r.respondedAt ? (
-                      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full border text-[11px] bg-emerald-50 border-emerald-200 text-emerald-700">Responded</span>
-                    ) : r.escalationLevel >= 3 ? (
-                      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full border text-[11px] bg-red-50 border-red-200 text-red-700">Escalated to you</span>
-                    ) : r.escalationLevel > 0 ? (
-                      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full border text-[11px] bg-amber-50 border-amber-200 text-amber-700">Escalated · col {r.escalationLevel + 1}</span>
-                    ) : (
-                      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full border text-[11px] bg-slate-50 border-slate-200 text-slate-700">Outstanding</span>
-                    )}
-                  </td>
-                  <td className="text-slate-700 max-w-md truncate" title={r.question}>{r.question || '(no question text)'}</td>
-                  <td className="text-slate-600">
-                    {fs ? (
-                      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-blue-50 text-blue-700 border border-blue-200 text-[11px]">
-                        {fs}{r.routingTbAccountCode ? ` · ${r.routingTbAccountCode}` : ''}
-                      </span>
-                    ) : <span className="text-[11px] text-slate-400">—</span>}
-                  </td>
-                  <td className="text-slate-600 text-xs">{assignee || <span className="text-slate-400">unassigned</span>}</td>
-                  <td className="text-right text-xs text-slate-500 pr-4 whitespace-nowrap">{age}</td>
-                </tr>
-              );
-            })}
-            {requests.length === 0 && (
-              <tr><td colSpan={5} className="px-4 py-6 text-center text-xs text-slate-500 italic">No requests on this engagement yet.</td></tr>
+        {/* Viewing-as picker — every option mints a separate preview
+            session under the hood. The default is the Portal Principal
+            (or first confirmed staff if there's no Principal). */}
+        <div className="px-3 py-2 border-b border-slate-200 bg-slate-50 flex flex-wrap gap-2 text-xs items-center">
+          <label className="text-[10px] uppercase tracking-wide text-slate-500 font-semibold">Viewing as</label>
+          <select
+            value={viewingAs}
+            onChange={e => setViewingAs(e.target.value)}
+            disabled={noUsers}
+            className="text-xs border border-slate-300 rounded px-2 py-1 bg-white disabled:bg-slate-100 disabled:text-slate-400"
+            title="Pick which client-portal user's experience to load. A new preview session is minted each time."
+          >
+            {noUsers && <option value="">— No portal users to impersonate —</option>}
+            {data.principal && (
+              <option value={data.principal.id}>{data.principal.name} (Portal Principal)</option>
             )}
-          </tbody>
-        </table>
-        {requests.length > 20 && (
-          <div className="px-4 py-2 border-t border-slate-100 text-[11px] text-slate-500">Showing first 20 of {requests.length} — the real dashboard paginates.</div>
-        )}
-      </div>
-    </div>
-  );
-}
-
-function Kpi({ label, value, icon, tone }: { label: string; value: number; icon: React.ReactNode; tone: 'blue' | 'amber' | 'red' | 'emerald' | 'slate' }) {
-  const tc =
-    tone === 'blue'    ? 'bg-blue-50 border-blue-200 text-blue-800'    :
-    tone === 'amber'   ? 'bg-amber-50 border-amber-200 text-amber-800' :
-    tone === 'red'     ? 'bg-red-50 border-red-200 text-red-800'       :
-    tone === 'emerald' ? 'bg-emerald-50 border-emerald-200 text-emerald-800' :
-    'bg-slate-50 border-slate-200 text-slate-700';
-  return (
-    <div className={`border rounded-lg p-4 ${tc}`}>
-      <div className="flex items-center gap-2 text-xs uppercase tracking-wide">{icon}{label}</div>
-      <div className="text-2xl font-semibold mt-2">{value}</div>
-    </div>
-  );
-}
-
-// ─── Manage Staff (setup screen) view replica ─────────────────────
-
-function ManageView({ data }: { data: PreviewData }) {
-  const [openStaff, setOpenStaff] = useState(true);
-  const [openAlloc, setOpenAlloc] = useState(true);
-  const [expandedFs, setExpandedFs] = useState<Set<string>>(new Set());
-  const eng = data.engagement;
-  const setupComplete = !!eng?.portalSetupCompletedAt;
-  const approvedStaff = data.staff.filter(s => s.accessConfirmed);
-  const staffById = useMemo(() => {
-    const m = new Map<string, string>();
-    for (const s of data.staff) if (s.portalUserId) m.set(s.portalUserId, s.name);
-    if (data.principal) m.set(data.principal.id, `${data.principal.name} (Principal)`);
-    return m;
-  }, [data.staff, data.principal]);
-
-  function allocFor(fsLineId: string | null, tbAccountCode: string | null): Allocation | null {
-    return data.allocations.find(a => a.fsLineId === fsLineId && a.tbAccountCode === tbAccountCode) || null;
-  }
-
-  return (
-    <div className="max-w-5xl mx-auto space-y-5">
-      {/* Header */}
-      <div className="bg-white border border-slate-200 rounded-lg p-5">
-        <div className="flex items-start justify-between">
-          <div>
-            <p className="text-xs text-slate-500 uppercase tracking-wide">Portal Principal Setup</p>
-            <h1 className="text-xl font-semibold text-slate-800 mt-0.5">{eng?.client.clientName}</h1>
-            <p className="text-sm text-slate-600 mt-0.5">{formatPeriod(eng?.period ?? null)} · {eng?.auditType}</p>
-          </div>
-          {setupComplete ? (
-            <span className="inline-flex items-center gap-1 px-3 py-1 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200 text-xs">
-              <CheckCircle2 className="w-3.5 h-3.5" />Setup complete
-            </span>
-          ) : (
-            <span className="inline-flex items-center gap-1 px-3 py-1.5 rounded-md bg-emerald-600 text-white text-sm">
-              <CheckCircle2 className="w-4 h-4" />Complete setup
+            {pickableStaff.length > 0 && (
+              <optgroup label="Staff">
+                {pickableStaff.map(s => (
+                  <option key={s.id} value={s.portalUserId || s.id}>
+                    {s.name}{s.role ? ` — ${s.role}` : ''}{s.accessConfirmed ? '' : ' (pending)'}
+                  </option>
+                ))}
+              </optgroup>
+            )}
+          </select>
+          {tokenLoading && (
+            <span className="text-[11px] text-slate-500 inline-flex items-center gap-1">
+              <Loader2 className="h-3 w-3 animate-spin" /> Minting preview session…
             </span>
           )}
+          {previewToken && !tokenLoading && (
+            <button
+              onClick={() => setIframeKey(k => k + 1)}
+              className="ml-auto inline-flex items-center gap-1 px-2 py-1 text-[11px] text-slate-600 hover:text-blue-700 hover:bg-blue-50 rounded"
+              title="Reload the iframe — handy if the auditor wants to walk the client through from the home screen again"
+            >
+              <RefreshCw className="h-3 w-3" /> Reload
+            </button>
+          )}
         </div>
-        {!setupComplete && (
-          <p className="text-xs text-amber-700 mt-3 bg-amber-50 border border-amber-200 rounded p-2">
-            While setup is outstanding, <strong>no staff member can log in</strong>.
-          </p>
-        )}
-      </div>
 
-      {/* Staff section */}
-      <div className="bg-white border border-slate-200 rounded-lg">
-        <button onClick={() => setOpenStaff(!openStaff)} className="w-full flex items-center justify-between px-5 py-4 text-left pointer-events-auto">
-          <div>
-            <h2 className="text-sm font-semibold text-slate-800">Staff</h2>
-            <p className="text-xs text-slate-500 mt-0.5">{data.staff.length} on list · {approvedStaff.length} approved</p>
-          </div>
-          {openStaff ? <ChevronDown className="w-4 h-4 text-slate-500" /> : <ChevronRight className="w-4 h-4 text-slate-500" />}
-        </button>
-        {openStaff && (
-          <div className="border-t border-slate-200 p-5 space-y-4">
-            {data.staff.length === 0 ? (
-              <p className="text-xs text-slate-500 italic">No staff added yet.</p>
-            ) : (
-              <table className="w-full text-sm">
-                <thead>
-                  <tr className="text-xs text-slate-500 border-b border-slate-200">
-                    <th className="text-left font-medium py-2">Name</th>
-                    <th className="text-left font-medium">Email</th>
-                    <th className="text-left font-medium">Role</th>
-                    <th className="text-center font-medium">Access</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {data.staff.map(s => (
-                    <tr key={s.id} className="border-b border-slate-100 last:border-0">
-                      <td className="py-2 text-slate-800">{s.name}</td>
-                      <td className="text-slate-600">{s.email}</td>
-                      <td className="text-slate-500">{s.role || '—'}</td>
-                      <td className="text-center">
-                        <span className={`inline-flex items-center gap-1 px-2.5 py-1 text-xs rounded-full border ${s.accessConfirmed ? 'bg-emerald-50 border-emerald-200 text-emerald-700' : 'bg-amber-50 border-amber-200 text-amber-700'}`}>
-                          {s.accessConfirmed ? <><CheckCircle2 className="w-3 h-3" />Confirmed</> : 'Pending'}
-                        </span>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            )}
-          </div>
-        )}
-      </div>
+        {/* The live iframe. Wrapped in a fixed-height container so the
+            audit tool's outer scroll stays predictable; the iframe
+            scrolls internally. */}
+        <div className="bg-slate-100" style={{ height: '720px' }}>
+          {tokenError && (
+            <div className="p-4 text-sm text-red-700 bg-red-50 border-b border-red-200">
+              <AlertCircle className="h-4 w-4 inline mr-1" />{tokenError}
+            </div>
+          )}
+          {noUsers ? (
+            <div className="flex flex-col items-center justify-center h-full text-center px-6">
+              <Users className="h-8 w-8 text-slate-300 mb-2" />
+              <p className="text-sm text-slate-500">No portal users yet for {clientName}.</p>
+              <p className="text-xs text-slate-400 mt-1">Designate a Portal Principal on the Opening tab to enable the preview.</p>
+            </div>
+          ) : iframeSrc ? (
+            <iframe
+              key={iframeKey}
+              src={iframeSrc}
+              title={`Portal preview as ${viewingAs === principalId ? data.principal?.name : pickableStaff.find(s => s.portalUserId === viewingAs)?.name || 'user'}`}
+              className="w-full h-full border-0 bg-white"
+              // Restrict the iframe sandbox — same-origin so cookies /
+              // tokens work and the portal pages can fetch their APIs,
+              // but no top-navigation so a misbehaving link can't
+              // navigate the parent window.
+              sandbox="allow-same-origin allow-scripts allow-forms allow-popups allow-popups-to-escape-sandbox"
+            />
+          ) : (
+            <div className="flex items-center justify-center h-full text-sm text-slate-400 inline-flex gap-2">
+              <Loader2 className="h-4 w-4 animate-spin" /> Starting preview session…
+            </div>
+          )}
+        </div>
 
-      {/* Work allocation section */}
-      <div className="bg-white border border-slate-200 rounded-lg">
-        <button onClick={() => setOpenAlloc(!openAlloc)} className="w-full flex items-center justify-between px-5 py-4 text-left pointer-events-auto">
-          <div>
-            <h2 className="text-sm font-semibold text-slate-800">Work Allocation</h2>
-            <p className="text-xs text-slate-500 mt-0.5">{data.fsLineGroups.length} FS Lines — up to 3 staff per line / TB code</p>
-          </div>
-          {openAlloc ? <ChevronDown className="w-4 h-4 text-slate-500" /> : <ChevronRight className="w-4 h-4 text-slate-500" />}
-        </button>
-        {openAlloc && (
-          <div className="border-t border-slate-200">
-            <div className="grid grid-cols-[minmax(200px,3fr)_1fr_1fr_1fr] gap-3 px-5 py-3 bg-slate-50 border-b border-slate-200 text-xs text-slate-600">
-              <div className="font-medium">FS Line / TB code</div>
-              {[1, 2, 3].map(col => (
-                <div key={col} className="text-left pl-2">
-                  <div className="font-medium text-slate-700">Column {col}</div>
-                  <div className="text-[11px]">{(data.escalationDays as any)[`days${col}`]} day{(data.escalationDays as any)[`days${col}`] === 1 ? '' : 's'} to escalate</div>
-                </div>
-              ))}
-            </div>
-            <div className="divide-y divide-slate-100">
-              {data.fsLineGroups.map(g => {
-                const key = g.fsLineId ?? g.fsLineName;
-                const isExp = expandedFs.has(key);
-                const alloc = allocFor(g.fsLineId, null);
-                return (
-                  <div key={key}>
-                    <div className="grid grid-cols-[minmax(200px,3fr)_1fr_1fr_1fr] gap-3 px-5 py-2 items-center">
-                      <button
-                        onClick={() => {
-                          setExpandedFs(prev => {
-                            const n = new Set(prev);
-                            if (n.has(key)) n.delete(key); else n.add(key);
-                            return n;
-                          });
-                        }}
-                        className="flex w-full items-center justify-start gap-1.5 text-left text-sm font-medium text-slate-800 pointer-events-auto"
-                      >
-                        {isExp ? <ChevronDown className="w-4 h-4 text-slate-500 flex-shrink-0" /> : <ChevronRight className="w-4 h-4 text-slate-500 flex-shrink-0" />}
-                        <span className="truncate">{g.fsLineName}</span>
-                        <span className="text-[11px] text-slate-400 flex-shrink-0">({g.tbRows.length} TB)</span>
-                      </button>
-                      {([1, 2, 3] as const).map(col => {
-                        const k = `staff${col}UserId` as 'staff1UserId' | 'staff2UserId' | 'staff3UserId';
-                        const uid = (alloc?.[k] as string | null) ?? null;
-                        const name = uid ? staffById.get(uid) : null;
-                        return (
-                          <div key={col} className="text-xs border border-slate-300 rounded-md px-2 py-1.5 bg-white text-slate-600 truncate">
-                            {name || <span className="text-slate-400">— unassigned —</span>}
-                          </div>
-                        );
-                      })}
-                    </div>
-                    {isExp && g.tbRows.map(tb => {
-                      const tbAlloc = allocFor(g.fsLineId, tb.accountCode);
-                      return (
-                        <div key={tb.accountCode} className="grid grid-cols-[minmax(200px,3fr)_1fr_1fr_1fr] gap-3 px-5 py-2 items-center">
-                          <div className="pl-6 text-xs text-slate-700">
-                            <span className="font-mono text-slate-500 mr-2">{tb.accountCode}</span>
-                            {tb.description}
-                          </div>
-                          {([1, 2, 3] as const).map(col => {
-                            const k = `staff${col}UserId` as 'staff1UserId' | 'staff2UserId' | 'staff3UserId';
-                            const uid = (tbAlloc?.[k] as string | null) ?? null;
-                            const name = uid ? staffById.get(uid) : null;
-                            return (
-                              <div key={col} className="text-xs border border-slate-300 rounded-md px-2 py-1.5 bg-white text-slate-600 truncate">
-                                {name || <span className="text-slate-400">— unassigned —</span>}
-                              </div>
-                            );
-                          })}
-                        </div>
-                      );
-                    })}
-                  </div>
-                );
-              })}
-              {data.fsLineGroups.length === 0 && (
-                <div className="px-5 py-6 text-xs text-slate-500 italic">
-                  No FS Lines on this engagement yet.
-                </div>
-              )}
-            </div>
-          </div>
-        )}
+        {/* Footer band — reminds the auditor that any apparent error
+            messages about read-only state are intentional. */}
+        <div className="px-3 py-2 border-t border-slate-200 bg-slate-50 text-[10px] text-slate-500">
+          Inside the preview, attempting any action that would save data returns &quot;blocked because you are viewing the portal in read-only preview mode&quot;. That is expected — open the real portal to make changes.
+        </div>
       </div>
     </div>
   );
 }
+
