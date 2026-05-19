@@ -43,6 +43,29 @@ interface MasterSchedule {
   defaultStage?: 'planning' | 'fieldwork' | 'completion';
   /** legacy field (pre Part E) */
   stage?: 'planning' | 'fieldwork' | 'completion';
+  /** Per-schedule opt-in to the Schedule Designer. When undefined,
+   *  built-in tool keys default to false; everything else defaults
+   *  to true. Mirrors the same field in SchedulesClient.tsx — the
+   *  Master Schedule List checkbox writes here and the Schedule
+   *  Designer reads from it. */
+  designerEnabled?: boolean;
+}
+
+/** Built-in tool keys whose dedicated React panel doesn't currently
+ *  render firm-defined questions. We default `designerEnabled` to
+ *  false for these so existing firms see no change after the
+ *  designerEnabled field is introduced. Admins can still tick the
+ *  Master Schedule List checkbox to opt one in. */
+const DEFAULT_DESIGNER_DISABLED_KEYS = new Set([
+  'opening', 'prior_period', 'trial_balance', 'par', 'walkthroughs',
+  'rmm', 'documents', 'communication', 'outstanding', 'portal',
+  'fs_review', 'adj_tb', 'test_summary_results', 'error_schedule',
+  'eqr_review', 'significant_risk_completion',
+]);
+
+function effectiveDesignerEnabled(ms: MasterSchedule): boolean {
+  if (typeof ms.designerEnabled === 'boolean') return ms.designerEnabled;
+  return !DEFAULT_DESIGNER_DISABLED_KEYS.has(ms.key);
 }
 
 type Stage = 'planning' | 'fieldwork' | 'completion';
@@ -1327,6 +1350,10 @@ export function AuditTypeSchedulesClient({
     setNewScheduleLabel('');
   }
 
+  function toggleMasterScheduleDesigner(key: string, enabled: boolean) {
+    setMasterSchedules(prev => prev.map(s => s.key === key ? { ...s, designerEnabled: enabled } : s));
+  }
+
   function removeMasterSchedule(key: string) {
     setMasterSchedules(prev => prev.filter(s => s.key !== key));
     setStageMappings(prev => {
@@ -1466,19 +1493,34 @@ export function AuditTypeSchedulesClient({
           <div className="p-4 space-y-3">
             <p className="text-[10px] text-slate-400">
               Defines all available schedules. Each audit type picks from this master list and drags them
-              into Planning / Fieldwork / Completion columns below.
+              into Planning / Fieldwork / Completion columns below. Tick a row&rsquo;s checkbox to expose it in
+              the <strong>Schedule Designer</strong> so admins can attach custom firm questions to it &mdash; useful
+              for built-in tools (e.g. EQR Review) where you want to add your own questions alongside the
+              built-in panel UI.
             </p>
 
             <div className="space-y-1">
-              {masterSchedules.map(s => (
-                <div key={s.key} className="flex items-center gap-2 text-xs">
-                  <span className="flex-1 text-slate-700">{s.label}</span>
-                  <span className="text-[9px] text-slate-400 uppercase">{s.defaultStage || s.stage}</span>
-                  <button onClick={() => removeMasterSchedule(s.key)} className="text-slate-400 hover:text-red-500">
-                    <X className="h-3 w-3" />
-                  </button>
-                </div>
-              ))}
+              {masterSchedules.map(s => {
+                const enabled = effectiveDesignerEnabled(s);
+                return (
+                  <div key={s.key} className="flex items-center gap-2 text-xs">
+                    <input
+                      type="checkbox"
+                      checked={enabled}
+                      onChange={e => toggleMasterScheduleDesigner(s.key, e.target.checked)}
+                      className="h-3 w-3 cursor-pointer"
+                      title={enabled
+                        ? 'Visible in Schedule Designer — admins can add firm-specific questions to this schedule. Untick to hide it.'
+                        : 'Hidden from Schedule Designer (built-in tool by default). Tick to expose it for question customisation.'}
+                    />
+                    <span className="flex-1 text-slate-700">{s.label}</span>
+                    <span className="text-[9px] text-slate-400 uppercase">{s.defaultStage || s.stage}</span>
+                    <button onClick={() => removeMasterSchedule(s.key)} className="text-slate-400 hover:text-red-500">
+                      <X className="h-3 w-3" />
+                    </button>
+                  </div>
+                );
+              })}
             </div>
 
             <div className="flex items-end gap-2 pt-2 border-t border-slate-100">

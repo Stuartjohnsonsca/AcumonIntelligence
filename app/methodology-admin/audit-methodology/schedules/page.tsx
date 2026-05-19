@@ -27,7 +27,7 @@ export default async function SchedulesPage() {
   ]);
 
   const masterSchedules = ((masterRow?.data as any)?.schedules as
-    | Array<{ key: string; label: string; defaultStage?: string; stage?: string }>
+    | Array<{ key: string; label: string; defaultStage?: string; stage?: string; designerEnabled?: boolean }>
     | undefined) || [];
 
   return (

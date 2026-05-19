@@ -26,6 +26,15 @@ interface MasterSchedule {
   label: string;
   defaultStage?: string;
   stage?: string;
+  /** Per-schedule opt-in to the Schedule Designer. When false, the
+   *  schedule is hidden from the Appendix Templates editor (used for
+   *  built-in tools whose UI lives in dedicated React panels). When
+   *  undefined, the default rule applies: built-in tool keys default
+   *  to false; everything else defaults to true. The Master Schedule
+   *  List exposes this as a checkbox so admins can opt a built-in
+   *  panel into customisation if they want to add firm-specific
+   *  questions. */
+  designerEnabled?: boolean;
 }
 
 interface Props {
@@ -45,6 +54,18 @@ interface Props {
  * These are excluded from the "Appendix Templates" tab list because they don't
  * have configurable questions — the engagement renders them as built-in tools.
  */
+/** Resolve whether a master schedule should appear in the Schedule
+ *  Designer. Honours the per-schedule `designerEnabled` flag set via
+ *  the Master Schedule List checkbox; when unset, falls back to the
+ *  historical default — every built-in tool key is excluded, every
+ *  other schedule is included. This keeps the previous behaviour
+ *  intact for existing firms while letting admins opt a built-in
+ *  panel in (or a regular schedule out) on a per-firm basis. */
+function isDesignerEnabled(ms: MasterSchedule): boolean {
+  if (typeof ms.designerEnabled === 'boolean') return ms.designerEnabled;
+  return !BUILT_IN_TOOL_SCHEDULE_KEYS.has(ms.key);
+}
+
 const BUILT_IN_TOOL_SCHEDULE_KEYS = new Set([
   // Engagement tabs
   'opening',
@@ -158,7 +179,7 @@ export function SchedulesClient({ firmId, initialTemplates, masterSchedules }: P
     ];
     const seen = new Set(HARDCODED_APPENDIX_TEMPLATE_TYPES.map(t => normalise(t.key)));
     for (const ms of masterSchedules || []) {
-      if (BUILT_IN_TOOL_SCHEDULE_KEYS.has(ms.key)) continue;
+      if (!isDesignerEnabled(ms)) continue;
       const nk = normalise(ms.key);
       if (seen.has(nk)) continue;
       merged.push({
@@ -217,7 +238,7 @@ export function SchedulesClient({ firmId, initialTemplates, masterSchedules }: P
     const normalise = (k: string) => k.replace(/_(questions|categories)$/, '');
     const hardcodedNorms = new Set(HARDCODED_APPENDIX_TEMPLATE_TYPES.map(t => normalise(t.key)));
     for (const ms of masterSchedules || []) {
-      if (BUILT_IN_TOOL_SCHEDULE_KEYS.has(ms.key)) continue;
+      if (!isDesignerEnabled(ms)) continue;
       if (hardcodedNorms.has(normalise(ms.key))) continue;
       if (!m[ms.key]) m[ms.key] = ms.label;
     }
