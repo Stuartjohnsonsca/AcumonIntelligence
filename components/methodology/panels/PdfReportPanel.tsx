@@ -98,7 +98,7 @@ export function PdfReportPanel({ engagementId }: { engagementId: string }) {
       <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-2 mb-3">
         <h3 className="text-sm font-semibold text-slate-800 flex items-center gap-2 min-w-0">
           <FileText className="h-4 w-4 text-blue-600 flex-shrink-0" />
-          <span className="truncate">Audit File — PDF Snapshots</span>
+          <span className="truncate">Audit File — Q&amp;A / Summary</span>
         </h3>
         <div className="flex flex-wrap items-center gap-2">
           {/* InterrogateBot — Q&A surface over the engagement's content.

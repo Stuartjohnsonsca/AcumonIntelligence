@@ -363,9 +363,10 @@ export function OpeningTab({ engagement, auditType, clientName, periodEndDate, o
           <PortalPrincipalPanel engagementId={engagement.id} />
         </div>
 
-        {/* PDF Snapshots — methodology admins can generate a full-file
-            PDF here; everyone with read access can view it inline.
-            Download is methodology-admin-only. */}
+        {/* Q&A / Summary — methodology admins can generate a full-file
+            PDF here; everyone with read access can view it inline and
+            ask questions via InterrogateBot. Download is methodology-
+            admin-only. */}
         <div>
           <PdfReportPanel engagementId={engagement.id} />
         </div>
