@@ -8,6 +8,7 @@ import {
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { expandZipFiles } from '@/lib/client-unzip';
+import { CustomScheduleQuestions } from '../CustomScheduleQuestions';
 
 interface ChatMessage {
   from: 'firm' | 'client';
@@ -700,6 +701,7 @@ export function EngagementOutstandingTab({ engagementId, clientId, currentUserId
         </div>
       )}
     </div>
+    <CustomScheduleQuestions engagementId={engagementId} scheduleKey="outstanding" />
     </div>
   );
 }

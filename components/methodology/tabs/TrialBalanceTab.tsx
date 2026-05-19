@@ -3,6 +3,7 @@
 import { useState, useEffect, useCallback, useMemo, useRef, Fragment, lazy, Suspense } from 'react';
 import { useAutoSave } from '@/hooks/useAutoSave';
 import { useScrollToAnchor } from '@/lib/hooks/useScrollToAnchor';
+import { CustomScheduleQuestions } from '../CustomScheduleQuestions';
 import { RoundingDropdown } from '../RoundingDropdown';
 
 const FixedAssetRegisterPopup = lazy(() => import('../FixedAssetRegisterPopup').then(m => ({ default: m.FixedAssetRegisterPopup })));
@@ -2109,6 +2110,7 @@ export function TrialBalanceTab({ engagementId, isGroupAudit = false, showCatego
           />
         </Suspense>
       )}
+      <CustomScheduleQuestions engagementId={engagementId} scheduleKey="trial_balance" />
     </div>
   );
 }

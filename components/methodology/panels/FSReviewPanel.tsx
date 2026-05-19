@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useMemo } from 'react';
 import { ChevronDown, ChevronRight, CheckCircle2, Loader2 } from 'lucide-react';
+import { CustomScheduleQuestions } from '../CustomScheduleQuestions';
 
 const STATEMENT_ORDER = ['Profit & Loss', 'Balance Sheet', 'Cash Flow Statement', 'Notes'];
 
@@ -563,6 +564,7 @@ export function FSReviewPanel({ engagementId }: { engagementId: string }) {
           })}
         </div>
       )}
+      <CustomScheduleQuestions engagementId={engagementId} scheduleKey="fs_review" />
     </div>
   );
 }

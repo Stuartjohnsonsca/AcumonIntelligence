@@ -10,6 +10,7 @@ import { ClientContactsPanel } from '../panels/ClientContactsPanel';
 import { ConnectorSetupModal } from '../panels/ConnectorSetupModal';
 import { AuditTimetablePanel } from '../panels/AuditTimetablePanel';
 import { PortalPrincipalPanel } from '../panels/PortalPrincipalPanel';
+import { CustomScheduleQuestions } from '../CustomScheduleQuestions';
 import { PdfReportPanel } from '../panels/PdfReportPanel';
 
 // Extended type for info requests that may have a receivedAt field
@@ -696,6 +697,7 @@ export function OpeningTab({ engagement, auditType, clientName, periodEndDate, o
         enabledSystems={enabledSystems}
         onConnected={handleConnectorSetupComplete}
       />
+      <CustomScheduleQuestions engagementId={engagement.id} scheduleKey="opening" />
     </div>
   );
 }

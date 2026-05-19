@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from 'react';
 import { ShieldCheck, Loader2, CheckCircle2, Plus, MessageSquare } from 'lucide-react';
+import { CustomScheduleQuestions } from '../CustomScheduleQuestions';
 
 type TeamMember = { userId: string; userName?: string; role: string };
 
@@ -282,6 +283,11 @@ export function EQRReviewPanel({ engagementId, userId, userName, teamMembers }: 
           ))}
         </div>
       </div>
+      {/* Firm-defined custom questions for EQR Review. Renders nothing
+          until the firm ticks `eqr_review` in the Master Schedule
+          List (Audit Type Configuration) AND builds questions for it
+          in the Schedule Designer. */}
+      <CustomScheduleQuestions engagementId={engagementId} scheduleKey="eqr_review" heading="Custom EQR Questions" />
     </div>
   );
 }

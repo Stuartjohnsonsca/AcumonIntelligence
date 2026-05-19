@@ -6,6 +6,7 @@ import { expandZipFile } from '@/lib/client-unzip';
 import { useScrollToAnchor } from '@/lib/hooks/useScrollToAnchor';
 import { ImportOptionsModal } from '@/components/methodology/ImportOptionsModal';
 import { ImportReviewModal } from '@/components/methodology/ImportReviewModal';
+import { CustomScheduleQuestions } from '../CustomScheduleQuestions';
 
 interface Props {
   engagementId: string;
@@ -669,6 +670,7 @@ export function PriorPeriodTab({ engagementId, teamMembers = [], clientName, per
           onCancelled={() => setImportExtractionId(null)}
         />
       )}
+      <CustomScheduleQuestions engagementId={engagementId} scheduleKey="prior_period" />
     </div>
   );
 }

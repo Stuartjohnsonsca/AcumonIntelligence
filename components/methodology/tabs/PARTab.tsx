@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import { useAutoSave } from '@/hooks/useAutoSave';
+import { CustomScheduleQuestions } from '../CustomScheduleQuestions';
 import {
   type RoundingMode,
   formatRounded,
@@ -844,6 +845,7 @@ export function PARTab({ engagementId, userId, userName, userRole }: Props) {
           </tbody>
         </table>
       </div>
+      <CustomScheduleQuestions engagementId={engagementId} scheduleKey="par" />
     </div>
   );
 }

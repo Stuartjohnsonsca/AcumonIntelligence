@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useMemo } from 'react';
 import { ChevronDown, ChevronRight, Loader2, Plus, Trash2, AlertTriangle } from 'lucide-react';
+import { CustomScheduleQuestions } from '../CustomScheduleQuestions';
 
 const STATEMENT_ORDER = ['Profit & Loss', 'Balance Sheet', 'Cash Flow Statement', 'Notes'];
 // Single grid template used at every level so that the three numeric columns
@@ -388,6 +389,7 @@ export function AdjustedTBPanel({ engagementId }: { engagementId: string }) {
           }}
         />
       )}
+      <CustomScheduleQuestions engagementId={engagementId} scheduleKey="adj_tb" />
     </div>
   );
 }

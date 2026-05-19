@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useMemo } from 'react';
 import { Loader2, Download, AlertOctagon, CheckCircle2, ExternalLink, Plus, Trash2, X, Save, AlertTriangle, Send } from 'lucide-react';
+import { CustomScheduleQuestions } from '../CustomScheduleQuestions';
 import { Button } from '@/components/ui/button';
 import {
   encodeNavReference, decodeNavReference, getCurrentLocation, navigateTo,
@@ -976,6 +977,7 @@ export function ErrorSchedulePanel({ engagementId, materiality = 0, performanceM
           </table>
         </div>
       )}
+      <CustomScheduleQuestions engagementId={engagementId} scheduleKey="error_schedule" />
     </div>
   );
 }

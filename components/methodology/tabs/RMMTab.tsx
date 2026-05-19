@@ -8,6 +8,7 @@ import { lookupInherentRisk, lookupOverallRisk, riskColor, inherentRiskDropdownC
 import { useScrollToAnchor } from '@/lib/hooks/useScrollToAnchor';
 import { PlanningLetterModal } from '../panels/PlanningLetterModal';
 import { PlanningLetterJobBadge } from '../panels/PlanningLetterJobBadge';
+import { CustomScheduleQuestions } from '../CustomScheduleQuestions';
 import { setCurrentLocation, subscribeNav, consumePendingNav } from '@/lib/engagement-nav';
 
 interface Props {
@@ -1644,6 +1645,7 @@ export function RMMTab({ engagementId, auditType, teamMembers = [], showCategory
           onClose={() => setPlanningLetterMode(null)}
         />
       )}
+      <CustomScheduleQuestions engagementId={engagementId} scheduleKey="rmm" />
     </div>
   );
 }

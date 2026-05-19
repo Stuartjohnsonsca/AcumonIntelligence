@@ -29,6 +29,7 @@
 
 import { useEffect, useState } from 'react';
 import { Loader2, Users, Eye, AlertCircle, RefreshCw } from 'lucide-react';
+import { CustomScheduleQuestions } from '../CustomScheduleQuestions';
 
 interface Engagement {
   id: string;
@@ -278,6 +279,7 @@ export function ClientPortalTab({ engagementId, clientName }: Props) {
           Inside the preview, attempting any action that would save data returns &quot;blocked because you are viewing the portal in read-only preview mode&quot;. That is expected — open the real portal to make changes.
         </div>
       </div>
+      <CustomScheduleQuestions engagementId={engagementId} scheduleKey="portal" />
     </div>
   );
 }

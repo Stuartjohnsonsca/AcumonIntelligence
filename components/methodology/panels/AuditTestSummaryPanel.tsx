@@ -2,6 +2,7 @@
 
 import { Fragment, useState, useEffect, useCallback, useMemo } from 'react';
 import { AlertTriangle, ArrowUpDown, ArrowUp, ArrowDown, Filter as FilterIcon, ChevronRight, ChevronDown as ChevronDownIcon } from 'lucide-react';
+import { CustomScheduleQuestions } from '../CustomScheduleQuestions';
 
 /**
  * Audit Test Summary Results — Completion view.
@@ -1224,6 +1225,7 @@ export function AuditTestSummaryPanel({ engagementId, userRole }: Props) {
           </tbody>
         </table>
       </div>
+      <CustomScheduleQuestions engagementId={engagementId} scheduleKey="test_summary_results" />
     </div>
   );
 }

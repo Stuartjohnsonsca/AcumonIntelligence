@@ -4,6 +4,7 @@ import { useState, useEffect, useCallback, useRef, useMemo, Fragment } from 'rea
 import { useSession } from 'next-auth/react';
 import { ChevronDown, ChevronUp, AlertTriangle, Loader2, Plus, X } from 'lucide-react';
 import { PlanCustomiserModal } from './PlanCustomiserModal';
+import { CustomScheduleQuestions } from '../CustomScheduleQuestions';
 
 interface RMMRow {
   id: string;
@@ -982,6 +983,7 @@ export function SignificantRiskPanel({ engagementId, userId, userName, teamMembe
           onClose={() => { setPlanCustomiserOpen(false); setPlanCustomiserContext(null); }}
         />
       )}
+      <CustomScheduleQuestions engagementId={engagementId} scheduleKey="significant_risk_completion" />
     </div>
   );
 }

@@ -10,6 +10,7 @@ import { InternalMeetingsPanel } from '../panels/InternalMeetingsPanel';
 import { ExpertMeetingsPanel } from '../panels/ExpertMeetingsPanel';
 import { SignOffDots } from '../SignOffDots';
 import type { TeamMemberLite } from '@/lib/sign-off-helpers';
+import { CustomScheduleQuestions } from '../CustomScheduleQuestions';
 import { setCurrentLocation, subscribeNav, consumePendingNav } from '@/lib/engagement-nav';
 
 interface Props {
@@ -245,6 +246,7 @@ export function CommunicationTab({ engagementId, teamMembers, currentUserId }: P
           <ExpertMeetingsPanel engagementId={engagementId} />
         </div>
       )}
+      <CustomScheduleQuestions engagementId={engagementId} scheduleKey="communication" />
     </div>
   );
 }

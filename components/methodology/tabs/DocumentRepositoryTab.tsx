@@ -4,6 +4,7 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 import { useSession } from 'next-auth/react';
 import { expandZipFile } from '@/lib/client-unzip';
 import { TABS } from '@/components/methodology/engagement-tabs-list';
+import { CustomScheduleQuestions } from '../CustomScheduleQuestions';
 
 // Lookup helpers for the live engagement-tab list. Used to render the
 // 'Allocated to' badge on each document row and to drive the location
@@ -1032,6 +1033,7 @@ export function DocumentRepositoryTab({ engagementId }: Props) {
         <span className="flex items-center gap-1"><span className="w-2 h-2 bg-teal-100 text-teal-600 px-1 rounded text-[8px] inline-block">Location</span></span>
         <span className="flex items-center gap-1"><span className="w-2 h-2 bg-amber-100 text-amber-600 px-1 rounded text-[8px] inline-block">Type</span></span>
       </div>
+      <CustomScheduleQuestions engagementId={engagementId} scheduleKey="documents" />
     </div>
   );
 }

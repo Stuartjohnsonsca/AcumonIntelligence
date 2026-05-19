@@ -4,6 +4,7 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 import { FileText, CheckCircle2, Plus, Trash2, Send, Video, MapPin, MessageSquare, Loader2, ChevronDown, ChevronRight, Upload, Eye, X, AlertTriangle, Edit3, FileSpreadsheet } from 'lucide-react';
 import { useScrollToAnchor } from '@/lib/hooks/useScrollToAnchor';
 import { WalkthroughFlowEditor } from '../WalkthroughFlowEditor';
+import { CustomScheduleQuestions } from '../CustomScheduleQuestions';
 import { DocumentAnnotator } from '../panels/DocumentAnnotator';
 import { WalkthroughMatrixSection, type WalkthroughMatrixSectionHandle, type WalkthroughMatrix } from '../panels/WalkthroughMatrixSection';
 import { expandZipFile } from '@/lib/client-unzip';
@@ -1612,6 +1613,7 @@ function WalkthroughProcess({ engagementId, processKey, processLabel, userRole, 
           />
         );
       })()}
+      <CustomScheduleQuestions engagementId={engagementId} scheduleKey="walkthroughs" />
     </div>
   );
 }
