@@ -1193,8 +1193,12 @@ export function EngagementTabs({ engagement, auditType, clientName, periodEndDat
 
   return (
     <div>
-      {/* Persistent action buttons */}
-      <div className="flex items-center gap-1.5 px-2 py-1.5 bg-slate-50 border border-slate-200 rounded-t-lg">
+      {/* Persistent action buttons — sit directly on the page
+          background. The framing bar was removed because each chip
+          already carries its own coloured border/background, so the
+          outer grey strip was adding visual noise without conveying
+          any extra grouping signal. */}
+      <div className="flex items-center gap-1.5 py-1.5">
         <button onClick={() => setOpenPanel('review_point')} data-howto-id="eng.action.add-review-point" className="inline-flex items-center gap-1.5 px-2.5 py-1 text-[10px] font-medium bg-amber-50 text-amber-700 border border-amber-200 rounded hover:bg-amber-100 transition-colors">
           Review Point
           {/* Mirror of the RI Matters dots: red = outstanding (new+open),
