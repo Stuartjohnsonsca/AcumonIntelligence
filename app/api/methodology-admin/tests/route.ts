@@ -225,6 +225,19 @@ export async function PATCH(req: NextRequest) {
 }
 
 // DELETE: Delete a test
+//
+// The Prisma schema declares `onDelete: Cascade` on MethodologyTestAllocation.test
+// and TestActionStep.test, but if a firm's DB was provisioned before those
+// cascade rules were added to the schema (and never re-pushed) the underlying
+// FK constraint won't have ON DELETE CASCADE. Without it, deleting a test
+// either fails (FK violation) or — depending on the constraint state — leaves
+// orphan allocation rows behind. The user reported the orphan case: deleted a
+// pile of tests from the Test Bank, but allocations referencing them survived.
+//
+// To be cascade-correct regardless of DB state, the handler now deletes
+// dependent rows itself in a single transaction. Idempotent — running it
+// against a DB that already has the FK cascade just no-ops the deleteMany
+// calls (zero rows match because the cascade already cleared them).
 export async function DELETE(req: NextRequest) {
   const session = await auth();
   if (!session?.user?.twoFactorVerified || (!session.user.isSuperAdmin && !session.user.isMethodologyAdmin)) {
@@ -232,6 +245,24 @@ export async function DELETE(req: NextRequest) {
   }
 
   const { id } = await req.json();
-  await prisma.methodologyTest.delete({ where: { id } });
-  return NextResponse.json({ success: true });
+
+  // Verify the test belongs to the caller's firm before deleting (Super
+  // Admin can delete any). Avoids letting a methodology admin from one
+  // firm wipe out another firm's data by id-guessing.
+  if (!session.user.isSuperAdmin) {
+    const existing = await prisma.methodologyTest.findUnique({ where: { id }, select: { firmId: true } });
+    if (!existing) return NextResponse.json({ error: 'Test not found' }, { status: 404 });
+    if (existing.firmId !== session.user.firmId) {
+      return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+    }
+  }
+
+  const deleted = await prisma.$transaction(async (tx) => {
+    const allocationsDeleted = await tx.methodologyTestAllocation.deleteMany({ where: { testId: id } });
+    const actionStepsDeleted = await tx.testActionStep.deleteMany({ where: { testId: id } });
+    await tx.methodologyTest.delete({ where: { id } });
+    return { allocationsDeleted: allocationsDeleted.count, actionStepsDeleted: actionStepsDeleted.count };
+  });
+
+  return NextResponse.json({ success: true, ...deleted });
 }

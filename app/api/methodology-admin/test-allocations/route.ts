@@ -10,6 +10,13 @@ export async function GET(req: NextRequest) {
   const url = new URL(req.url);
   const industryId = url.searchParams.get('industryId');
 
+  // Lazy orphan prune — drops any allocation whose referenced test
+  // (or fs line / industry) no longer exists. Earlier deletes via the
+  // /tests endpoint should have cleaned these up via the FK cascade,
+  // but firms whose DB pre-dates the cascade rule end up with orphan
+  // rows that this view-time sweep clears.
+  await pruneOrphanAllocations(session.user.firmId);
+
   const where: any = {};
   if (industryId) where.industryId = industryId;
   // Scope to firm via the test relation
@@ -26,6 +33,32 @@ export async function GET(req: NextRequest) {
   });
 
   return NextResponse.json({ allocations });
+}
+
+/** Delete allocation rows whose testId no longer points at a live test
+ *  in this firm. Scoping via `fsLine.firmId` (which IS a real column
+ *  on a firm-scoped relation) avoids needing relation-is-null
+ *  filtering, which Prisma rejects on required relations even when
+ *  the underlying FK constraint lets orphans exist. Wrapped in
+ *  try/catch because dev DBs may have schema drift; we never want a
+ *  prune failure to break the read. */
+async function pruneOrphanAllocations(firmId: string): Promise<void> {
+  try {
+    const [liveTests, allocations] = await Promise.all([
+      prisma.methodologyTest.findMany({ where: { firmId }, select: { id: true } }),
+      prisma.methodologyTestAllocation.findMany({
+        where: { fsLine: { firmId } },
+        select: { id: true, testId: true },
+      }),
+    ]);
+    const liveIds = new Set(liveTests.map(t => t.id));
+    const orphanIds = allocations.filter(a => !liveIds.has(a.testId)).map(a => a.id);
+    if (orphanIds.length > 0) {
+      await prisma.methodologyTestAllocation.deleteMany({ where: { id: { in: orphanIds } } });
+    }
+  } catch {
+    // schema drift / connection blip — silent. The next read will retry.
+  }
 }
 
 // PUT: Bulk set allocations for an FS line + industry

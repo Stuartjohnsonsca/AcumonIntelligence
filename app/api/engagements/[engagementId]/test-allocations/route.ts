@@ -42,6 +42,27 @@ export async function GET(
     effectiveIndustryId = defaultIndustry?.id;
   }
 
+  // Lazy orphan prune — clear any allocation whose referenced test row
+  // is no longer in the firm's test bank. Cascade-correct DBs will see
+  // zero orphans (the FK does the work); DBs whose schema pre-dates
+  // the cascade rule end up with leftovers that this view-time sweep
+  // tidies up so engagements stop seeing deleted tests. Silent on
+  // failure so a prune blip never breaks the read.
+  try {
+    const [liveTests, allFirmAllocations] = await Promise.all([
+      prisma.methodologyTest.findMany({ where: { firmId: engagement.firmId }, select: { id: true } }),
+      prisma.methodologyTestAllocation.findMany({
+        where: { fsLine: { firmId: engagement.firmId } },
+        select: { id: true, testId: true },
+      }),
+    ]);
+    const liveIds = new Set(liveTests.map(t => t.id));
+    const orphanIds = allFirmAllocations.filter(a => !liveIds.has(a.testId)).map(a => a.id);
+    if (orphanIds.length > 0) {
+      await prisma.methodologyTestAllocation.deleteMany({ where: { id: { in: orphanIds } } });
+    }
+  } catch { /* tolerate schema drift */ }
+
   // Return ALL allocations for the firm (client filters by industry if needed).
   // Drafts are excluded — they're hidden from every engagement's audit plan
   // and from the Plan Customiser. They remain visible in the Test Bank admin
