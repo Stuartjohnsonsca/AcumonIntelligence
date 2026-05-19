@@ -2,7 +2,7 @@
 
 import { useState } from 'react';
 import { Plus, Save, Trash2, AlertTriangle, AlertOctagon, Loader2, Check, FlaskConical, X, Sparkles } from 'lucide-react';
-import type { ValidationRule } from '@/lib/validation-rules';
+import type { ValidationRule, RuleAudienceCondition } from '@/lib/validation-rules';
 import { evaluateRule, newRuleId, starterRule } from '@/lib/validation-rules';
 
 interface AiSuggestion {
@@ -27,9 +27,15 @@ interface AiSuggestion {
 interface Props {
   initialRules: ValidationRule[];
   scheduleKeys: Array<{ key: string; label: string }>;
+  /** Audit Types catalogue (firm-wide, from Firm Wide Assumptions). Used
+   *  for the per-rule "Applies to: Audit Type" gate. */
+  auditTypeOptions: Array<{ value: string; label: string }>;
+  /** Audit Categories list (firm-wide, from Firm Wide Assumptions). Used
+   *  for the per-rule "Applies to: Audit Category" gate. */
+  auditCategoryOptions: string[];
 }
 
-export function ValidationRulesClient({ initialRules, scheduleKeys }: Props) {
+export function ValidationRulesClient({ initialRules, scheduleKeys, auditTypeOptions, auditCategoryOptions }: Props) {
   const [rules, setRules] = useState<ValidationRule[]>(initialRules);
   const [saving, setSaving] = useState(false);
   const [savedAt, setSavedAt] = useState<Date | null>(null);
@@ -48,6 +54,22 @@ export function ValidationRulesClient({ initialRules, scheduleKeys }: Props) {
 
   function update(id: string, patch: Partial<ValidationRule>) {
     setRules(prev => prev.map(r => r.id === id ? { ...r, ...patch } : r));
+  }
+  /** Patch one side of a rule's audience filter (auditType or
+   *  auditCategory). Setting the value to '' clears that filter so
+   *  the rule applies to all engagements on that dimension. */
+  function updateAudience(
+    rule: ValidationRule,
+    side: 'auditType' | 'auditCategory',
+    next: RuleAudienceCondition | null,
+  ) {
+    const prev = rule.audience || {};
+    const merged = { ...prev, [side]: next };
+    // Strip the audience object entirely when both sides are null so
+    // saved rule JSON stays clean and the rule reverts to "applies to
+    // everything" semantics.
+    const both = (merged.auditType ?? null) === null && (merged.auditCategory ?? null) === null;
+    update(rule.id, { audience: both ? undefined : merged });
   }
   function addRule() {
     setRules(prev => [...prev, { ...starterRule(), id: newRuleId(), isActive: false }]);
@@ -263,6 +285,31 @@ export function ValidationRulesClient({ initialRules, scheduleKeys }: Props) {
                     <option value="warning">Warning (amber — advisory)</option>
                     <option value="error">Error (red — blocks sign-off)</option>
                   </select>
+                </div>
+              </div>
+
+              {/* Applies to — audience gates. Each side is a 3-piece
+                  picker (Any / Is / Is NOT + value). Both filters AND
+                  together. If both are "Any" the rule applies to every
+                  engagement (legacy behaviour). */}
+              <div className="mb-3 border border-slate-200 rounded p-2 bg-slate-50/60">
+                <label className="block text-[10px] uppercase tracking-wide text-slate-500 font-semibold mb-1">
+                  Applies to <span className="text-slate-400 normal-case">(both must match — leave as &ldquo;Any&rdquo; for no filter)</span>
+                </label>
+                <div className="grid grid-cols-2 gap-2">
+                  <AudienceField
+                    label="Audit Type"
+                    options={auditTypeOptions}
+                    value={rule.audience?.auditType ?? null}
+                    onChange={(next) => updateAudience(rule, 'auditType', next)}
+                  />
+                  <AudienceField
+                    label="Audit Category"
+                    options={auditCategoryOptions.map(c => ({ value: c, label: c }))}
+                    value={rule.audience?.auditCategory ?? null}
+                    onChange={(next) => updateAudience(rule, 'auditCategory', next)}
+                    emptyHint="No categories configured — add them under Firm Wide Assumptions → Audit Categories."
+                  />
                 </div>
               </div>
 
@@ -489,6 +536,77 @@ function mapStringValues(obj: Record<string, string>): Record<string, string | n
     else out[k] = v;
   }
   return out;
+}
+
+/** One side of the per-rule audience filter. Three states:
+ *    value: null               → "Any" (no filter)
+ *    value: { mode: 'is',  value: 'X' } → must equal X
+ *    value: { mode: 'not', value: 'X' } → must NOT equal X
+ *  Two compact selects so the row stays narrow even on small screens. */
+function AudienceField({
+  label,
+  options,
+  value,
+  onChange,
+  emptyHint,
+}: {
+  label: string;
+  options: Array<{ value: string; label: string }>;
+  value: RuleAudienceCondition | null;
+  onChange: (next: RuleAudienceCondition | null) => void;
+  emptyHint?: string;
+}) {
+  const mode = value?.mode ?? 'any';
+  const val = value?.value ?? '';
+  return (
+    <div>
+      <div className="text-[10px] text-slate-500 mb-0.5">{label}</div>
+      <div className="flex gap-1">
+        <select
+          value={mode}
+          onChange={e => {
+            const m = e.target.value;
+            if (m === 'any') { onChange(null); return; }
+            // Switching to is/not without a value yet — keep null until
+            // the auditor picks one so we don't gate on an empty string
+            // (which would silently never match).
+            onChange({ mode: m as 'is' | 'not', value: val });
+          }}
+          className="text-xs border border-slate-200 rounded px-1.5 py-1 bg-white"
+        >
+          <option value="any">Any</option>
+          <option value="is">Is</option>
+          <option value="not">Is NOT</option>
+        </select>
+        {mode !== 'any' && (
+          options.length > 0 ? (
+            <select
+              value={val}
+              onChange={e => onChange({ mode: mode as 'is' | 'not', value: e.target.value })}
+              className="flex-1 text-xs border border-slate-200 rounded px-1.5 py-1 bg-white min-w-0"
+            >
+              <option value="">— pick value —</option>
+              {options.map(o => (
+                <option key={o.value} value={o.value}>{o.label}</option>
+              ))}
+            </select>
+          ) : (
+            <input
+              type="text"
+              value={val}
+              onChange={e => onChange({ mode: mode as 'is' | 'not', value: e.target.value })}
+              placeholder={emptyHint ? '(see note)' : 'type value'}
+              title={emptyHint}
+              className="flex-1 text-xs border border-slate-200 rounded px-1.5 py-1 bg-white min-w-0"
+            />
+          )
+        )}
+      </div>
+      {emptyHint && options.length === 0 && mode !== 'any' && (
+        <div className="text-[10px] text-amber-700 mt-0.5">{emptyHint}</div>
+      )}
+    </div>
+  );
 }
 
 function RuleTester({ expression, values, onChange }: { expression: string; values: Record<string, string>; onChange: (k: string, v: string) => void }) {

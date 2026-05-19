@@ -55,6 +55,15 @@ export default async function FirmAssumptionsPage() {
     ? (tablesMap.moc_suspicious_keywords.keywords as string[])
     : [];
 
+  // Firm-wide Audit Categories list (PIE / Listed / Charity etc).
+  // Drives the Validation Rules "Audit Category" condition + the
+  // Opening tab category picker. Empty array means the firm hasn't
+  // configured anything yet; the client component falls back to a
+  // sensible default seed.
+  const auditCategories: string[] = Array.isArray(tablesMap.audit_categories?.categories)
+    ? (tablesMap.audit_categories.categories as string[])
+    : [];
+
   // Audit-type catalogue — admin-configurable list, with the original
   // five built-in types as the default seed. Drives the Audit Types
   // editor + the per-type Min Fee per Hour grid.
@@ -88,6 +97,7 @@ export default async function FirmAssumptionsPage() {
         initialAuditTypes={auditTypes}
         initialCarryForward={(tablesMap.carryForward?.matrix as Record<string, Record<string, boolean>>) || null}
         initialMocSuspiciousKeywords={mocSuspiciousKeywords}
+        initialAuditCategories={auditCategories}
       />
     </div>
   );

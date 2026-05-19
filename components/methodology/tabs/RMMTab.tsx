@@ -7,6 +7,7 @@ import { ASSERTION_TYPES, INHERENT_RISK_COMPONENTS } from '@/types/methodology';
 import { lookupInherentRisk, lookupOverallRisk, riskColor, inherentRiskDropdownColor } from '@/lib/risk-table-lookup';
 import { useScrollToAnchor } from '@/lib/hooks/useScrollToAnchor';
 import { PlanningLetterModal } from '../panels/PlanningLetterModal';
+import { PlanningLetterJobBadge } from '../panels/PlanningLetterJobBadge';
 import { setCurrentLocation, subscribeNav, consumePendingNav } from '@/lib/engagement-nav';
 
 interface Props {
@@ -1128,7 +1129,10 @@ export function RMMTab({ engagementId, auditType, teamMembers = [], showCategory
           </div>
           {/* Planning Letter actions — picks template, renders .docx,
               optionally emails Informed-Management portal contacts
-              and uploads to the Client Portal Documents list. */}
+              and uploads to the Client Portal Documents list.
+              Background-send badge sits next to the buttons so the
+              auditor sees in-flight progress + failure chips without
+              re-opening the modal. */}
           <div className="inline-flex bg-slate-100 rounded-lg p-0.5">
             <button
               onClick={() => setPlanningLetterMode('send')}
@@ -1142,6 +1146,7 @@ export function RMMTab({ engagementId, auditType, teamMembers = [], showCategory
               className="text-xs px-3 py-1 text-slate-600 rounded-md hover:bg-white hover:text-slate-900 flex items-center gap-1"
             >⬇ Download Planning Letter</button>
           </div>
+          <PlanningLetterJobBadge engagementId={engagementId} />
         </div>
         <div className="flex items-center gap-2">
           {saving && <span className="text-xs text-blue-500 animate-pulse">Saving...</span>}

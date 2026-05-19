@@ -89,7 +89,7 @@ export async function PUT(
 
   try {
     const body = await req.json();
-    const { status, infoRequestType, hardCloseDate, isGroupAudit, planCreated, isNewClient, methodologyIndustryId, wecomGroupWebhookUrl } = body;
+    const { status, infoRequestType, hardCloseDate, isGroupAudit, auditCategory, planCreated, isNewClient, methodologyIndustryId, wecomGroupWebhookUrl } = body;
 
     // Verify ownership
     const existing = await prisma.auditEngagement.findUnique({
@@ -117,6 +117,11 @@ export async function PUT(
     if (infoRequestType !== undefined) updateData.infoRequestType = infoRequestType;
     if (hardCloseDate !== undefined) updateData.hardCloseDate = hardCloseDate ? new Date(hardCloseDate) : null;
     if (isGroupAudit !== undefined) updateData.isGroupAudit = isGroupAudit;
+    // auditCategory — string picked from the firm's Audit Categories
+    // list (Firm Wide Assumptions). Empty string clears the value.
+    if (auditCategory !== undefined) {
+      updateData.auditCategory = auditCategory === '' || auditCategory === null ? null : String(auditCategory);
+    }
     if (planCreated !== undefined) updateData.planCreated = planCreated;
     // isNewClient is tri-state: true (first-year audit, force New Client Take-On
     // schedule), false (continuance audit, force Continuance schedule), null

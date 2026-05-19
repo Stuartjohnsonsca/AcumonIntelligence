@@ -30,6 +30,12 @@ interface TemplateOption { id: string; name: string; description: string | null;
 
 interface SendResponse {
   ok?: boolean;
+  /** Returned when the server enqueued the send for background
+   *  processing — the modal closes immediately rather than holding
+   *  the browser open while emails go out. */
+  queued?: boolean;
+  jobId?: string;
+  recipientCount?: number;
   portalDocumentId?: string;
   fileName?: string;
   subject?: string;
@@ -161,8 +167,16 @@ export function PlanningLetterModal({ mode, engagementId, onClose }: Props) {
         if (trySurfacePermissionPopup(res, data)) return;
         setErrorDetail(data.detail || data.error || `Send failed (${res.status})`);
         setResult(data);
-      } else {
-        setResult(data);
+        return;
+      }
+      // Server now enqueues the actual send (render + upload + email)
+      // for background processing and returns a job id immediately.
+      // Show the "queued" confirmation briefly, then close — the
+      // engagement's PlanningLetterJobBadge surfaces success/failure
+      // asynchronously so the auditor can carry on working.
+      setResult(data);
+      if (data.queued) {
+        setTimeout(() => { onClose(); }, 1200);
       }
     } catch (err: any) {
       setErrorDetail(err?.message || 'Send failed');
@@ -222,8 +236,25 @@ export function PlanningLetterModal({ mode, engagementId, onClose }: Props) {
         </div>
 
         <div className="flex-1 overflow-y-auto px-5 py-4 space-y-4">
-          {/* ── Success result ────────────────────────────────────── */}
-          {result?.ok && mode === 'send' && (
+          {/* ── Queued confirmation (new async flow) ─────────────── */}
+          {result?.queued && mode === 'send' && (
+            <div className="border border-blue-200 bg-blue-50 rounded p-3 text-xs">
+              <div className="flex items-start gap-2">
+                <CheckCircle2 className="h-4 w-4 text-blue-600 flex-shrink-0 mt-0.5" />
+                <div className="flex-1">
+                  <div className="font-semibold text-blue-800 mb-1">Planning Letter queued for sending</div>
+                  <div className="text-blue-700">
+                    {result.recipientCount ?? 0} recipient{result.recipientCount === 1 ? '' : 's'} — the document is being rendered, uploaded to the Client Portal and emailed in the background.
+                    You can keep working; if anything fails, an orange badge will appear next to the Send button.
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* ── Legacy synchronous success result (if the server falls
+                back to the immediate-send path for any reason) ─────── */}
+          {result?.ok && !result?.queued && mode === 'send' && (
             <div className="border border-green-200 bg-green-50 rounded p-3 text-xs">
               <div className="flex items-start gap-2">
                 <CheckCircle2 className="h-4 w-4 text-green-600 flex-shrink-0 mt-0.5" />

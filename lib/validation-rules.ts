@@ -18,6 +18,16 @@ import { evaluateFormula, buildFormulaValues } from '@/lib/formula-engine';
 
 export type RuleSeverity = 'warning' | 'error';
 
+/** Optional engagement-audience filter on a validation rule. Each
+ *  filter compares a single engagement attribute (e.g. audit type
+ *  "SME") and may be negated. Absent filter → applies to everything
+ *  (legacy behaviour). Mode 'is' means the engagement value must
+ *  equal `value`; 'not' means it must NOT equal `value`. */
+export interface RuleAudienceCondition {
+  value: string;
+  mode: 'is' | 'not';
+}
+
 export interface ValidationRule {
   /** Stable id so we can edit/delete individual rules. */
   id: string;
@@ -40,6 +50,31 @@ export interface ValidationRule {
   /** Disable without deleting — useful for parking rules while the
    *  firm decides whether to keep them. */
   isActive: boolean;
+  /** Engagement-audience filters. Both conditions are ANDed together;
+   *  null/missing means "any". Rules saved before this feature shipped
+   *  have neither, so they continue to apply to every engagement. */
+  audience?: {
+    auditType?: RuleAudienceCondition | null;
+    auditCategory?: RuleAudienceCondition | null;
+  };
+}
+
+/** Returns true iff a rule's audience filter is satisfied by the
+ *  engagement context. Absent filters always pass. */
+export function ruleAudienceMatches(
+  rule: ValidationRule,
+  ctx: { auditType?: string | null; auditCategory?: string | null } | undefined,
+): boolean {
+  const a = rule.audience;
+  if (!a || (!a.auditType && !a.auditCategory)) return true;
+  function check(cond: RuleAudienceCondition | null | undefined, actual: string | null | undefined): boolean {
+    if (!cond || !cond.value) return true;
+    const matches = String(actual ?? '').trim().toLowerCase() === cond.value.trim().toLowerCase();
+    return cond.mode === 'not' ? !matches : matches;
+  }
+  if (!check(a.auditType, ctx?.auditType)) return false;
+  if (!check(a.auditCategory, ctx?.auditCategory)) return false;
+  return true;
 }
 
 /** Evaluation result for a single rule against a single engagement. */
@@ -80,8 +115,13 @@ export function evaluateRulesForSchedule(
   questions: Array<{ id: string; questionText?: string | null }>,
   answers: Record<string, string | number | boolean | null>,
   extra?: Record<string, string | number | boolean | null>,
+  engagementContext?: { auditType?: string | null; auditCategory?: string | null },
 ): RuleEvaluation[] {
-  const applicable = allRules.filter(r => r.scheduleKey === scheduleKey && r.isActive);
+  const applicable = allRules.filter(r =>
+    r.scheduleKey === scheduleKey &&
+    r.isActive &&
+    ruleAudienceMatches(r, engagementContext)
+  );
   if (applicable.length === 0) return [];
   // Build the values map the formula engine expects: canonical ids
   // PLUS slug aliases (so admins can write `audit_fee` regardless of

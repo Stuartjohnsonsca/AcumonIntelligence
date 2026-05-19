@@ -101,6 +101,7 @@ const CONDITION_KINDS: Array<{ value: TriggerCondition['kind']; label: string; h
   { value: 'eqr',            label: 'EQR on team',       hint: 'Members shown when an EQR is assigned to the engagement' },
   { value: 'priorPeriod',    label: 'Returning client',  hint: 'Members shown when the engagement has a prior-period record' },
   { value: 'firstYear',      label: 'First-year audit',  hint: 'Members shown when no prior-period engagement exists' },
+  { value: 'groupAudit',     label: 'Group audit',       hint: 'Members shown when the "Part of a Group Audit" toggle is on (Opening tab)' },
   { value: 'questionAnswer', label: 'Question answer',   hint: "Members shown when a specific answer is given in another schedule" },
 ];
 
@@ -547,6 +548,7 @@ function TriggersPanel({
       case 'eqr':            newCondition = { kind: 'eqr' }; break;
       case 'priorPeriod':    newCondition = { kind: 'priorPeriod' }; break;
       case 'firstYear':      newCondition = { kind: 'firstYear' }; break;
+      case 'groupAudit':     newCondition = { kind: 'groupAudit' }; break;
       case 'questionAnswer': newCondition = { kind: 'questionAnswer', scheduleKey: '', questionId: '', expectedAnswer: '' }; break;
     }
     onUpdateTrigger(triggerId, { condition: newCondition });

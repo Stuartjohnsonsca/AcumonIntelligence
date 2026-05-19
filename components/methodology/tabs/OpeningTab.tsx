@@ -41,6 +41,11 @@ interface Props {
 
 export function OpeningTab({ engagement, auditType, clientName, periodEndDate, onEngagementUpdate, onShowCategoryChange }: Props) {
   const [isGroupAudit, setIsGroupAudit] = useState(engagement.isGroupAudit);
+  const [auditCategory, setAuditCategory] = useState<string>((engagement as any).auditCategory ?? '');
+  // Firm-wide Audit Categories list — pulled once from Methodology Admin
+  // → Firm Wide Assumptions so the Opening tab's dropdown shows the same
+  // options validation rules can gate on.
+  const [auditCategoryOptions, setAuditCategoryOptions] = useState<string[]>([]);
   // Tri-state: true = first-year (force New Client Take-On schedule),
   //            false = continuance (force Continuance schedule),
   //            null = auto-detect via prior-period engagement lookup.
@@ -59,6 +64,27 @@ export function OpeningTab({ engagement, auditType, clientName, periodEndDate, o
   useEffect(() => {
     setIsGroupAudit(engagement.isGroupAudit);
   }, [engagement.isGroupAudit]);
+
+  useEffect(() => {
+    setAuditCategory((engagement as any).auditCategory ?? '');
+  }, [(engagement as any).auditCategory]);
+
+  // Load the firm's Audit Categories list once. Falls back to an empty
+  // array if the firm hasn't configured anything yet — the dropdown
+  // then shows just "— None —".
+  useEffect(() => {
+    async function loadAuditCategories() {
+      try {
+        const res = await fetch('/api/methodology-admin/risk-tables?tableType=audit_categories');
+        if (res.ok) {
+          const data = await res.json();
+          const list: string[] = Array.isArray(data?.table?.data?.categories) ? data.table.data.categories : [];
+          setAuditCategoryOptions(list);
+        }
+      } catch { /* ignore — dropdown just stays empty */ }
+    }
+    loadAuditCategories();
+  }, []);
 
   useEffect(() => {
     setIsNewClient(engagement.isNewClient ?? null);
@@ -410,6 +436,39 @@ export function OpeningTab({ engagement, auditType, clientName, periodEndDate, o
                 );
               })}
             </div>
+          </div>
+
+          {/* Audit Category — orthogonal to Audit Type. Picks from the
+              firm-wide list (Firm Wide Assumptions → Audit Categories).
+              Drives Validation Rule gating, among other category-aware
+              content. */}
+          <div className="flex items-center justify-between gap-3 p-3 bg-slate-50 rounded-lg">
+            <div className="min-w-0">
+              <p className="text-sm font-medium text-slate-700">Audit Category</p>
+              <p className="text-xs text-slate-500 mt-0.5">
+                e.g. PIE, Listed, Charity — managed under Firm Wide Assumptions
+              </p>
+            </div>
+            <select
+              value={auditCategory}
+              onChange={(e) => {
+                const v = e.target.value;
+                setAuditCategory(v);
+                updateSetting('auditCategory', v || null);
+              }}
+              className="text-sm border border-slate-300 rounded px-2 py-1 bg-white min-w-[160px]"
+            >
+              <option value="">— None —</option>
+              {/* If the engagement carries a value not in the firm list
+                  (e.g. an admin removed it later), surface it as an off-
+                  list option so it stays editable. */}
+              {auditCategory && !auditCategoryOptions.includes(auditCategory) && (
+                <option value={auditCategory}>{auditCategory} (off-list)</option>
+              )}
+              {auditCategoryOptions.map(c => (
+                <option key={c} value={c}>{c}</option>
+              ))}
+            </select>
           </div>
 
           {/* Group Audit Toggle */}

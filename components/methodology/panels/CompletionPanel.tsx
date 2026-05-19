@@ -70,6 +70,7 @@ interface Props {
   /** From engagement payload for visibility evaluation */
   clientIsListed?: boolean;
   hasPriorPeriodEngagement?: boolean;
+  engagementIsGroupAudit?: boolean;
   onNavigateMainTab?: (tabKey: string, params?: Record<string, string>) => void;
   onClose?: () => void;
   /**
@@ -149,7 +150,7 @@ type CompletionTabKey = typeof COMPLETION_TABS[number]['key'];
 export function CompletionPanel({
   engagementId, clientId, userRole, userId, userName, teamMembers,
   completionScheduleOrder, scheduleTriggers, qaAnswers, aiFuzzyCache,
-  clientIsListed, hasPriorPeriodEngagement,
+  clientIsListed, hasPriorPeriodEngagement, engagementIsGroupAudit,
   periodStartDate, periodEndDate,
   onNavigateMainTab, onClose,
   initialActiveTab, onActiveTabChange,
@@ -218,6 +219,7 @@ export function CompletionPanel({
     clientIsListed: !!clientIsListed,
     hasPriorPeriodEngagement: !!hasPriorPeriodEngagement,
     teamHasEQR,
+    engagementIsGroupAudit: !!engagementIsGroupAudit,
     answers: qaAnswers || {},
     aiFuzzyCache,
   };

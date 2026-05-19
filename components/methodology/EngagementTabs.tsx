@@ -905,10 +905,12 @@ export function EngagementTabs({ engagement, auditType, clientName, periodEndDat
   const clientIsListed = !!(engagement as any).clientIsListed;
   const hasPriorPeriodEngagement = !!(engagement as any).hasPriorPeriodEngagement;
   const teamHasEQR = engagement.teamMembers.some(m => m.role === 'EQR');
+  const engagementIsGroupAudit = !!(engagement as any).isGroupAudit;
   const triggerCtx: TriggerContext = {
     clientIsListed,
     hasPriorPeriodEngagement,
     teamHasEQR,
+    engagementIsGroupAudit,
     answers: qaAnswers,
     aiFuzzyCache,
   };
@@ -1600,6 +1602,7 @@ export function EngagementTabs({ engagement, auditType, clientName, periodEndDat
               aiFuzzyCache={aiFuzzyCache}
               clientIsListed={clientIsListed}
               hasPriorPeriodEngagement={hasPriorPeriodEngagement}
+              engagementIsGroupAudit={engagementIsGroupAudit}
               periodStartDate={periodStartDate}
               periodEndDate={periodEndDate}
               initialActiveTab={lastCompletionTab?.key}

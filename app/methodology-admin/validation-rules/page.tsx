@@ -4,6 +4,7 @@ import { prisma } from '@/lib/db';
 import { ValidationRulesClient } from '@/components/methodology-admin/ValidationRulesClient';
 import { BackButton } from '@/components/methodology-admin/BackButton';
 import type { ValidationRule } from '@/lib/validation-rules';
+import { getFirmAuditTypes } from '@/lib/firm-audit-types';
 
 /**
  * Methodology Admin → Validation Rules.
@@ -87,6 +88,22 @@ export default async function ValidationRulesPage() {
     }
   } catch { /* tolerant — keep defaults */ }
 
+  // Audience filters — populate the per-rule "Applies to" dropdowns
+  // so a rule can be scoped to specific Audit Type / Audit Category
+  // combinations. Both lists are firm-wide.
+  const auditTypes = await getFirmAuditTypes(firmId);
+  const auditTypeOptions = auditTypes
+    .filter(t => t.isActive !== false)
+    .map(t => ({ value: t.code, label: t.label || t.code }));
+  let auditCategoryOptions: string[] = [];
+  try {
+    const catRow = await (prisma as any).methodologyRiskTable?.findUnique?.({
+      where: { firmId_tableType: { firmId, tableType: 'audit_categories' } },
+    });
+    const list = catRow?.data?.categories;
+    if (Array.isArray(list)) auditCategoryOptions = list.filter((c: any) => typeof c === 'string');
+  } catch { /* tolerant — empty list just disables the category filter UI */ }
+
   return (
     <div data-howto-id="page.validation-rules.body" className="container mx-auto px-4 py-10 max-w-5xl">
       <BackButton href="/methodology-admin" label="Back to Methodology Admin" />
@@ -98,7 +115,12 @@ export default async function ValidationRulesPage() {
           schedule sign-off (can&rsquo;t mark as complete until resolved).
         </p>
       </div>
-      <ValidationRulesClient initialRules={initialRules} scheduleKeys={scheduleKeys} />
+      <ValidationRulesClient
+        initialRules={initialRules}
+        scheduleKeys={scheduleKeys}
+        auditTypeOptions={auditTypeOptions}
+        auditCategoryOptions={auditCategoryOptions}
+      />
     </div>
   );
 }

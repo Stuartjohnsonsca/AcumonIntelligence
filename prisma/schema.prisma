@@ -2312,6 +2312,42 @@ model FSAssertionMapping {
 
 // ─── Audit Methodology ──────────────────────────────────────────────────────
 
+/// Planning Letter background-send job.
+///
+/// The send endpoint enqueues one of these rows and kicks the actual
+/// work off in the background so the user's modal can close instantly
+/// while the server handles render + upload + per-recipient email
+/// delivery. A small client-side poller surfaces an orange badge on
+/// the originating tab when a job fails — hover shows the error and
+/// timestamp; clicking dismisses sets `acknowledgedAt`.
+model PlanningLetterJob {
+  id                  String    @id @default(uuid())
+  engagementId        String    @map("engagement_id")
+  firmId              String    @map("firm_id")
+  clientId            String    @map("client_id")
+  documentTemplateId  String    @map("document_template_id")
+  emailTemplateId     String    @map("email_template_id")
+  status              String    @default("queued") // queued | processing | success | failed
+  errorMessage        String?   @map("error_message") @db.Text
+  // Per-recipient send outcomes, mirrors the synchronous response
+  // shape: [{ id, name, email, status, messageId?, error? }]
+  recipients          Json?
+  portalDocumentId    String?   @map("portal_document_id")
+  fileName            String?   @map("file_name")
+  subject             String?
+  createdById         String    @map("created_by_id")
+  createdByName       String?   @map("created_by_name")
+  createdAt           DateTime  @default(now()) @map("created_at")
+  updatedAt           DateTime  @updatedAt @map("updated_at")
+  startedAt           DateTime? @map("started_at")
+  completedAt         DateTime? @map("completed_at")
+  acknowledgedAt      DateTime? @map("acknowledged_at")
+
+  @@index([engagementId, status])
+  @@index([engagementId, acknowledgedAt])
+  @@map("planning_letter_jobs")
+}
+
 model AuditEngagement {
   id                      String    @id @default(uuid())
   clientId                String    @map("client_id")
@@ -2327,6 +2363,11 @@ model AuditEngagement {
   infoRequestType         String    @default("standard") @map("info_request_type") // preliminary | standard
   hardCloseDate           DateTime? @map("hard_close_date")
   isGroupAudit            Boolean   @default(false) @map("is_group_audit")
+  // Orthogonal classification to auditType — chosen from the firm's
+  // Audit Categories list (Methodology Admin → Firm Wide Assumptions →
+  // Audit Categories). Drives the "Audit Category" condition on
+  // Validation Rules and other category-gated content.
+  auditCategory           String?   @map("audit_category")
   isNewClient             Boolean?  @map("is_new_client") // null = auto-detect, true = force new client, false = force continuance
   tbViewMode              String    @default("fs_line") @map("tb_view_mode") // fs_line | tb_account
   tbXeroSummary           Json?     @map("tb_xero_summary") // Raw accounting system TB totals for verification

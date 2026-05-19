@@ -21,6 +21,7 @@ export type TriggerCondition =
   | { kind: 'eqr' }
   | { kind: 'priorPeriod' }
   | { kind: 'firstYear' }
+  | { kind: 'groupAudit' }
   | {
       kind: 'questionAnswer';
       /** schedule key whose template holds the source question */
@@ -159,6 +160,8 @@ export interface TriggerContext {
   clientIsListed: boolean;
   teamHasEQR: boolean;
   hasPriorPeriodEngagement: boolean;
+  /** Engagement-level toggle from the Opening tab — fires the 'groupAudit' trigger. */
+  engagementIsGroupAudit: boolean;
   /**
    * Engagement's answers to questions inside each source schedule, keyed by
    * schedule key → question id → answer string. Populated by the caller
@@ -192,6 +195,8 @@ export function isTriggerFiring(trigger: Trigger, ctx: TriggerContext): boolean 
       return ctx.hasPriorPeriodEngagement;
     case 'firstYear':
       return !ctx.hasPriorPeriodEngagement;
+    case 'groupAudit':
+      return ctx.engagementIsGroupAudit;
     case 'questionAnswer': {
       const actual = ctx.answers[c.scheduleKey]?.[c.questionId];
       if (actual === undefined || actual === null || actual === '') return false;

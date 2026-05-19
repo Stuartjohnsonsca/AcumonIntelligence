@@ -198,8 +198,14 @@ export function TeamPanel({ engagementId, initialTeamMembers, initialSpecialists
   // Set the assigned person for a specialist row by picking from
   // the role's `[lead, ...members]` list. The role key is encoded
   // as `<name>|<email>` in the option value so we can disambiguate
-  // people who share a name.
+  // people who share a name. The sentinel `__custom__` clears the
+  // picker so the manual name/email inputs render — the auditor can
+  // type someone not on the firm's configured roster.
   function pickSpecialistPerson(index: number, comboValue: string) {
+    if (comboValue === '__custom__') {
+      setSpecialists(prev => prev.map((s, i) => i === index ? { ...s, name: '', email: '' } : s));
+      return;
+    }
     const [name, email] = comboValue.split('|');
     setSpecialists(prev => prev.map((s, i) => i === index ? { ...s, name: name || '', email: email || '' } : s));
   }
@@ -361,35 +367,37 @@ export function TeamPanel({ engagementId, initialTeamMembers, initialSpecialists
                   </span>
                   <button onClick={() => removeSpecialist(i)} className="text-red-400 hover:text-red-600 text-xs">Remove</button>
                 </div>
-                {people.length > 0 ? (
+                {people.length > 0 && (
                   <select
-                    value={currentValue}
+                    value={currentInList ? currentValue : '__custom__'}
                     onChange={e => pickSpecialistPerson(i, e.target.value)}
                     className="w-full border border-slate-200 rounded px-2 py-1 text-xs bg-white"
-                    title="Pick from the firm's configured people for this role"
+                    title="Pick from the firm's configured people for this role, or choose Custom to type someone not listed"
                   >
-                    {!currentInList && currentValue !== '|' && (
-                      <option value={currentValue}>
-                        {spec.name || '(no name)'}{spec.email ? ` — ${spec.email}` : ''} (off-list)
-                      </option>
-                    )}
                     {people.map((p, idx) => (
                       <option key={idx} value={`${p.name}|${p.email}`}>
                         {p.name || '(no name)'}{p.email ? ` — ${p.email}` : ''}{idx === 0 ? ' · Lead' : ''}
                       </option>
                     ))}
+                    {/* Sentinel option so the auditor can always assign
+                        someone who isn't on the firm's configured
+                        roster. Picking it clears the row and reveals
+                        the manual name/email inputs below. */}
+                    <option value="__custom__">✎ Custom (not listed) …</option>
                   </select>
-                ) : (
-                  // Role exists but no Lead / members configured —
-                  // keep the legacy free-text inputs as a fallback so
-                  // the auditor isn't blocked. The Methodology Admin
-                  // can fill in the roster later.
-                  <div className="grid grid-cols-2 gap-1">
+                )}
+                {/* Manual name/email entry — always available when:
+                      (a) the role has no roster configured at all, or
+                      (b) the auditor has chosen Custom / pasted an
+                          off-list person. The Methodology Admin can
+                          still grow the roster separately. */}
+                {(people.length === 0 || !currentInList) && (
+                  <div className={`grid grid-cols-2 gap-1 ${people.length > 0 ? 'mt-1' : ''}`}>
                     <input
                       type="text"
                       value={spec.name}
                       onChange={e => updateSpecialist(i, 'name', e.target.value)}
-                      placeholder="Name"
+                      placeholder="Name (not on the firm's list)"
                       className="border border-slate-200 rounded px-2 py-0.5 text-xs"
                     />
                     <input

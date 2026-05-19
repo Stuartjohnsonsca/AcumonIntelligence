@@ -245,6 +245,28 @@ export function DynamicAppendixForm({
   // (Tailwind outline utilities — additive, never over- or under-write).
   const [aiPopulatedFieldIds, setAiPopulatedFieldIds] = useState<Set<string>>(new Set());
   const [aiFieldTooltips, setAiFieldTooltips] = useState<Record<string, string>>({});
+  // Lightweight engagement context for validation-rule audience gating.
+  // Fetched once per engagement so the rule list can be filtered by
+  // audit type / audit category at evaluation time. Failing the fetch
+  // is non-fatal — rules with no audience filter still fire as normal.
+  const [ruleAudienceCtx, setRuleAudienceCtx] = useState<{ auditType?: string | null; auditCategory?: string | null } | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch(`/api/engagements/${engagementId}`);
+        if (!res.ok) return;
+        const data = await res.json();
+        const eng = data?.engagement;
+        if (!eng || cancelled) return;
+        setRuleAudienceCtx({
+          auditType: eng.auditType ?? null,
+          auditCategory: eng.auditCategory ?? null,
+        });
+      } catch { /* silent — leaves audience filters un-evaluated, rules with filters won't fire */ }
+    })();
+    return () => { cancelled = true; };
+  }, [engagementId]);
   useEffect(() => {
     let cancelled = false;
     (async () => {
@@ -818,6 +840,7 @@ export function DynamicAppendixForm({
     questions,
     values,
     externalValues || undefined,
+    ruleAudienceCtx || undefined,
   );
   const violations = ruleEvaluations.filter(r => r.violated);
 

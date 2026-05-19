@@ -59,6 +59,12 @@ interface Props {
   /** Firm-wide MOC (Management Override) suspicious keyword list. Empty
    *  array means the journal risk engine uses its built-in default. */
   initialMocSuspiciousKeywords?: string[];
+  /** Firm-wide Audit Categories — orthogonal to Audit Type. Used by
+   *  Validation Rules (and other gated content) to scope when a rule
+   *  fires. Defaults to a sensible PIE / Listed / Charity / Pension
+   *  Scheme / LLP starter list if the firm hasn't configured anything
+   *  yet. */
+  initialAuditCategories?: string[];
 }
 
 // The catalogue of items the carry-forward matrix offers. Each row in
@@ -167,6 +173,7 @@ export function FirmAssumptionsClient({
   initialVatConfig,
   initialTaxOnProfits,
   initialMocSuspiciousKeywords,
+  initialAuditCategories,
 }: Props) {
   const [inherentRisk, setInherentRisk] = useState<InherentRiskTable>(() => {
     const t = initialInherentRisk;
@@ -188,6 +195,17 @@ export function FirmAssumptionsClient({
     Array.isArray(initialTestCategories) ? initialTestCategories : ['Significant Risk', 'Area of Focus', 'Normal', 'Analytical Review', 'Mandatory']
   );
   const [newCategory, setNewCategory] = useState('');
+
+  // Firm-wide Audit Categories — orthogonal to Audit Type. Drives the
+  // Validation Rules "Audit Category" condition (and any future
+  // category-gated content). Defaults match what most UK firms tend
+  // to start with so a brand-new firm sees a working list immediately.
+  const [auditCategories, setAuditCategories] = useState<string[]>(
+    Array.isArray(initialAuditCategories) && initialAuditCategories.length > 0
+      ? initialAuditCategories
+      : ['PIE', 'Listed', 'Charity', 'Pension Scheme', 'LLP']
+  );
+  const [newAuditCategory, setNewAuditCategory] = useState('');
 
   // Management Override suspicious-keyword list. An empty array is meaningful
   // — it tells the engine "use the built-in default", whereas a non-empty
@@ -422,6 +440,7 @@ export function FirmAssumptionsClient({
         ['assertions', assertions],
         ['specialistRoles', { roles: specialistRoles }],
         ['testCategories', { categories: testCategories }],
+        ['audit_categories', { categories: auditCategories.map(c => c.trim()).filter(c => c.length > 0) }],
         ['moc_suspicious_keywords', { keywords: mocKeywords.map(k => k.trim()).filter(k => k.length > 0) }],
         ['arConfidenceFactor', { confidenceFactor: arConfidenceFactor }],
         ['fxProvider', { provider: fxProvider }],
@@ -896,6 +915,70 @@ export function FirmAssumptionsClient({
                   if (newCategory.trim()) {
                     setTestCategories(prev => [...prev, newCategory.trim()]);
                     setNewCategory('');
+                    setSaved(false);
+                  }
+                }}
+                className="inline-flex items-center gap-1 px-3 py-1.5 text-xs bg-blue-600 text-white rounded hover:bg-blue-700"
+              >
+                <Plus className="h-3.5 w-3.5" /> Add
+              </button>
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* Audit Categories — orthogonal classification used by
+          Validation Rules and other category-gated content. */}
+      <div className="border rounded-lg">
+        <button
+          onClick={() => toggleSection('auditCategories')}
+          className="w-full flex items-center justify-between px-4 py-3 bg-slate-50 rounded-t-lg"
+        >
+          <h2 className="text-lg font-semibold text-slate-900">Audit Categories</h2>
+          {expandedSections.auditCategories ? <ChevronUp className="h-5 w-5" /> : <ChevronDown className="h-5 w-5" />}
+        </button>
+        {expandedSections.auditCategories && (
+          <div className="p-4">
+            <p className="text-sm text-slate-500 mb-3">
+              A separate classification dimension to Audit Type. Used by Validation Rules and any other content that should be scoped to e.g. PIE, Listed or Charity engagements. Engagements pick from this list on the Opening tab.
+            </p>
+            <div className="space-y-2 mb-3">
+              {auditCategories.map((cat, idx) => (
+                <div key={idx} className="flex items-center gap-2">
+                  <span className="w-2 h-2 rounded-full flex-shrink-0 bg-indigo-500" />
+                  <span className="text-sm text-slate-700 flex-1">{cat}</span>
+                  <button
+                    onClick={() => { setAuditCategories(prev => prev.filter((_, i) => i !== idx)); setSaved(false); }}
+                    className="p-1 text-slate-400 hover:text-red-500 transition-colors"
+                  >
+                    <X className="h-3.5 w-3.5" />
+                  </button>
+                </div>
+              ))}
+              {auditCategories.length === 0 && (
+                <p className="text-sm text-slate-400 italic">No audit categories defined.</p>
+              )}
+            </div>
+            <div className="flex items-center gap-2">
+              <input
+                type="text"
+                value={newAuditCategory}
+                onChange={e => setNewAuditCategory(e.target.value)}
+                onKeyDown={e => {
+                  if (e.key === 'Enter' && newAuditCategory.trim()) {
+                    setAuditCategories(prev => [...prev, newAuditCategory.trim()]);
+                    setNewAuditCategory('');
+                    setSaved(false);
+                  }
+                }}
+                placeholder="Add category (e.g. PIE, Listed, Charity)"
+                className="flex-1 max-w-xs px-3 py-1.5 text-sm border border-slate-200 rounded focus:outline-none focus:ring-1 focus:ring-blue-400"
+              />
+              <button
+                onClick={() => {
+                  if (newAuditCategory.trim()) {
+                    setAuditCategories(prev => [...prev, newAuditCategory.trim()]);
+                    setNewAuditCategory('');
                     setSaved(false);
                   }
                 }}
