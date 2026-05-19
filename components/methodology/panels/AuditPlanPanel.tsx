@@ -1539,7 +1539,23 @@ export function AuditPlanPanel({ engagementId, clientId, periodId, onClose, peri
         the embedded tools (Tax on Profits / VAT / Management Override
         journal-risk panel) — previously it landed beneath them.
       */}
-      {(activeOtherTab || activeLevel || activeStatement) && (
+      {(activeOtherTab || activeLevel || activeStatement) && (() => {
+        // Pick the rollup for the most specific active scope. Notes
+        // are the leaf (BS only); levels are the mid-tier; statements
+        // are the broadest. For Other tabs we use the tabRollups
+        // entry. This mirrors what the tabs above show but surfaces
+        // it at the detail level so the auditor doesn't have to scroll
+        // back up to see the sign-off state of where they're working.
+        const scopeRollup = activeNote
+          ? noteRollups[activeNote]
+          : activeOtherTab
+          ? tabRollups[activeOtherTab]
+          : activeLevel
+          ? levelRollups[activeLevel]
+          : activeStatement
+          ? tabRollups[activeStatement]
+          : undefined;
+        return (
         <div className="flex items-center justify-between gap-3 px-3 py-2 bg-indigo-50 border border-indigo-200 rounded">
           <div className="text-xs text-slate-700">
             <span className="text-[10px] uppercase tracking-wide text-indigo-700 font-semibold">Audit Plan for:</span>{' '}
@@ -1550,6 +1566,16 @@ export function AuditPlanPanel({ engagementId, clientId, periodId, onClose, peri
             )}
           </div>
           <div className="flex items-center gap-2">
+            {/* Scope-level P/R/RI dots — the SAME rollup the active
+                tab is showing, surfaced here so the auditor can see
+                sign-off state at the detail without scrolling back
+                up to the tab strip. Display-only. */}
+            {scopeRollup && (
+              <span className="inline-flex items-center gap-1.5 mr-1 pr-2 border-r border-indigo-200" title="Sign-off rollup for this scope (P / R / RI)">
+                <span className="text-[9px] uppercase tracking-wide text-indigo-700 font-semibold">Sign-off</span>
+                <TabRollupDots rollup={scopeRollup} />
+              </span>
+            )}
             {/* VAT Reconciliation — only on the Revenue level. Opens the
                 calculator modal which gates on the Permanent-tab VAT
                 registration question, runs through the consistent-rates
@@ -1631,7 +1657,8 @@ export function AuditPlanPanel({ engagementId, clientId, periodId, onClose, peri
           </button>
           </div>
         </div>
-      )}
+        );
+      })()}
 
       {/* ─── "Other" tab content — rendered AFTER the Plan Customiser
             bar so the bar sits above the embedded tool's UI. ─── */}
