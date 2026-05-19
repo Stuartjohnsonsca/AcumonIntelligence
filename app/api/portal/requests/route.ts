@@ -40,7 +40,32 @@ export async function GET(req: Request) {
     include: { uploads: { select: { id: true, originalName: true, storagePath: true, containerName: true, mimeType: true, fileSize: true } } },
   });
 
-  return NextResponse.json({ requests });
+  // Resolve display-only joins in two cheap batched lookups so the
+  // Outstanding tab can show the FS line label as the "Source" column
+  // and the currently-assigned portal user's name in its filter UI.
+  // Without these, every row in the client would need a per-row fetch.
+  const fsLineIds = Array.from(new Set(requests.map(r => r.routingFsLineId).filter((v): v is string => !!v)));
+  const assigneeIds = Array.from(new Set(requests.map(r => r.assignedPortalUserId).filter((v): v is string => !!v)));
+
+  const [fsLines, assignees] = await Promise.all([
+    fsLineIds.length > 0
+      ? prisma.methodologyFsLine.findMany({ where: { id: { in: fsLineIds } }, select: { id: true, name: true } })
+      : Promise.resolve([] as { id: string; name: string }[]),
+    assigneeIds.length > 0
+      ? prisma.clientPortalUser.findMany({ where: { id: { in: assigneeIds } }, select: { id: true, name: true } })
+      : Promise.resolve([] as { id: string; name: string }[]),
+  ]);
+
+  const fsLineNameById = new Map(fsLines.map(f => [f.id, f.name]));
+  const assigneeNameById = new Map(assignees.map(a => [a.id, a.name]));
+
+  const enriched = requests.map(r => ({
+    ...r,
+    fsLineName: r.routingFsLineId ? fsLineNameById.get(r.routingFsLineId) ?? null : null,
+    assignedTo: r.assignedPortalUserId ? assigneeNameById.get(r.assignedPortalUserId) ?? null : null,
+  }));
+
+  return NextResponse.json({ requests: enriched });
 }
 
 /**

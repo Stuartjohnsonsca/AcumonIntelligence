@@ -755,15 +755,19 @@ export default function PortalSetupPage({ params }: { params: Promise<{ engageme
                 </div>
               )}
 
-              {/* Column header with escalation days — left-aligned to
-                  match the dropdown content below. Center-aligning the
-                  header text while the dropdown content sits left
-                  caused the visual mismatch the Principal flagged. */}
+              {/* Column header with escalation days — labels and days are
+                  right-aligned within each column so the column boundary
+                  reads cleanly even when the dropdown content underneath
+                  is left-aligned. */}
               <div className="grid grid-cols-[minmax(200px,3fr)_1fr_1fr_1fr] gap-3 px-5 py-3 bg-slate-50 border-b border-slate-200 text-xs text-slate-600">
                 <div className="font-medium">FS Line / TB code</div>
-                {[1, 2, 3].map(col => (
-                  <div key={col} className="text-left pl-2">
-                    <div className="font-medium text-slate-700">Column {col}</div>
+                {([
+                  { col: 1, label: 'First Responder' },
+                  { col: 2, label: 'Second Responder' },
+                  { col: 3, label: 'Third Responder' },
+                ] as const).map(({ col, label }) => (
+                  <div key={col} className="text-right pr-2">
+                    <div className="font-medium text-slate-700">{label}</div>
                     <div className="text-[11px]">{(escDays as any)[`days${col}`]} day{(escDays as any)[`days${col}`] === 1 ? '' : 's'} to escalate</div>
                   </div>
                 ))}

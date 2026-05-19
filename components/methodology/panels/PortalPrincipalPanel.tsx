@@ -166,17 +166,21 @@ export function PortalPrincipalPanel({ engagementId }: Props) {
       <div>
         <label className="block text-xs font-medium text-slate-700 mb-1">Response SLA — days before next escalation</label>
         <p className="text-xs text-slate-500 mb-2">
-          If a column-1 staff member has not responded within <em>Column 1</em> days, column-2 is also notified. Same again for column-3. After all three elapse, the Portal Principal gets the escalation. Leave blank to fall back to the firm-wide defaults.
+          If the <em>First Responder</em> has not responded within the days shown, the <em>Second Responder</em> is also notified. Same again for the <em>Third Responder</em>. After all three elapse, the Portal Principal gets the escalation. Leave blank to fall back to the firm-wide defaults.
         </p>
         <div className="grid grid-cols-3 gap-3">
-          {[1, 2, 3].map(col => {
+          {([
+            { col: 1, label: 'First Responder' },
+            { col: 2, label: 'Second Responder' },
+            { col: 3, label: 'Third Responder' },
+          ] as const).map(({ col, label }) => {
             const key = `days${col}` as 'days1' | 'days2' | 'days3';
             const override = state.overrides[key];
             const resolvedValue = state.resolved[key];
             const id = `escalation-col-${col}`;
             return (
               <div key={col}>
-                <label htmlFor={id} className="block text-[11px] text-slate-600 mb-0.5">Column {col}</label>
+                <label htmlFor={id} className="block text-[11px] text-slate-600 mb-0.5">{label}</label>
                 <div className="relative">
                   <input
                     id={id}

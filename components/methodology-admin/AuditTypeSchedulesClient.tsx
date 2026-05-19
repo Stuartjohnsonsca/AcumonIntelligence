@@ -520,6 +520,7 @@ function TriggersPanel({
   onAddTrigger,
   onUpdateTrigger,
   onDeleteTrigger,
+  onAddMember,
   questionsCache,
   onLoadQuestions,
 }: {
@@ -530,6 +531,8 @@ function TriggersPanel({
   onAddTrigger: () => void;
   onUpdateTrigger: (id: string, patch: Partial<Trigger>) => void;
   onDeleteTrigger: (id: string) => void;
+  /** Add a schedule to an existing trigger from inside the Triggers panel */
+  onAddMember: (triggerId: string, scheduleKey: string) => void;
   /** Cached questions per schedule key: { [scheduleKey]: [{id, questionText}] } */
   questionsCache: Record<string, CachedQuestion[]>;
   onLoadQuestions: (scheduleKey: string) => void;
@@ -715,9 +718,9 @@ function TriggersPanel({
                 {/* Members */}
                 <div>
                   <label className="text-[9px] text-slate-500 uppercase tracking-wide font-semibold">Members ({t.members.length})</label>
-                  <div className="flex flex-wrap gap-1 mt-1">
+                  <div className="flex flex-wrap items-center gap-1 mt-1">
                     {t.members.length === 0 && (
-                      <span className="text-[10px] text-slate-400 italic">No schedules yet — use the &quot;+ trigger&quot; chip on a schedule card below</span>
+                      <span className="text-[10px] text-slate-400 italic mr-1">No schedules yet — add one below or use the &quot;+ trigger&quot; chip on a schedule card.</span>
                     )}
                     {t.members.map(memberKey => {
                       const ms = masterSchedules.find(s => s.key === memberKey);
@@ -737,6 +740,38 @@ function TriggersPanel({
                         </span>
                       );
                     })}
+                    {/* Inline add: dropdown listing schedules currently used by
+                        this audit type that are not yet members. Picking an
+                        option immediately adds it; resets back to placeholder.
+                        Schedules not on this audit type don't appear — adding
+                        them would have no effect anyway. */}
+                    {(() => {
+                      const candidateKeys = activeStageKeys.filter(k => !t.members.includes(k));
+                      if (candidateKeys.length === 0) {
+                        return (
+                          <span className="text-[10px] text-slate-400 italic">All schedules on this audit type are already members.</span>
+                        );
+                      }
+                      return (
+                        <select
+                          value=""
+                          onChange={(e) => {
+                            const key = e.target.value;
+                            if (!key) return;
+                            onAddMember(t.id, key);
+                            e.target.value = '';
+                          }}
+                          className="text-[10px] border border-indigo-300 bg-white text-indigo-700 rounded px-1.5 py-0.5 focus:outline-none focus:border-indigo-500"
+                          aria-label="Add schedule to trigger"
+                        >
+                          <option value="">+ Add schedule…</option>
+                          {candidateKeys.map(k => {
+                            const ms = masterSchedules.find(s => s.key === k);
+                            return <option key={k} value={k}>{ms?.label || k}</option>;
+                          })}
+                        </select>
+                      );
+                    })()}
                   </div>
                 </div>
               </div>
@@ -1622,6 +1657,7 @@ export function AuditTypeSchedulesClient({
         onAddTrigger={addTrigger}
         onUpdateTrigger={updateTrigger}
         onDeleteTrigger={deleteTrigger}
+        onAddMember={(triggerId, scheduleKey) => addKeyToTrigger(scheduleKey, triggerId)}
         questionsCache={questionsCache}
         onLoadQuestions={loadQuestions}
       />
