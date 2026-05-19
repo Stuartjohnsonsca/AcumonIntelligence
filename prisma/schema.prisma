@@ -2983,6 +2983,14 @@ model AuditInformationRequest {
   description  String
   isIncluded   Boolean @default(true) @map("is_included")
   sortOrder    Int     @default(0) @map("sort_order")
+  // Action seeded from the firm's Info Request list template — one of
+  // 'request_portal' | 'message_client' | 'third_party'. Null means
+  // "inherit the list-level default Trigger" or "no action".
+  action       String? @map("action")
+  // Timestamp of the most recent action run for this item. Null until
+  // the auditor clicks Run for the first time. Used to grey out the
+  // Run button afterwards and surface "last sent on" hover detail.
+  lastActionAt DateTime? @map("last_action_at")
 
   engagement AuditEngagement @relation(fields: [engagementId], references: [id], onDelete: Cascade)
 

@@ -248,9 +248,24 @@ export async function POST(req: Request) {
       : (rawItems && typeof rawItems === 'object' && Array.isArray(rawItems.items))
         ? rawItems.items
         : [];
-    const infoRequestItems: string[] = itemsArr.length > 0
-      ? itemsArr.map((it: any) => typeof it === 'string' ? it : (it?.description ?? '')).filter((s: string) => s.length > 0)
-      : DEFAULT_INFO_REQUEST_STANDARD;
+    const defaultAction: string | null =
+      (rawItems && typeof rawItems === 'object' && !Array.isArray(rawItems) && typeof rawItems.defaultAction === 'string')
+        ? rawItems.defaultAction
+        : null;
+    // Each seeded row carries its description AND the resolved action
+    // (per-item override first, then the list-level default). Falls
+    // back to the hardcoded constant when nothing's on disk yet.
+    const VALID_ACTIONS = new Set(['request_portal', 'message_client', 'third_party']);
+    const infoRequestSeed: Array<{ description: string; action: string | null }> = itemsArr.length > 0
+      ? itemsArr
+          .map((it: any) => {
+            const description = typeof it === 'string' ? it : (it?.description ?? '');
+            const rawAction = typeof it === 'object' && it ? it.action : null;
+            const action = (rawAction && VALID_ACTIONS.has(rawAction)) ? rawAction : (defaultAction && VALID_ACTIONS.has(defaultAction) ? defaultAction : null);
+            return { description, action };
+          })
+          .filter(r => r.description.length > 0)
+      : DEFAULT_INFO_REQUEST_STANDARD.map(d => ({ description: d, action: null as string | null }));
 
     // Create engagement with seeded data.
     // Explicit select on the return to avoid implicit SELECT * — the
@@ -276,11 +291,12 @@ export async function POST(req: Request) {
           })),
         },
         informationRequests: {
-          create: infoRequestItems.map((desc, i) => ({
-            description: desc,
+          create: infoRequestSeed.map((row, i) => ({
+            description: row.description,
             isIncluded: true,
             sortOrder: i,
-          })),
+            action: row.action,
+          })) as any,
         },
         rmmRows: {
           create: RMM_MANDATORY_ROWS.map(row => ({

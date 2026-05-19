@@ -12,6 +12,13 @@ import {
 import type { TemplateQuestion } from '@/types/methodology';
 import { AppendixTemplateEditor } from './AppendixTemplateEditor';
 import { useAuditTypes } from '@/hooks/useAuditTypes';
+import {
+  LIST_ACTION_KINDS,
+  LIST_ACTION_LABELS,
+  normaliseListStorage,
+  type ListAction,
+  type ListItem,
+} from '@/lib/list-template-actions';
 
 interface Template {
   id: string;
@@ -192,11 +199,15 @@ export function SchedulesClient({ firmId, initialTemplates, masterSchedules }: P
     return merged;
   }, [masterSchedules]);
 
-  const [templates, setTemplates] = useState<Record<string, string[]>>(() => {
-    const map: Record<string, string[]> = {};
+  // List-template state is keyed by `${templateType}|${auditType}` and
+  // stores the modern ListStorage shape ({items, defaultAction}).
+  // Reads tolerate every historical shape via normaliseListStorage so
+  // a firm upgrading mid-edit doesn't lose what's on disk.
+  const [templates, setTemplates] = useState<Record<string, import('@/lib/list-template-actions').ListStorage>>(() => {
+    const map: Record<string, import('@/lib/list-template-actions').ListStorage> = {};
     for (const t of initialTemplates) {
       if (!t.templateType.endsWith('_questions')) {
-        map[`${t.templateType}|${t.auditType}`] = t.items as string[];
+        map[`${t.templateType}|${t.auditType}`] = normaliseListStorage(t.items);
       }
     }
     return map;
@@ -259,29 +270,46 @@ export function SchedulesClient({ firmId, initialTemplates, masterSchedules }: P
   const [triggerSaved, setTriggerSaved] = useState(false);
 
   const key = `${activeTemplateType}|${activeAuditType}`;
-  const currentItems = templates[key] || TEMPLATE_TYPES.find((t) => t.key === activeTemplateType)?.defaults || [];
+  // Fall back to the template's hardcoded `defaults` (a string[]) when
+  // the firm has never saved this slot — normalising those into the
+  // modern ListStorage shape with no defaultAction.
+  const currentListStorage: import('@/lib/list-template-actions').ListStorage =
+    templates[key] || {
+      items: (TEMPLATE_TYPES.find((t) => t.key === activeTemplateType)?.defaults || []).map(d => ({ description: d })),
+      defaultAction: null,
+    };
+  const currentItems = currentListStorage.items;
 
-  const setItems = (items: string[]) => {
-    setTemplates((prev) => ({ ...prev, [key]: items }));
+  const setStorage = (next: import('@/lib/list-template-actions').ListStorage) => {
+    setTemplates((prev) => ({ ...prev, [key]: next }));
     setSaved(false);
+  };
+  const setItemsList = (items: import('@/lib/list-template-actions').ListItem[]) => {
+    setStorage({ items, defaultAction: currentListStorage.defaultAction ?? null });
+  };
+  const setDefaultAction = (action: ListAction | null) => {
+    setStorage({ items: currentItems, defaultAction: action });
+  };
+  const updateItemAt = (index: number, patch: Partial<import('@/lib/list-template-actions').ListItem>) => {
+    setItemsList(currentItems.map((it, i) => i === index ? { ...it, ...patch } : it));
   };
 
   const handleAdd = () => {
     if (newItem.trim()) {
-      setItems([...currentItems, newItem.trim()]);
+      setItemsList([...currentItems, { description: newItem.trim() }]);
       setNewItem('');
     }
   };
 
   const handleRemove = (index: number) => {
-    setItems(currentItems.filter((_, i) => i !== index));
+    setItemsList(currentItems.filter((_, i) => i !== index));
   };
 
   const handleReorder = (from: number, to: number) => {
     const items = [...currentItems];
     const [moved] = items.splice(from, 1);
     items.splice(to, 0, moved);
-    setItems(items);
+    setItemsList(items);
   };
 
   const handleSave = async () => {
@@ -293,7 +321,9 @@ export function SchedulesClient({ firmId, initialTemplates, masterSchedules }: P
         body: JSON.stringify({
           templateType: activeTemplateType,
           auditType: activeAuditType,
-          items: currentItems,
+          // Save the modern wrapper shape so per-item actions + the
+          // list-level default trigger persist together.
+          items: currentListStorage,
         }),
       });
       setSaved(true);
@@ -624,29 +654,72 @@ export function SchedulesClient({ firmId, initialTemplates, masterSchedules }: P
           </Button>
         </div>
         <div className="p-4 space-y-2">
-          {currentItems.map((item, i) => (
-            <div key={i} className="flex items-center space-x-2 group">
-              <span className="text-xs text-slate-400 w-6 text-right">{i + 1}.</span>
-              <span className="flex-1 text-sm text-slate-700 bg-white border border-slate-200 rounded px-3 py-2">
-                {typeof item === 'string' ? item : (item as any).label || JSON.stringify(item)}
-              </span>
-              <div className="opacity-0 group-hover:opacity-100 flex space-x-1 transition-opacity">
-                {i > 0 && (
-                  <button onClick={() => handleReorder(i, i - 1)} className="text-slate-400 hover:text-slate-600 text-xs px-1">
-                    ↑
+          {/* List-level default action (Trigger). Each per-item cell
+              that's left as "Default" inherits this at runtime — so
+              the admin can set "Request via Portal" once for the
+              whole list and override individual rows only where it
+              differs (e.g. "Notification of Team" → Message Client). */}
+          <div className="flex items-center gap-2 pb-3 mb-1 border-b border-slate-100">
+            <Zap className="h-4 w-4 text-indigo-500" />
+            <label className="text-xs font-medium text-slate-700">Default Trigger for this list</label>
+            <select
+              value={currentListStorage.defaultAction ?? ''}
+              onChange={(e) => setDefaultAction((e.target.value || null) as ListAction | null)}
+              className="text-xs border border-slate-300 rounded px-2 py-1 bg-white"
+              title="Action that rows below inherit unless they pick their own."
+            >
+              <option value="">— None (manual only) —</option>
+              {LIST_ACTION_KINDS.map(k => (
+                <option key={k} value={k}>{LIST_ACTION_LABELS[k]}</option>
+              ))}
+            </select>
+          </div>
+
+          {currentItems.map((item, i) => {
+            const desc = item.description;
+            const inherited = !item.action && currentListStorage.defaultAction
+              ? `Inheriting: ${LIST_ACTION_LABELS[currentListStorage.defaultAction]}`
+              : undefined;
+            return (
+              <div key={i} className="flex items-center space-x-2 group">
+                <span className="text-xs text-slate-400 w-6 text-right">{i + 1}.</span>
+                <input
+                  type="text"
+                  value={desc}
+                  onChange={(e) => updateItemAt(i, { description: e.target.value })}
+                  className="flex-1 text-sm text-slate-700 bg-white border border-slate-200 rounded px-3 py-2 focus:outline-none focus:ring-1 focus:ring-blue-300"
+                />
+                <select
+                  value={item.action ?? ''}
+                  onChange={(e) => updateItemAt(i, { action: (e.target.value || null) as ListAction | null })}
+                  className={`text-[11px] border rounded px-1.5 py-1 bg-white min-w-[150px] ${
+                    item.action ? 'border-indigo-300 text-indigo-700' : 'border-slate-200 text-slate-500'
+                  }`}
+                  title={inherited || (item.action ? `Per-item override: ${LIST_ACTION_LABELS[item.action]}` : 'No action set')}
+                >
+                  <option value="">{inherited ? '↳ Inherit default' : '— No action —'}</option>
+                  {LIST_ACTION_KINDS.map(k => (
+                    <option key={k} value={k}>{LIST_ACTION_LABELS[k]}</option>
+                  ))}
+                </select>
+                <div className="opacity-0 group-hover:opacity-100 flex space-x-1 transition-opacity">
+                  {i > 0 && (
+                    <button onClick={() => handleReorder(i, i - 1)} className="text-slate-400 hover:text-slate-600 text-xs px-1">
+                      ↑
+                    </button>
+                  )}
+                  {i < currentItems.length - 1 && (
+                    <button onClick={() => handleReorder(i, i + 1)} className="text-slate-400 hover:text-slate-600 text-xs px-1">
+                      ↓
+                    </button>
+                  )}
+                  <button onClick={() => handleRemove(i)} className="text-red-400 hover:text-red-600">
+                    <X className="h-4 w-4" />
                   </button>
-                )}
-                {i < currentItems.length - 1 && (
-                  <button onClick={() => handleReorder(i, i + 1)} className="text-slate-400 hover:text-slate-600 text-xs px-1">
-                    ↓
-                  </button>
-                )}
-                <button onClick={() => handleRemove(i)} className="text-red-400 hover:text-red-600">
-                  <X className="h-4 w-4" />
-                </button>
+                </div>
               </div>
-            </div>
-          ))}
+            );
+          })}
 
           {/* Add new item */}
           <div className="flex items-center space-x-2 pt-2 border-t mt-3">

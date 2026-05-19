@@ -97,6 +97,11 @@ export interface InfoRequestData {
   description: string;
   isIncluded: boolean;
   sortOrder: number;
+  /** Seeded from the firm's Info Request list template:
+   *  'request_portal' | 'message_client' | 'third_party' | null. */
+  action?: string | null;
+  /** ISO timestamp of the most recent successful Run, if any. */
+  lastActionAt?: string | null;
 }
 
 // ─── Context ─────────────────────────────────────────────────────────────────
