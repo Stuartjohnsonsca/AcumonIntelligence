@@ -1381,6 +1381,12 @@ model PortalRequest {
   verifiedAt      DateTime? @map("verified_at")
   chatHistory     Json?     @map("chat_history") // Array of { from, name, message, timestamp }
   evidenceTag     String?   @map("evidence_tag") // Structured tag for evidence type (e.g. bank_statements, invoices)
+  // Free-form metadata bag for clients of the PortalRequest model that
+  // need to attach structured payloads to a request without inventing
+  // a new sibling table. Currently used by the per-tab Questionnaire
+  // Dispatcher to store the source questionnaire id + sign-off state
+  // alongside the portal-side request body.
+  metadata        Json?     @map("metadata")
 
   // Portal Principal routing: FS Line / TB code this request relates
   // to, if any. Used by the work-allocation engine to pick the

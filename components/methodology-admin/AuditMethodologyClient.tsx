@@ -77,8 +77,8 @@ const tiles = [
     iconColor: 'text-indigo-600',
   },
   {
-    title: 'Team Familiarity',
-    description: 'Track team members\u2019 tenure on each client and enforce RI familiarity limits',
+    title: 'Audit Rotation Record',
+    description: 'Track every team member\u2019s and specialist\u2019s tenure on each client and enforce RI familiarity limits',
     href: '/methodology-admin/audit-methodology/team-familiarity',
     icon: Users,
     color: 'bg-pink-50 border-pink-200 hover:bg-pink-100',

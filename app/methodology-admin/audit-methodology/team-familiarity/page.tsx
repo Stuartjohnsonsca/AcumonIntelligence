@@ -14,10 +14,12 @@ export default async function TeamFamiliarityPage() {
     <div data-howto-id="page.audit-methodology-team-familiarity.body" className="container mx-auto px-4 py-8 max-w-7xl">
       <BackButton href="/methodology-admin/audit-methodology" label="Back to Audit Methodology" />
       <div className="mb-6">
-        <h1 className="text-2xl font-bold text-slate-900">Team Familiarity</h1>
+        <h1 className="text-2xl font-bold text-slate-900">Audit Rotation Record</h1>
         <p className="text-slate-600 mt-1">
-          Track how long each team member has served each audit client in each role. Set RI familiarity limits
-          to enforce rotation rules — assignments that would breach the limit are blocked when saving the team.
+          Tracks how long every team member and specialist has served each audit client in each role.
+          Set RI familiarity limits to enforce rotation rules — assignments that would breach the limit
+          are blocked when saving the team. Audit Categories (PIE / Listed / Charity / …) appear as
+          pills next to each name so the sensitive scope is always visible.
         </p>
       </div>
       <TeamFamiliarityClient />

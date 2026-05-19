@@ -13,6 +13,17 @@ export type FamiliarityRow = {
   ceasedActingDate: string | null;
   /** Sorted list of period end dates this user served on this client in this role. Used to render the checkboxes. */
   servedPeriods: string[];
+  /** 'team' = TeamFamiliarityEntry / engagement team member.
+   *  'specialist' = synthesised from AuditEngagement.specialists. The
+   *  latter have no userId of their own — we key them by email-or-name
+   *  so cross-engagement appearances aggregate into a single row. */
+  memberType: 'team' | 'specialist';
+  /** Distinct audit categories the engagements behind this row carried
+   *  (PIE / Listed / Charity etc — the per-engagement field added to
+   *  AuditEngagement). Rendered as pills next to the member name in the
+   *  Audit Rotation Record table; drives the multi-select category
+   *  filter. */
+  auditCategories: string[];
 };
 
 export type FamiliarityLimits = {
@@ -116,24 +127,49 @@ export async function getFamiliarityTable(firmId: string): Promise<{ rows: Famil
       where: { firmId },
       select: {
         clientId: true,
+        // auditCategory is read with `as any` because it was added by
+        // a recent schema change; tolerate clients that haven't pushed
+        // the schema yet by treating missing values as null.
         teamMembers: { select: { userId: true, role: true } },
+        specialists: { select: { name: true, email: true, specialistType: true } },
         period: { select: { endDate: true } },
-      },
-    }),
+      } as any,
+    }) as Promise<any[]>,
     getFamiliarityLimits(firmId),
   ]);
 
-  // Build (clientId|userId|role) -> sorted periodEnd ISO strings map
+  // Build (clientId|userId|role) -> sorted periodEnd ISO strings map +
+  // a parallel categories-per-tuple map so each row can render the
+  // distinct categories that have appeared on its engagements.
   const periodMap = new Map<string, string[]>();
+  const categoriesMap = new Map<string, Set<string>>();
+  function note(key: string, periodEnd: Date | null | undefined, auditCategory: string | null | undefined) {
+    if (!periodMap.has(key)) periodMap.set(key, []);
+    if (periodEnd) periodMap.get(key)!.push(periodEnd.toISOString());
+    if (auditCategory && auditCategory.trim()) {
+      if (!categoriesMap.has(key)) categoriesMap.set(key, new Set<string>());
+      categoriesMap.get(key)!.add(auditCategory.trim());
+    }
+  }
+
   for (const e of engagements) {
+    const cat = (e as any).auditCategory ?? null;
     for (const tm of e.teamMembers) {
-      const key = `${e.clientId}|${tm.userId}|${tm.role}`;
-      if (!periodMap.has(key)) periodMap.set(key, []);
-      if (e.period?.endDate) periodMap.get(key)!.push(e.period.endDate.toISOString());
+      note(`${e.clientId}|${tm.userId}|${tm.role}`, e.period?.endDate, cat);
+    }
+    // Synthesised specialist rows — one (client, person, type) tuple
+    // per engagement.specialists entry. Specialists are typically
+    // external and have no userId, so we key by normalised email
+    // (falling back to name) so the same person across engagements
+    // aggregates into a single row.
+    for (const sp of (e.specialists || []) as Array<{ name: string; email: string | null; specialistType: string }>) {
+      const key = `${e.clientId}|spec:${specialistKey(sp)}|${sp.specialistType}`;
+      note(key, e.period?.endDate, cat);
     }
   }
   for (const arr of periodMap.values()) arr.sort();
 
+  // Real team-member rows
   const rows: FamiliarityRow[] = entries.map(e => {
     const key = `${e.clientId}|${e.userId}|${e.role}`;
     const servedPeriods = Array.from(new Set(periodMap.get(key) || []));
@@ -149,13 +185,75 @@ export async function getFamiliarityTable(firmId: string): Promise<{ rows: Famil
       roleStartedDate: e.roleStartedDate?.toISOString() || null,
       ceasedActingDate: e.ceasedActingDate?.toISOString() || null,
       servedPeriods,
+      memberType: 'team',
+      auditCategories: Array.from(categoriesMap.get(key) || []).sort(),
     };
   });
+
+  // Synthesised specialist rows — derived afresh on every read since
+  // they have no TeamFamiliarityEntry to back them. Use the periodMap
+  // keys we noted above to discover all (client, specialist, type)
+  // tuples and look up the human details from the latest engagement
+  // that featured them.
+  const specialistMeta = new Map<string, { name: string; email: string | null }>();
+  for (const e of engagements) {
+    for (const sp of (e.specialists || []) as Array<{ name: string; email: string | null; specialistType: string }>) {
+      const innerKey = specialistKey(sp);
+      if (!specialistMeta.has(innerKey)) specialistMeta.set(innerKey, { name: sp.name, email: sp.email });
+    }
+  }
+  const clientNameById = new Map<string, { name: string; isPIE: boolean }>();
+  for (const r of rows) clientNameById.set(r.clientId, { name: r.clientName, isPIE: r.clientIsPIE });
+  // Some clients may only have specialist rows and no team-member
+  // rows — fill in their names too.
+  if (engagements.length > 0) {
+    const missing = Array.from(new Set(engagements.map((e: any) => e.clientId))).filter(c => !clientNameById.has(c));
+    if (missing.length > 0) {
+      const clients = await prisma.client.findMany({
+        where: { id: { in: missing } },
+        select: { id: true, clientName: true, isPIE: true },
+      });
+      for (const c of clients) clientNameById.set(c.id, { name: c.clientName, isPIE: !!c.isPIE });
+    }
+  }
+  for (const key of periodMap.keys()) {
+    if (!key.includes('|spec:')) continue;
+    const [clientId, specPart, role] = key.split('|');
+    const innerKey = specPart.slice('spec:'.length);
+    const meta = specialistMeta.get(innerKey);
+    if (!meta) continue;
+    const client = clientNameById.get(clientId);
+    const servedPeriods = Array.from(new Set(periodMap.get(key) || []));
+    rows.push({
+      id: `spec:${clientId}:${innerKey}:${role}`,
+      clientId,
+      clientName: client?.name || '',
+      clientIsPIE: !!client?.isPIE,
+      userId: `spec:${innerKey}`,
+      userName: meta.name || meta.email || '(unnamed specialist)',
+      role,
+      engagementStartDate: null,
+      roleStartedDate: null,
+      ceasedActingDate: null,
+      servedPeriods,
+      memberType: 'specialist',
+      auditCategories: Array.from(categoriesMap.get(key) || []).sort(),
+    });
+  }
 
   // Sort by client name then user name then role
   rows.sort((a, b) => a.clientName.localeCompare(b.clientName) || a.userName.localeCompare(b.userName) || a.role.localeCompare(b.role));
 
   return { rows, limits };
+}
+
+/** Normalised key used to group specialist appearances across
+ *  engagements into a single rotation row. Email wins when present
+ *  (more reliable across spelling variants); name is the fallback. */
+function specialistKey(sp: { name: string; email: string | null }): string {
+  const e = (sp.email || '').trim().toLowerCase();
+  if (e) return `e:${e}`;
+  return `n:${(sp.name || '').trim().toLowerCase()}`;
 }
 
 /**

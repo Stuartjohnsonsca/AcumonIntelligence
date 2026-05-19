@@ -10,6 +10,7 @@ import { useFirmVariables } from '@/hooks/useFirmVariables';
 import { useSignOff } from './SignOffHeader';
 import { evaluateFormula, buildFormulaValues, slugifyQuestionText } from '@/lib/formula-engine';
 import { evaluateRulesForSchedule, type ValidationRule, type RuleEvaluation } from '@/lib/validation-rules';
+import { QuestionnaireDispatcher } from './QuestionnaireDispatcher';
 import type { TemplateQuestion, TemplateSectionMeta, SectionLayout } from '@/types/methodology';
 import { DEFAULT_COLUMN_HEADERS } from '@/types/methodology';
 import { subscribeTemplateRefsChanged } from '@/lib/template-references-bus';
@@ -1423,6 +1424,18 @@ export function DynamicAppendixForm({
           to the sign-off dots) via EngagementTabs → SignOffHeader's
           `headerActions` slot. Moved 2026-04-22 so auditors can see
           and trigger reviews without scrolling to the bottom. */}
+
+      {/* Questionnaire dispatcher — every appendix-form tab gets a
+          built-in way to send a Questionnaire template to the Client
+          Portal, review the response, and sign it off with the
+          standard P / R / RI dots. The dispatcher self-fetches its
+          engagement context (audit type + team members + current
+          user) so no extra wiring is needed at the tab level. */}
+      <QuestionnaireDispatcher
+        engagementId={engagementId}
+        tabKey={endpoint}
+        tabLabel={endpoint.replace(/[_-]+/g, ' ').replace(/\b\w/g, c => c.toUpperCase())}
+      />
     </div>
   );
 }

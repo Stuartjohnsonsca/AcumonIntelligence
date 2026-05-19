@@ -67,12 +67,26 @@ export default async function QuestionnaireActionsPage() {
     { key: 'PIE_CONTROLS', label: 'PIE Controls' },
   ];
 
+  // Audit Categories — orthogonal classification (PIE / Listed / Charity /
+  // …) maintained under Firm Wide Assumptions. Used so each questionnaire
+  // action mapping can be scoped to a specific audit-type × category
+  // combination, matching the same conditions the Validation Rules use.
+  let auditCategoryOptions: string[] = [];
+  try {
+    const catRow = await (prisma as any).methodologyRiskTable?.findUnique?.({
+      where: { firmId_tableType: { firmId: session.user.firmId, tableType: 'audit_categories' } },
+    });
+    const list = catRow?.data?.categories;
+    if (Array.isArray(list)) auditCategoryOptions = list.filter((c: any) => typeof c === 'string');
+  } catch { /* tolerant — falls back to "All categories" only */ }
+
   return (
     <div data-howto-id="page.audit-methodology-questionnaire-actions.body" className="container mx-auto px-4 py-10 max-w-7xl">
       <BackButton href="/methodology-admin/audit-methodology" label="Back to Audit Methodology" />
       <QuestionnaireActionsClient
         questionnaires={questionnaires}
         auditTypes={auditTypes}
+        auditCategoryOptions={auditCategoryOptions}
         actionTriggers={actionTriggers}
         initialMappings={mappings}
       />
