@@ -213,12 +213,43 @@ export async function POST(req: Request) {
       ? (agreedDatesTemplate.items as string[])
       : DEFAULT_AGREED_DATES;
 
-    // Load default info request items
-    const infoTemplate = await prisma.methodologyTemplate.findUnique({
-      where: { firmId_templateType_auditType: { firmId, templateType: 'information_request', auditType } },
-    });
-    const infoRequestItems: string[] = infoTemplate?.items
-      ? (infoTemplate.items as string[])
+    // Load default info request items. The Schedule Designer's "Info
+    // Request (Standard)" list is stored under templateType
+    // 'information_request_standard'; previously this seed read
+    // 'information_request' (a key nothing ever wrote) and silently
+    // fell through to the hardcoded DEFAULT_INFO_REQUEST_STANDARD, so
+    // firm customisations never reached new engagements. Lookup order:
+    //   1. firm's `information_request_standard` row for this audit type
+    //   2. firm's `information_request_standard` row for 'ALL'
+    //   3. legacy `information_request` row (back-compat for any firm
+    //      that saved under the old key before the rename)
+    //   4. hardcoded default
+    // Each list item is { description, action? } — back-compat coerces
+    // legacy string[] into { description } entries.
+    const [infoStdAuditType, infoStdAll, infoLegacy] = await Promise.all([
+      prisma.methodologyTemplate.findUnique({
+        where: { firmId_templateType_auditType: { firmId, templateType: 'information_request_standard', auditType } },
+      }).catch(() => null),
+      prisma.methodologyTemplate.findUnique({
+        where: { firmId_templateType_auditType: { firmId, templateType: 'information_request_standard', auditType: 'ALL' } },
+      }).catch(() => null),
+      prisma.methodologyTemplate.findUnique({
+        where: { firmId_templateType_auditType: { firmId, templateType: 'information_request', auditType } },
+      }).catch(() => null),
+    ]);
+    const rawItems = (infoStdAuditType?.items ?? infoStdAll?.items ?? infoLegacy?.items) as any;
+    // Items shape evolved over time, in order of recency:
+    //   1. `{ items: [{description, action?}], defaultAction? }` (Schedule
+    //      Designer post-action-feature)
+    //   2. `[{description, action?}]`                              (per-item rich entries, no list meta)
+    //   3. `string[]`                                              (legacy plain list)
+    const itemsArr: any[] = Array.isArray(rawItems)
+      ? rawItems
+      : (rawItems && typeof rawItems === 'object' && Array.isArray(rawItems.items))
+        ? rawItems.items
+        : [];
+    const infoRequestItems: string[] = itemsArr.length > 0
+      ? itemsArr.map((it: any) => typeof it === 'string' ? it : (it?.description ?? '')).filter((s: string) => s.length > 0)
       : DEFAULT_INFO_REQUEST_STANDARD;
 
     // Create engagement with seeded data.
