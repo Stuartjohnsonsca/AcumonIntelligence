@@ -126,7 +126,7 @@ export function CrmFilterChat({ isOpen, onClose, initialDescription, onFilterCon
           )}
 
           {messages.map((msg, i) => (
-            <div key={i} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
+            <div key={i} className={`flex ${msg.role === 'user' ? 'justify-end pl-12' : 'justify-start pr-12'}`}>
               <div className={`max-w-[85%] rounded-lg px-3 py-2 text-sm ${
                 msg.role === 'user'
                   ? 'bg-purple-600 text-white'

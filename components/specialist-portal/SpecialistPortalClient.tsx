@@ -327,7 +327,7 @@ export function SpecialistPortalClient({ engagementId, roleKey, email, sig }: Pr
                           const fromMe = (m.userId || '').toLowerCase() === `external:${data.email.toLowerCase()}` ||
                                          (m.userName || '').toLowerCase() === data.email.toLowerCase();
                           return (
-                            <div key={m.id} className={`flex ${fromMe ? 'justify-end' : 'justify-start'}`}>
+                            <div key={m.id} className={`flex ${fromMe ? 'justify-end pl-12' : 'justify-start pr-12'}`}>
                               <div className={`text-xs p-2 rounded-lg border max-w-[80%] ${fromMe ? 'bg-blue-50 border-blue-200 rounded-br-none' : 'bg-slate-50 border-slate-200 rounded-bl-none'}`}>
                                 <div className="flex items-center gap-2 text-[10px] text-slate-500 mb-1">
                                   <strong className={fromMe ? 'text-blue-800' : 'text-slate-700'}>

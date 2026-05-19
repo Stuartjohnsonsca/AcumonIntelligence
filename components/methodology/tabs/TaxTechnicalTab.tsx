@@ -398,7 +398,7 @@ export function TaxTechnicalTab({ engagementId, clientName }: Props) {
               {/* Messages */}
               <div className="flex-1 overflow-y-auto p-4 space-y-3">
                 {activeChat.messages.map((msg: any) => (
-                  <div key={msg.id} className={`flex ${msg.role === 'audit_team' ? 'justify-end' : msg.role === 'system' ? 'justify-center' : 'justify-start'}`}>
+                  <div key={msg.id} className={`flex ${msg.role === 'audit_team' ? 'justify-end pl-12' : msg.role === 'system' ? 'justify-center' : 'justify-start pr-12'}`}>
                     {msg.role === 'system' ? (
                       <div className="px-3 py-1.5 bg-slate-100 rounded-lg text-[10px] text-slate-500 max-w-[80%] whitespace-pre-wrap">{msg.message}</div>
                     ) : (

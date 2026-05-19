@@ -181,7 +181,7 @@ export function InterrogateBotModal({ engagementId, onClose }: Props) {
           )}
 
           {messages.map((m, i) => (
-            <div key={i} className={`flex ${m.role === 'user' ? 'justify-end' : 'justify-start'}`}>
+            <div key={i} className={`flex ${m.role === 'user' ? 'justify-end pl-12' : 'justify-start pr-12'}`}>
               <div className="max-w-[85%]">
                 <div
                   className={`px-3 py-2 rounded-lg text-sm whitespace-pre-wrap ${

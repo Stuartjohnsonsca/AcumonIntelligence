@@ -128,7 +128,7 @@ export function ServiceChatBot({ serviceType, title, description, token }: Props
             </div>
           )}
           {messages.map(msg => (
-            <div key={msg.id} className={`flex gap-2 ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
+            <div key={msg.id} className={`flex gap-2 ${msg.role === 'user' ? 'justify-end pl-12' : 'justify-start pr-12'}`}>
               {msg.role === 'assistant' && (
                 <div className="w-7 h-7 rounded-full bg-blue-100 flex items-center justify-center flex-shrink-0">
                   <Bot className="h-4 w-4 text-blue-600" />

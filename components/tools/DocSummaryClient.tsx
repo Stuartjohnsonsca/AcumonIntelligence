@@ -1446,7 +1446,7 @@ export function DocSummaryClient({
                           return msgs.map((msg) => (
                             <div
                               key={msg.id}
-                              className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}
+                              className={`flex ${msg.role === 'user' ? 'justify-end pl-12' : 'justify-start pr-12'}`}
                             >
                               <div
                                 className={`max-w-[85%] rounded-lg px-3 py-2 text-xs ${
