@@ -54,6 +54,7 @@ const HANDLERS: Record<string, ActionHandler> = {
   extractBankStatements: handleExtractBankStatements,
   accountingExtract: handleAccountingExtract,
   selectSample: handleSelectSample,
+  sampleAndTestDocuments: handleSampleAndTestDocuments,
   aiAnalysis: handleAiAnalysis,
   analyseLargeUnusual: handleAnalyseLargeUnusual,
   analyseCutOff: handleAnalyseCutOff,
@@ -5893,4 +5894,298 @@ async function handleTestJournals(ctx: ActionHandlerContext): Promise<ActionHand
       selected_count: run.totalSelected,
     },
   };
+}
+
+/**
+ * Sample Selection & Document Testing — reusable multi-phase Action.
+ *
+ * Phase flow (stored on pipelineState[stepIndex].phase):
+ *   new                 → pick a sample (or pause for judgmental selection),
+ *                          then create a portal request listing each sampled
+ *                          item and pause for the client to upload docs.
+ *   awaiting_sample     → only entered when sample_method='judgmental';
+ *                          the auditor's UI selection arrives in
+ *                          stepState.selectedItems, then we create the
+ *                          portal request and pause for docs.
+ *   awaiting_documents  → client has responded — collect attachments off
+ *                          the PortalRequest chat history and pause for the
+ *                          team to review the docs and stamp each sample
+ *                          item Red / Orange / Green.
+ *   awaiting_review     → team submitted their markers in the resume
+ *                          payload (stepState.markers = [{sampleIndex,
+ *                          colour, reason, evidenceRef}]); produce the
+ *                          final outputs and `continue` to the next step.
+ *
+ * The handler is intentionally generic — no FS-line, no domain
+ * vocabulary, no AI extraction. It's the cheapest reusable building
+ * block for "pick a sample, get docs, judge them". An AI-extraction
+ * companion action can plug into the `awaiting_documents` phase in a
+ * future iteration if the firm wants the matching automated.
+ */
+async function handleSampleAndTestDocuments(ctx: ActionHandlerContext): Promise<ActionHandlerResult> {
+  const { engagementId, inputs, executionId, stepIndex, pipelineState, config } = ctx;
+  const stepState = pipelineState[stepIndex] || {};
+  const phase: string = stepState.phase || 'new';
+
+  const refField = String(inputs.reference_field || 'description');
+  const amountField = String(inputs.amount_field || 'amount');
+  const dateField = String(inputs.date_field || 'date');
+
+  // ── Phase 'new': sample selection + portal request ────────────────────
+  if (phase === 'new') {
+    const population = Array.isArray(inputs.population) ? inputs.population : [];
+    if (population.length === 0) {
+      return { action: 'error', outputs: {}, errorMessage: 'Population is empty — nothing to sample.' };
+    }
+    const requestedSize = Math.max(1, Math.floor(Number(inputs.sample_size) || 25));
+    const method = String(inputs.sample_method || 'random');
+    const sampleSize = Math.min(requestedSize, population.length);
+
+    // Judgmental — defer to the sampling UI; auditor's picks come back
+    // in stepState.selectedItems on resume.
+    if (method === 'judgmental') {
+      return {
+        action: 'pause',
+        outputs: {
+          phase: 'awaiting_sample',
+          population,
+          sample_size: sampleSize,
+          ref_field: refField,
+          amount_field: amountField,
+          date_field: dateField,
+          repeatOnResume: true,
+        },
+        pauseReason: 'sampling',
+        pauseRefId: `sample_and_test_${stepIndex}`,
+      };
+    }
+
+    const sampleItems = method === 'top_n_by_amount'
+      ? topNByAmount(population, sampleSize, amountField)
+      : randomSample(population, sampleSize);
+
+    return await sampleAndTest_createPortalRequest(ctx, sampleItems, refField, amountField, dateField);
+  }
+
+  // ── Phase 'awaiting_sample': judgmental selection arrived from UI ─────
+  if (phase === 'awaiting_sample') {
+    const sampleItems = Array.isArray(stepState.selectedItems) ? stepState.selectedItems : [];
+    if (sampleItems.length === 0) {
+      return { action: 'error', outputs: {}, errorMessage: 'No items selected for the judgmental sample.' };
+    }
+    return await sampleAndTest_createPortalRequest(ctx, sampleItems, refField, amountField, dateField);
+  }
+
+  // ── Phase 'awaiting_documents': client has uploaded — surface for review
+  if (phase === 'awaiting_documents') {
+    const portalRequestId = stepState.portal_request_id as string | undefined;
+    let documents: Array<{ name: string; url: string; uploadId: string; storagePath: string }> = [];
+    if (portalRequestId) {
+      const pr = await prisma.portalRequest.findUnique({ where: { id: portalRequestId } });
+      const chat = Array.isArray(pr?.chatHistory) ? (pr!.chatHistory as any[]) : [];
+      for (const msg of chat) {
+        if (msg?.from !== 'client' || !Array.isArray(msg.attachments)) continue;
+        for (const a of msg.attachments) {
+          documents.push({
+            name: a?.name || 'document',
+            url: a?.url || '',
+            uploadId: a?.uploadId || '',
+            storagePath: a?.storagePath || '',
+          });
+        }
+      }
+    }
+    return {
+      action: 'pause',
+      outputs: {
+        phase: 'awaiting_review',
+        sample_items: stepState.sample_items || [],
+        documents,
+        portal_request_id: portalRequestId,
+        ref_field: refField,
+        amount_field: amountField,
+        date_field: dateField,
+        repeatOnResume: true,
+      },
+      pauseReason: 'review',
+      pauseRefId: `sample_and_test_review_${stepIndex}`,
+    };
+  }
+
+  // ── Phase 'awaiting_review': team submitted R/O/G markers ─────────────
+  if (phase === 'awaiting_review') {
+    const sampleItems: any[] = Array.isArray(stepState.sample_items) ? stepState.sample_items : [];
+    // Resume payload carries the team's verdicts as
+    //   markers: [{sampleIndex, colour, reason?, evidenceRef?}]
+    // Items the team didn't mark default to red so nothing slips through
+    // without an explicit judgement.
+    const submitted: any[] = Array.isArray(stepState.markers) ? stepState.markers : [];
+    const submittedByIndex = new Map<number, any>();
+    for (const s of submitted) {
+      if (typeof s?.sampleIndex === 'number') submittedByIndex.set(s.sampleIndex, s);
+    }
+    const markers = sampleItems.map((item, i) => {
+      const s = submittedByIndex.get(i);
+      const colour: 'red' | 'orange' | 'green' = s?.colour === 'green' || s?.colour === 'orange' ? s.colour : 'red';
+      return {
+        sampleIndex: i,
+        item_ref: String(item?.[refField] ?? `Item ${i + 1}`),
+        amount: item?.[amountField] ?? null,
+        item_date: item?.[dateField] ?? null,
+        colour,
+        reason: s?.reason || (colour === 'red' ? 'No verdict supplied — defaulted to Red' : ''),
+        evidence_ref: s?.evidenceRef || null,
+      };
+    });
+    const red = markers.filter(m => m.colour === 'red');
+    const orange = markers.filter(m => m.colour === 'orange');
+    const green = markers.filter(m => m.colour === 'green');
+    return {
+      action: 'continue',
+      outputs: {
+        sample_items: sampleItems,
+        documents: stepState.documents || [],
+        markers,
+        data_table: markers,
+        red_count: red.length,
+        orange_count: orange.length,
+        green_count: green.length,
+        findings: red,
+        pass_fail: red.length === 0 ? 'pass' : 'fail',
+        portal_request_id: stepState.portal_request_id || null,
+      },
+    };
+  }
+
+  return { action: 'error', outputs: {}, errorMessage: `Unknown phase for sample_and_test_documents: ${phase}` };
+}
+
+/** Shared "create the portal request and pause for client response"
+ *  block used by both the random/top-N path (called immediately from
+ *  phase 'new') and the judgmental path (called after the auditor's
+ *  selection arrives on phase 'awaiting_sample'). */
+async function sampleAndTest_createPortalRequest(
+  ctx: ActionHandlerContext,
+  sampleItems: any[],
+  refField: string,
+  amountField: string,
+  dateField: string,
+): Promise<ActionHandlerResult> {
+  const { engagementId, inputs, executionId, stepIndex, config } = ctx;
+  const engagement = await prisma.auditEngagement.findUnique({
+    where: { id: engagementId },
+    select: { clientId: true },
+  });
+  if (!engagement) return { action: 'error', outputs: {}, errorMessage: 'Engagement not found' };
+
+  const requestingUser = await prisma.user.findUnique({
+    where: { id: config.userId },
+    select: { name: true, email: true },
+  });
+
+  const intro = (inputs.message_to_client && String(inputs.message_to_client).trim())
+    || `Please provide supporting documents for the ${sampleItems.length} sample items listed below as part of our audit.`;
+  const evidenceType = String(inputs.evidence_type || 'invoice').replace(/_/g, ' ');
+  const lines = sampleItems.map((it, i) => {
+    const ref = String(it?.[refField] ?? `Item ${i + 1}`).slice(0, 200);
+    const amt = it?.[amountField];
+    const dt = it?.[dateField];
+    const parts = [`${i + 1}. ${ref}`];
+    if (amt !== undefined && amt !== null && amt !== '') parts.push(`— Amount: ${amt}`);
+    if (dt !== undefined && dt !== null && dt !== '') parts.push(`— Date: ${dt}`);
+    return parts.join(' ');
+  });
+  const body = [
+    `Sample selection & document testing — ${config.testDescription || 'audit test'}`,
+    '',
+    intro,
+    '',
+    `For each item, please attach the relevant ${evidenceType}.`,
+    '',
+    'Sample items:',
+    ...lines,
+  ].join('\n');
+
+  // Portal Principal routing — same shape requestDocuments uses so the
+  // request auto-assigns to the right staff via the work-allocation
+  // grid.
+  const { buildRoutingForNewRequest } = await import('@/lib/portal-request-routing');
+  const routing = await buildRoutingForNewRequest({
+    engagementId,
+    routingFsLineId: config.fsLineId || null,
+    routingTbAccountCode: null,
+  });
+
+  const portalRequest = await prisma.portalRequest.create({
+    data: {
+      clientId: engagement.clientId,
+      engagementId,
+      section: 'evidence',
+      question: body,
+      status: 'outstanding',
+      requestedById: config.userId,
+      requestedByName: requestingUser?.name || requestingUser?.email || 'Audit Team',
+      evidenceTag: config.fsLine || 'sample_test',
+      ...routing,
+    } as any,
+  });
+
+  await prisma.outstandingItem.create({
+    data: {
+      engagementId,
+      executionId,
+      type: 'portal_request',
+      title: `Sample documents — ${sampleItems.length} items`,
+      description: body.slice(0, 500),
+      source: 'flow',
+      assignedTo: 'client',
+      status: 'awaiting_client',
+      fsLine: config.fsLine,
+      testName: config.testDescription,
+      portalRequestId: portalRequest.id,
+    },
+  });
+
+  // Fire WhatsApp / Telegram / SMS notification — best-effort.
+  notifyOnPortalRequestCreated(portalRequest.id).catch(err => {
+    console.error('[sample_and_test_documents] notifyOnPortalRequestCreated failed', err);
+  });
+
+  return {
+    action: 'pause',
+    outputs: {
+      phase: 'awaiting_documents',
+      sample_items: sampleItems,
+      portal_request_id: portalRequest.id,
+      ref_field: refField,
+      amount_field: amountField,
+      date_field: dateField,
+      repeatOnResume: true,
+    },
+    pauseReason: 'portal_response',
+    pauseRefId: portalRequest.id,
+  };
+}
+
+/** Fisher-Yates shuffle to pick `n` items from `population` without
+ *  replacement. Modifies a local copy — population stays untouched. */
+function randomSample<T>(population: T[], n: number): T[] {
+  const shuffled = [...population];
+  for (let i = shuffled.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
+  }
+  return shuffled.slice(0, n);
+}
+
+/** Pick the `n` rows with the largest absolute value in `amountField`.
+ *  Rows with non-numeric / missing amounts sort to the bottom. */
+function topNByAmount(population: any[], n: number, amountField: string): any[] {
+  return [...population]
+    .sort((a, b) => {
+      const av = Math.abs(Number(a?.[amountField]) || 0);
+      const bv = Math.abs(Number(b?.[amountField]) || 0);
+      return bv - av;
+    })
+    .slice(0, n);
 }

@@ -172,6 +172,58 @@ export const SYSTEM_ACTIONS: ActionDefinitionData[] = [
     ],
   },
 
+  {
+    // Reusable building block: take ANY population (no FS-line / no
+    // domain assumptions), select a sample, request docs from the
+    // client via the portal, then team-review the returned evidence
+    // and stamp each sample item Red / Orange / Green. Designed to
+    // drop into any test that boils down to "pick a sample, get
+    // supporting docs, judge them" — payroll, bank payments,
+    // additions, disposals, payments, sales, expenses, etc.
+    code: 'sample_and_test_documents',
+    name: 'Sample Selection & Document Testing',
+    description: 'Reusable: select a sample from any population, request supporting documents via the Client Portal, then team-review the returned evidence and mark each item Red / Orange / Green. Multi-phase — pauses for the client to upload, pauses again for team review, then emits R/O/G markers + a pass/fail.',
+    category: 'verification',
+    handlerName: 'sampleAndTestDocuments',
+    icon: 'FileSearch',
+    color: '#0ea5e9',
+    isSystem: true,
+    inputSchema: [
+      { code: 'population', label: 'Population', type: 'json_table', required: true, source: 'auto', autoMapFrom: '$prev.data_table', group: 'Data', description: 'Population to sample from. Each row should at minimum carry a reference / description; ideally also an amount and a date.' },
+      { code: 'sample_size', label: 'Sample Size', type: 'number', required: false, source: 'user', group: 'Method', defaultValue: 25, description: 'How many items to test. Capped at the population size.' },
+      { code: 'sample_method', label: 'Sample Method', type: 'select', required: false, source: 'user', group: 'Method', defaultValue: 'random', options: [
+        { value: 'random', label: 'Simple random' },
+        { value: 'top_n_by_amount', label: 'Top N by amount' },
+        { value: 'judgmental', label: 'Judgmental (auditor picks in UI)' },
+      ]},
+      { code: 'evidence_type', label: 'Evidence Type', type: 'select', required: false, source: 'user', group: 'Evidence', defaultValue: 'invoice', description: 'Drives the wording of the portal request — used only for the message body.', options: [
+        { value: 'invoice', label: 'Supplier invoice' },
+        { value: 'receipt', label: 'Receipt' },
+        { value: 'contract', label: 'Contract / agreement' },
+        { value: 'bank_statement', label: 'Bank statement / payment proof' },
+        { value: 'delivery_note', label: 'Delivery note / GRN' },
+        { value: 'payslip', label: 'Payslip / payroll record' },
+        { value: 'other', label: 'Other (specify in message)' },
+      ]},
+      { code: 'message_to_client', label: 'Message to Client', type: 'textarea', required: false, source: 'user', group: 'Portal', description: 'Optional cover note prefixed to the portal request. The sample item list is appended automatically.' },
+      { code: 'reference_field', label: 'Reference Field', type: 'text', required: false, source: 'user', group: 'Mapping', defaultValue: 'description', description: 'Column on each population row that identifies the item (description, payee, supplier, employee name…). Used to label each sample item in the portal request.' },
+      { code: 'amount_field', label: 'Amount Field', type: 'text', required: false, source: 'user', group: 'Mapping', defaultValue: 'amount', description: 'Column on each row that holds the monetary amount. Optional — used for "Top N" sampling and to surface the amount alongside each item in the portal message.' },
+      { code: 'date_field', label: 'Date Field', type: 'text', required: false, source: 'user', group: 'Mapping', defaultValue: 'date', description: 'Column on each row that holds the transaction / event date. Optional — surfaced alongside each item in the portal message.' },
+    ],
+    outputSchema: [
+      { code: 'sample_items', label: 'Selected Sample', type: 'data_table', description: 'The rows from the population that were selected for testing.' },
+      { code: 'documents', label: 'Returned Documents', type: 'json', description: 'Attachments the client uploaded in response to the portal request.' },
+      { code: 'markers', label: 'R/O/G Markers', type: 'data_table', description: 'One row per sample item: colour, reason, evidence_ref. Persisted to sample_item_markers.' },
+      { code: 'data_table', label: 'Markers (alias)', type: 'data_table', description: 'Same as markers, for chaining compatibility.' },
+      { code: 'red_count', label: 'Red Items', type: 'number' },
+      { code: 'orange_count', label: 'Orange Items', type: 'number' },
+      { code: 'green_count', label: 'Green Items', type: 'number' },
+      { code: 'findings', label: 'Findings (Red Items)', type: 'data_table', description: 'Subset of markers where colour=red, ready for the Findings & Conclusions section.' },
+      { code: 'pass_fail', label: 'Overall Result', type: 'pass_fail' },
+      { code: 'portal_request_id', label: 'Portal Request ID', type: 'text', description: 'Surface for status badges + Outstanding-tab cross-links.' },
+    ],
+  },
+
   // ─── Analysis Actions ──────────────────────────────────────────────────────
 
   {
