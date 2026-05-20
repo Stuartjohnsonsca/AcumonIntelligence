@@ -3,6 +3,8 @@
 import { useState, useEffect, useMemo } from 'react';
 import { Loader2, Download, AlertOctagon, CheckCircle2, ExternalLink, Plus, Trash2, X, Save, AlertTriangle, Send } from 'lucide-react';
 import { CustomScheduleQuestions } from '../CustomScheduleQuestions';
+import { useEngagementRounding } from '@/hooks/useEngagementRounding';
+import { formatRounded } from '@/lib/audit-rounding';
 import { Button } from '@/components/ui/button';
 import {
   encodeNavReference, decodeNavReference, getCurrentLocation, navigateTo,
@@ -114,6 +116,16 @@ function statementBucket(category: string | undefined): StatementBucket {
 }
 
 export function ErrorSchedulePanel({ engagementId, materiality = 0, performanceMateriality = 0, clearlyTrivial = 0, userRole, onClose }: Props) {
+  // Engagement-wide display rounding (PAR tab picker). Shadow the
+  // top-level `fmt()` so every amount cell on this panel respects
+  // the auditor's chosen unit. Leaves the outer fmt() in place as a
+  // module-level fallback.
+  const { mode: roundingMode } = useEngagementRounding(engagementId);
+  const fmt = (n: number): string => {
+    if (!n) return '';
+    return formatRounded(Math.abs(n), roundingMode);
+  };
+
   const [errors, setErrors] = useState<ErrorEntry[]>([]);
   const [meta, setMeta] = useState<ErrorMeta>({});
   const [fsLines, setFsLines] = useState<FsLineLite[]>([]);

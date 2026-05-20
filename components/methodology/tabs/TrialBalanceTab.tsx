@@ -4,7 +4,11 @@ import { useState, useEffect, useCallback, useMemo, useRef, Fragment, lazy, Susp
 import { useAutoSave } from '@/hooks/useAutoSave';
 import { useScrollToAnchor } from '@/lib/hooks/useScrollToAnchor';
 import { CustomScheduleQuestions } from '../CustomScheduleQuestions';
-import { RoundingDropdown } from '../RoundingDropdown';
+// RoundingDropdown intentionally NOT imported on TBCYvPY — the picker
+// lives on the PAR tab and the choice flows through to every other
+// tab via useEngagementRounding. TBCYvPY itself always shows raw
+// pounds (it's the underlying ledger view), so it never needs the
+// dropdown of its own.
 
 const FixedAssetRegisterPopup = lazy(() => import('../FixedAssetRegisterPopup').then(m => ({ default: m.FixedAssetRegisterPopup })));
 const GeneralLedgerModal = lazy(() => import('../GeneralLedgerModal').then(m => ({ default: m.GeneralLedgerModal })));
@@ -1236,13 +1240,10 @@ export function TrialBalanceTab({ engagementId, isGroupAudit = false, showCatego
             <input type="checkbox" checked={showCategory} onChange={e => setShowCategory(e.target.checked)} className="w-3 h-3 rounded" />
             Show Category
           </label>
-          {/* Rounding mode — shared engagement-wide via
-              useEngagementRounding. Changing it here updates every
-              other tab (PAR, Materiality grid, Audit Plan totals,
-              Error Schedule etc.) that reads the same hook. The TB
-              cells themselves still show raw pounds during editing —
-              the dropdown is the system-wide display preference. */}
-          <RoundingDropdown engagementId={engagementId} />
+          {/* Rounding picker intentionally NOT shown here — set it on
+              the PAR tab instead. The choice flows engagement-wide via
+              useEngagementRounding; TBCYvPY always renders raw pounds
+              regardless, because it's the underlying ledger view. */}
         </div>
         <div className="flex items-center gap-2">
           {/* Bulk-action buttons — surface when EITHER rows or columns

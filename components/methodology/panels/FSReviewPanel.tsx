@@ -3,6 +3,8 @@
 import { useState, useEffect, useMemo } from 'react';
 import { ChevronDown, ChevronRight, CheckCircle2, Loader2 } from 'lucide-react';
 import { CustomScheduleQuestions } from '../CustomScheduleQuestions';
+import { useEngagementRounding } from '@/hooks/useEngagementRounding';
+import { formatRounded } from '@/lib/audit-rounding';
 
 const STATEMENT_ORDER = ['Profit & Loss', 'Balance Sheet', 'Cash Flow Statement', 'Notes'];
 
@@ -130,6 +132,16 @@ function SignDot({ count, total }: { count: number; total: number }) {
 
 // ─── Main ───
 export function FSReviewPanel({ engagementId }: { engagementId: string }) {
+  // Engagement-wide display rounding — shadow the top-level `f()`
+  // formatter so every TB value rendered by this panel switches
+  // unit (Unrounded / Pounds / Thousands / Millions) the moment
+  // the auditor changes the picker on the PAR tab.
+  const { mode: roundingMode } = useEngagementRounding(engagementId);
+  const f = (n: number): string => {
+    const s = formatRounded(Math.abs(n), roundingMode);
+    return n < 0 ? `(${s})` : `${s} `;
+  };
+
   const [viewMode, setViewMode] = useState<'statement' | 'tb'>('statement');
   const [tbRows, setTbRows] = useState<TBRow[]>([]);
   const [conclusions, setConclusions] = useState<Conc[]>([]);

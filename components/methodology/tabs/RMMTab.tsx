@@ -3,6 +3,8 @@
 import { useState, useEffect, useCallback, useMemo, Fragment, useRef } from 'react';
 import { useSession } from 'next-auth/react';
 import { useAutoSave } from '@/hooks/useAutoSave';
+import { useEngagementRounding } from '@/hooks/useEngagementRounding';
+import { formatRounded } from '@/lib/audit-rounding';
 import { ASSERTION_TYPES, INHERENT_RISK_COMPONENTS } from '@/types/methodology';
 import { lookupInherentRisk, lookupOverallRisk, riskColor, inherentRiskDropdownColor } from '@/lib/risk-table-lookup';
 import { useScrollToAnchor } from '@/lib/hooks/useScrollToAnchor';
@@ -137,6 +139,13 @@ function ResizableTh({
 
 export function RMMTab({ engagementId, auditType, teamMembers = [], showCategoryOption = false }: Props) {
   const { data: session } = useSession();
+  // Engagement-wide display rounding (set on the PAR tab). Local
+  // `money()` helper used by the JSX below switches unit
+  // (Unrounded / Pounds / Thousands / Millions) the moment the
+  // auditor changes the picker.
+  const { mode: roundingMode } = useEngagementRounding(engagementId);
+  const money = (v: number): string => formatRounded(v, roundingMode);
+
   const [rows, setRows] = useState<RMMRow[]>([]);
   const [loading, setLoading] = useState(true);
 
@@ -1396,14 +1405,14 @@ export function RMMTab({ engagementId, auditType, teamMembers = [], showCategory
                         <td
                           className={`px-2 py-1 align-top ${bgClass}`}
                           title={belowPm
-                            ? `Below performance materiality (£${performanceMateriality.toLocaleString('en-GB', { minimumFractionDigits: 2 })})`
+                            ? `Below performance materiality (£${money(performanceMateriality)})`
                             : isGroupAnchor ? `Sum of ${groupInfo!.memberIds.size} merged rows` : undefined}
                         >
                           {row.isMandatory ? (
                             <span className="text-xs text-slate-300 px-1">—</span>
                           ) : (
                             <span className="text-xs text-right block px-1 py-0.5 text-slate-700">
-                              {displayedAmount != null ? (() => { const nn = Number(displayedAmount); return isNaN(nn) ? '' : `£${Math.abs(nn).toLocaleString('en-GB', { minimumFractionDigits: 2 })}${nn < 0 ? ' Cr' : ' Dr'}`; })() : ''}
+                              {displayedAmount != null ? (() => { const nn = Number(displayedAmount); return isNaN(nn) ? '' : `£${money(Math.abs(nn))}${nn < 0 ? ' Cr' : ' Dr'}`; })() : ''}
                             </span>
                           )}
                         </td>
@@ -1513,10 +1522,10 @@ export function RMMTab({ engagementId, auditType, teamMembers = [], showCategory
                         const sizeAmount = isGroupAnchor && groupInfo ? groupInfo.summedAmount : row.amount;
                         const n = sizeAmount != null ? Math.abs(Number(sizeAmount)) : NaN;
                         if (performanceMateriality > 0 && Number.isFinite(n) && n > performanceMateriality) {
-                          return <span className="inline-block w-3 h-3 rounded-full bg-green-500 cursor-help" title={`Normal — defaulted on size (|amount| £${n.toLocaleString('en-GB', { minimumFractionDigits: 2 })} exceeds PM £${performanceMateriality.toLocaleString('en-GB', { minimumFractionDigits: 2 })}). Set Overall Risk to override.`} />;
+                          return <span className="inline-block w-3 h-3 rounded-full bg-green-500 cursor-help" title={`Normal — defaulted on size (|amount| £${money(n)} exceeds PM £${money(performanceMateriality)}). Set Overall Risk to override.`} />;
                         }
                         const reason = performanceMateriality > 0
-                          ? `Immaterial — defaulted on size (|amount| ${Number.isFinite(n) ? `£${n.toLocaleString('en-GB', { minimumFractionDigits: 2 })}` : 'not set'} ≤ PM £${performanceMateriality.toLocaleString('en-GB', { minimumFractionDigits: 2 })}). Set Overall Risk to override.`
+                          ? `Immaterial — defaulted on size (|amount| ${Number.isFinite(n) ? `£${money(n)}` : 'not set'} ≤ PM £${money(performanceMateriality)}). Set Overall Risk to override.`
                           : 'Immaterial — overall risk not yet assessed and Performance Materiality not yet set.';
                         return <span className="inline-block w-3 h-3 rounded-full border border-slate-400 bg-white cursor-help" title={reason} />;
                       })()}

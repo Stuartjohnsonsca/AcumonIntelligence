@@ -3,6 +3,8 @@
 import { useState, useEffect, useMemo, useCallback, Fragment } from 'react';
 import { Loader2, ArrowLeft, FileText, Play, ClipboardList, ChevronDown, ChevronRight, CheckCircle2, XCircle, Clock, AlertTriangle, GitBranch, Calculator, X } from 'lucide-react';
 import { useScrollToAnchor } from '@/lib/hooks/useScrollToAnchor';
+import { useEngagementRounding } from '@/hooks/useEngagementRounding';
+import { formatRounded } from '@/lib/audit-rounding';
 import { TestExecutionPanel } from './TestExecutionPanel';
 import { TestResultsPanel } from './TestResultsPanel';
 import { ExecutionFlowViewer } from './ExecutionFlowViewer';
@@ -334,6 +336,42 @@ const FS_LINE_ALIASES: Record<string, string[]> = {
 };
 
 export function AuditPlanPanel({ engagementId, clientId, periodId, onClose, periodEndDate, periodStartDate, initialStatement, initialLevel, initialOtherTab, specialists, teamMembers, currentUserId, currentUserName }: Props) {
+  // Engagement-wide display rounding (PAR tab picker). Shadow the
+  // four top-level money formatters with rounding-aware versions so
+  // every TB / amount cell on the audit plan respects the auditor's
+  // chosen unit. Local definitions take precedence over the module-
+  // level ones inside the component scope.
+  const { mode: roundingMode } = useEngagementRounding(engagementId);
+  const fmtAmount = (v: number | null | undefined): string => {
+    if (v == null) return '';
+    const n = Number(v);
+    if (isNaN(n)) return '';
+    return `£${formatRounded(Math.abs(n), roundingMode)}${n < 0 ? ' Cr' : ' Dr'}`;
+  };
+  const DrCell = ({ value, className = '' }: { value: number | null | undefined; className?: string }) => {
+    if (value == null) return <span></span>;
+    const n = Number(value);
+    if (isNaN(n) || n <= 0) return <span></span>;
+    return <span className={`font-mono text-[10px] ${className}`}>{formatRounded(n, roundingMode)}</span>;
+  };
+  const CrCell = ({ value, className = '' }: { value: number | null | undefined; className?: string }) => {
+    if (value == null) return <span></span>;
+    const n = Number(value);
+    if (isNaN(n) || n >= 0) return <span></span>;
+    return <span className={`font-mono text-[10px] ${className}`}>({formatRounded(Math.abs(n), roundingMode)})</span>;
+  };
+  const AmountCell = ({ value, className = '' }: { value: number | null | undefined; className?: string }) => {
+    if (value == null) return <span></span>;
+    const n = Number(value);
+    if (isNaN(n)) return <span></span>;
+    const isCr = n < 0;
+    return (
+      <span className={`font-mono text-[10px] ${className}`}>
+        {isCr ? `(${formatRounded(Math.abs(n), roundingMode)})` : formatRounded(n, roundingMode)}
+      </span>
+    );
+  };
+
   const [tbRows, setTbRows] = useState<TBRow[]>([]);
   const [rmmItems, setRmmItems] = useState<RMMItem[]>([]);
   const [allocations, setAllocations] = useState<AllocationEntry[]>([]);

@@ -3,6 +3,8 @@
 import { useState, useEffect, useMemo } from 'react';
 import { ChevronDown, ChevronRight, Loader2, Plus, Trash2, AlertTriangle } from 'lucide-react';
 import { CustomScheduleQuestions } from '../CustomScheduleQuestions';
+import { useEngagementRounding } from '@/hooks/useEngagementRounding';
+import { formatRounded } from '@/lib/audit-rounding';
 
 const STATEMENT_ORDER = ['Profit & Loss', 'Balance Sheet', 'Cash Flow Statement', 'Notes'];
 // Single grid template used at every level so that the three numeric columns
@@ -50,6 +52,19 @@ interface AdjRow {
 interface FsLineLite { id: string; name: string; fsCategory: string; lineType: string; }
 
 export function AdjustedTBPanel({ engagementId }: { engagementId: string }) {
+  // Engagement-wide display rounding (set on the PAR tab). Shadow the
+  // top-level `f()` formatter with a rounding-aware version so every
+  // currency cell on this panel switches to the chosen unit
+  // (Unrounded / Pounds / Thousands / Millions) automatically. The
+  // outer `f` stays in place for any code paths that don't have the
+  // hook in scope.
+  const { mode: roundingMode } = useEngagementRounding(engagementId);
+  const f = (n: number): string => {
+    if (n === 0) return '—';
+    const s = formatRounded(Math.abs(n), roundingMode);
+    return n < 0 ? `(${s})` : `${s} `;
+  };
+
   const [tbRows, setTbRows] = useState<TBRow[]>([]);
   const [errors, setErrors] = useState<ErrEntry[]>([]);
   const [manualAdjs, setManualAdjs] = useState<AdjRow[]>([]);

@@ -3,6 +3,8 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import { useAutoSave } from '@/hooks/useAutoSave';
 import { useScrollToAnchor } from '@/lib/hooks/useScrollToAnchor';
+import { useEngagementRounding } from '@/hooks/useEngagementRounding';
+import { formatRounded } from '@/lib/audit-rounding';
 
 interface Props { engagementId: string; currentUserId?: string; userRole?: string; }
 
@@ -48,6 +50,18 @@ export function MaterialityTab({ engagementId, currentUserId, userRole }: Props)
   // (written by the AI Populate references from the Completion panel).
   // Target nodes below carry data-scroll-anchor attributes with keys like
   // "materiality-benchmark", "materiality-pm", "materiality-clearly-trivial".
+  // Engagement-wide display rounding (Unrounded / Pounds / Thousands /
+  // Millions) lives on the PAR tab and is honoured here via the shared
+  // hook. Shadowed fmtCurrency below picks the mode up automatically —
+  // every existing JSX call site keeps working unchanged.
+  const { mode: roundingMode } = useEngagementRounding(engagementId);
+  const fmtCurrency = (v: number | null | undefined, sym = '£'): string => {
+    if (v == null) return '';
+    const abs = Math.abs(v);
+    const s = sym + formatRounded(abs, roundingMode);
+    return v < 0 ? `(${s})` : s;
+  };
+
   const [data, setData] = useState<Record<string, any>>({});
   const [initialData, setInitialData] = useState<Record<string, any>>({});
   const [priorData, setPriorData] = useState<Record<string, any> | null>(null);
