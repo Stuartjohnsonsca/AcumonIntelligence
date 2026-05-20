@@ -22,9 +22,15 @@ export function Navbar() {
   const router = useRouter();
   const pathname = usePathname();
 
-  // Hide the main navbar on portal pages — portal has its own nav
-  if (pathname.startsWith('/portal')) return null;
-
+  // ── State (declared up-front — must run on EVERY render) ───────────────
+  // Previously, an early `if (pathname.startsWith('/portal')) return null;`
+  // sat between the three hooks above and the useState calls below. That
+  // is a Rules-of-Hooks violation: when the user crossed a portal/non-
+  // portal boundary, the hook count between renders changed and React
+  // would silently desynchronise its internal hook indices, leaving the
+  // navbar mounted but unresponsive to clicks (e.g. "My Account does
+  // nothing"). Hooks now always run; the portal-page no-op moved down
+  // below where it's safe to short-circuit the render.
   const [mobileOpen, setMobileOpen] = useState(false);
   const [assuranceOpen, setAssuranceOpen] = useState(false);
   const [financialOpen, setFinancialOpen] = useState(false);
@@ -60,6 +66,11 @@ export function Navbar() {
     }
     router.push(`/product-access?prefix=${urlPrefix}`);
   }
+
+  // Portal pages have their own nav — render nothing here. Sits AFTER
+  // every hook above so React always sees the same hook order across
+  // portal/non-portal transitions.
+  if (pathname.startsWith('/portal')) return null;
 
   return (
     <nav className="sticky top-0 z-50 w-full border-b bg-white/95 backdrop-blur supports-[backdrop-filter]:bg-white/60 shadow-sm">
