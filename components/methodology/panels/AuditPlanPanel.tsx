@@ -5,6 +5,7 @@ import { Loader2, ArrowLeft, FileText, Play, ClipboardList, ChevronDown, Chevron
 import { useScrollToAnchor } from '@/lib/hooks/useScrollToAnchor';
 import { useEngagementRounding } from '@/hooks/useEngagementRounding';
 import { formatRounded } from '@/lib/audit-rounding';
+import { RoundingDropdown } from '../RoundingDropdown';
 import { TestExecutionPanel } from './TestExecutionPanel';
 import { TestResultsPanel } from './TestResultsPanel';
 import { ExecutionFlowViewer } from './ExecutionFlowViewer';
@@ -1477,6 +1478,13 @@ export function AuditPlanPanel({ engagementId, clientId, periodId, onClose, peri
           </button>
           <h2 className="text-sm font-semibold text-slate-800">Audit Plan</h2>
           {framework && <span className="text-[9px] px-1.5 py-0.5 bg-slate-100 text-slate-500 rounded">{framework}</span>}
+          {/* Engagement-wide display rounding — duplicated here (also
+              lives on PAR and Completion) so the auditor can change
+              the unit without leaving the Fieldwork view. The
+              useEngagementRounding hook cross-syncs every mounted
+              dropdown via a window CustomEvent, so changes are
+              instantly reflected everywhere. */}
+          <RoundingDropdown engagementId={engagementId} />
         </div>
         <div className="flex items-center gap-2">
           {/* Run All Pending Tests — fires every visible, applicable,

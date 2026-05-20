@@ -12,6 +12,7 @@ import { SignificantRiskPanel } from './SignificantRiskPanel';
 import { EQRReviewPanel } from './EQRReviewPanel';
 import { TaxationPanel } from './TaxationPanel';
 import type { TemplateQuestion, TemplateSectionMeta, SectionLayout, CompletionTemplateData } from '@/types/methodology';
+import { RoundingDropdown } from '../RoundingDropdown';
 
 type TeamMember = { userId: string; userName?: string; role: string };
 
@@ -314,6 +315,16 @@ export function CompletionPanel({
             Plan Customiser
           </button>
         )}
+        {/* Engagement-wide display rounding — same picker that lives
+            on PAR and the Fieldwork (Audit Plan) view. Mounting it
+            here means the auditor never has to leave Completion to
+            switch unit; useEngagementRounding cross-syncs every
+            mounted dropdown via a window CustomEvent. ml-auto pushes
+            it to the right of the tab strip without disturbing the
+            tab layout. */}
+        <div className="ml-auto flex-shrink-0">
+          <RoundingDropdown engagementId={engagementId} />
+        </div>
       </div>
 
       {/* Tab content */}
