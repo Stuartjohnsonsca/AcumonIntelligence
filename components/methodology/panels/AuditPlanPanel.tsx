@@ -6,6 +6,8 @@ import { useScrollToAnchor } from '@/lib/hooks/useScrollToAnchor';
 import { useEngagementRounding } from '@/hooks/useEngagementRounding';
 import { formatRounded } from '@/lib/audit-rounding';
 import { RoundingDropdown } from '../RoundingDropdown';
+import { FixedAssetRegisterPopup } from '../FixedAssetRegisterPopup';
+import type { AssetClass } from '@/lib/depreciation-calc';
 import { TestExecutionPanel } from './TestExecutionPanel';
 import { TestResultsPanel } from './TestResultsPanel';
 import { ExecutionFlowViewer } from './ExecutionFlowViewer';
@@ -542,6 +544,13 @@ export function AuditPlanPanel({ engagementId, clientId, periodId, onClose, peri
   const [showErrorSchedule, setShowErrorSchedule] = useState(false);
   const [vatReconcOpen, setVatReconcOpen] = useState(false);
   const [loanCalcOpen, setLoanCalcOpen] = useState(false);
+  // FAR (Fixed Asset Register) calculator launch state. assetClass is
+  // auto-detected from the active FS line's name when the button is
+  // clicked (substring match on 'tangible' / 'intangible'); the user
+  // can override via a toggle in the popup header if the guess is
+  // wrong.
+  const [farPopupOpen, setFarPopupOpen] = useState(false);
+  const [farAssetClass, setFarAssetClass] = useState<AssetClass>('tangible');
 
   function toggleMergeSelect(rowId: string) {
     setSelectedForMerge(prev => {
@@ -1662,6 +1671,31 @@ export function AuditPlanPanel({ engagementId, clientId, periodId, onClose, peri
                 </button>
               );
             })()}
+
+            {/* FAR Calculator — shown on any FS Line whose name flags
+                Tangible or Intangible Fixed Assets. Substring match
+                only; if the firm uses non-standard wording the
+                auditor can flip the asset class via the toggle in
+                the popup header. Sits next to Loan Calculator so the
+                two "open a per-area calculator" buttons read as one
+                family. */}
+            {(() => {
+              const levelName = (activeLevel || activeOtherTab || activeStatement || '').toLowerCase();
+              const isTangible = /tangible\s+fixed|tangible\s+asset|property[, ]+plant|ppe\b/.test(levelName);
+              const isIntangible = /intangible/.test(levelName);
+              if (!isTangible && !isIntangible) return null;
+              const detected: AssetClass = isIntangible ? 'intangible' : 'tangible';
+              return (
+                <button
+                  onClick={() => { setFarAssetClass(detected); setFarPopupOpen(true); }}
+                  className="inline-flex items-center gap-1.5 text-xs font-semibold px-3 py-1.5 rounded bg-emerald-600 text-white border border-emerald-700 hover:bg-emerald-700 shadow-sm whitespace-nowrap"
+                  title={`Open Fixed Asset Register calculator — categories, schedule, ${detected === 'intangible' ? 'amortisation' : 'depreciation'} parameters, rough adjustments and a calculated-vs-booked variance check`}
+                >
+                  <Calculator className="h-3.5 w-3.5" />
+                  FAR Calculator
+                </button>
+              );
+            })()}
           <button
             onClick={() => {
               const scopeName = activeOtherTab || activeLevel || activeStatement;
@@ -2638,6 +2672,17 @@ export function AuditPlanPanel({ engagementId, clientId, periodId, onClose, peri
           periodStartDate={periodStartDate}
           periodEndDate={periodEndDate}
           onClose={() => setLoanCalcOpen(false)}
+        />
+      )}
+
+      {farPopupOpen && (
+        <FixedAssetRegisterPopup
+          engagementId={engagementId}
+          onClose={() => setFarPopupOpen(false)}
+          mode="fieldwork"
+          assetClass={farAssetClass}
+          periodStart={periodStartDate || undefined}
+          periodEnd={periodEndDate || undefined}
         />
       )}
 

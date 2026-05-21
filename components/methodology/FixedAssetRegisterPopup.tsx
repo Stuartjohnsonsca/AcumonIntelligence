@@ -142,7 +142,11 @@ export function FixedAssetRegisterPopup({
   const effectivePeriodEnd = periodEnd || new Date().toISOString().slice(0, 10);
   const effectivePeriodStart = periodStart || new Date(Date.parse(effectivePeriodEnd) - 365 * 86_400_000).toISOString().slice(0, 10);
   // Vocabulary — "Depreciation" / "Amortisation" / joint label.
-  const effectiveClass: AssetClass = assetClass || scope;
+  // Reads from the SCOPE state (which the caller seeds via assetClass
+  // on first load) so the auditor's manual override via the header
+  // toggle actually takes effect — earlier the prop was hard-wired
+  // here and the toggle was a no-op for fieldwork launches.
+  const effectiveClass: AssetClass = scope;
   const noun = chargeNoun(effectiveClass);
 
   // Load FAR data
