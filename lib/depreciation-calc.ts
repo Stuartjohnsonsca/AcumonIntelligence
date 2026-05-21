@@ -90,6 +90,42 @@ function daysBetween(fromIso: string, toIso: string): number {
   return Math.max(0, Math.round((b - a) / 86_400_000));
 }
 
+/** Pick the later of two ISO dates (string comparison works for YYYY-MM-DD). */
+function maxIso(a: string, b: string): string {
+  return a > b ? a : b;
+}
+
+/** Pick the earlier of two ISO dates. */
+function minIso(a: string, b: string): string {
+  return a < b ? a : b;
+}
+
+/** Days an acquisition contributes to the period:
+ *  the asset is presumed held from the acquisition date to period end,
+ *  but the contribution is bounded by the period itself. Dates before
+ *  period_start are clamped to period_start (so a pre-period acquisition
+ *  attracts the full period's worth of charge — same as it would if
+ *  recorded in the opening cost); dates after period_end attract zero. */
+function acquisitionDaysInPeriod(acqDate: string, periodStart: string, periodEnd: string): number {
+  if (acqDate > periodEnd) return 0;
+  const effectiveStart = maxIso(acqDate, periodStart);
+  return daysBetween(effectiveStart, periodEnd);
+}
+
+/** Days a disposal removes from the period:
+ *  the asset is presumed to have been held from period start, then
+ *  disposed of mid-period — so the "missing days" run from the disposal
+ *  date to period end, clamped to the period. Disposals before
+ *  period_start contribute zero (the asset wasn't in opening cost),
+ *  disposals after period_end contribute zero (the asset was held all
+ *  period). */
+function disposalDaysMissingFromPeriod(dispDate: string, periodStart: string, periodEnd: string): number {
+  if (dispDate < periodStart) return 0;
+  if (dispDate >= periodEnd) return 0;
+  const effectiveStart = maxIso(dispDate, periodStart);
+  return daysBetween(effectiveStart, periodEnd);
+}
+
 /** Annual rate implied by the params (for straight-line-like methods).
  *  Returns 0 when life or rate aren't usable. */
 function annualRateFromParams(p: DepreciationParams): number {
@@ -181,28 +217,45 @@ export function calculatePeriodCharge(inp: DepreciationInputs): DepreciationResu
     notes.push('Additions/disposals from the main grid are assumed to land on period end (no pro-rata charge). Capture mid-period movements in Rough Adjustments below.');
   }
 
-  // 3) Mid-period rough adjustments — pro-rate by days held.
-  const totalDaysInPeriod = Math.max(1, daysBetween(periodStart, periodEnd));
+  // 3) Mid-period rough adjustments — pro-rate by days actually held
+  //    WITHIN the engagement period. Earlier the helper used a flat
+  //    daysBetween(adj.date, periodEnd) without capping by period
+  //    boundaries, which mis-counted (a) acquisitions dated before
+  //    period start (over-counted) and (b) disposals dated outside
+  //    the period (raised a fictitious adjustment). Both sides now
+  //    use the period-aware helpers above; the denominator stays at
+  //    365 because depreciation policies are expressed annually —
+  //    a 60-day holding accrues 60/365 of annual regardless of the
+  //    engagement's own period length.
   let onMidPeriodAcquisitions = 0;
   let onMidPeriodDisposals = 0;
   for (const adj of roughAdjustments) {
     if (!adj || !adj.amount || !adj.date) continue;
     if (adj.kind === 'acquisition') {
-      const daysHeld = daysBetween(adj.date, periodEnd);
-      const fraction = Math.min(1, daysHeld / 365); // year-based pro-rata
-      // Annual charge on this acquisition, scaled to the period.
+      const daysHeld = acquisitionDaysInPeriod(adj.date, periodStart, periodEnd);
+      const fraction = daysHeld / 365;
       const annual = annualChargeForCost(adj.amount, params, Math.max(0, adj.amount - params.residualValue));
       onMidPeriodAcquisitions += annual * fraction;
+      if (adj.date < periodStart) {
+        notes.push(`Acquisition "${adj.note || ''}" dated ${adj.date} is before period start ${periodStart}; treated as held for the full period (${daysHeld} days within period).`);
+      } else if (adj.date > periodEnd) {
+        notes.push(`Acquisition "${adj.note || ''}" dated ${adj.date} is after period end ${periodEnd}; no charge raised in this period.`);
+      }
     } else if (adj.kind === 'disposal') {
       // For disposals, subtract the charge that WON'T be raised because
-      // the asset was disposed mid-period. Treat disposal amount as the
-      // gross cost being removed.
-      const daysNotHeld = Math.max(0, daysBetween(adj.date, periodEnd));
-      const fraction = Math.min(1, daysNotHeld / 365);
+      // the asset was disposed mid-period.
+      const daysMissing = disposalDaysMissingFromPeriod(adj.date, periodStart, periodEnd);
+      const fraction = daysMissing / 365;
       const annual = annualChargeForCost(adj.amount, params, Math.max(0, adj.amount - params.residualValue));
       onMidPeriodDisposals += annual * fraction;
+      if (adj.date < periodStart) {
+        notes.push(`Disposal "${adj.note || ''}" dated ${adj.date} is before period start ${periodStart}; no charge adjustment raised (asset wasn't in opening cost).`);
+      } else if (adj.date >= periodEnd) {
+        notes.push(`Disposal "${adj.note || ''}" dated ${adj.date} is on/after period end ${periodEnd}; no charge adjustment raised (asset held throughout).`);
+      }
     }
   }
+  const totalDaysInPeriod = Math.max(1, daysBetween(periodStart, periodEnd));
 
   // Apportion the opening-book charge if the engagement period is
   // shorter / longer than a year. Common case: 365-day periods → factor
