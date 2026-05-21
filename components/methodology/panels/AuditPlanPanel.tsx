@@ -552,6 +552,72 @@ export function AuditPlanPanel({ engagementId, clientId, periodId, onClose, peri
   const [farPopupOpen, setFarPopupOpen] = useState(false);
   const [farAssetClass, setFarAssetClass] = useState<AssetClass>('tangible');
 
+  // ── Per-tab explicit sign-offs ──────────────────────────────────────
+  // Independent of the per-row conclusion rollups: the auditor can
+  // click a tab dot to record an explicit sign-off for that role on
+  // that tab. The dot then renders solid green with a hover tooltip
+  // showing the signer + timestamp; the underlying rollup stays as
+  // the fallback when no explicit signoff exists.
+  type TabSignoffRec = { userId: string; userName: string; timestamp: string };
+  type TabSignoffEntry = { preparer?: TabSignoffRec; reviewer?: TabSignoffRec; ri?: TabSignoffRec };
+  const [tabSignoffs, setTabSignoffs] = useState<Record<string, TabSignoffEntry>>({});
+
+  // Slug helper — collapses tab labels into stable storage keys so a
+  // rename-style edit on the FS level/note doesn't orphan the
+  // previously-signed entry. Lower-case, alphanumerics + dashes.
+  const tabSlug = useCallback((label: string | undefined | null): string => {
+    return String(label || '').toLowerCase().trim().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
+  }, []);
+
+  // Initial load — pulls every saved signoff in one shot. The
+  // permanent-file section is a single JSON blob keyed by tab slug,
+  // so we don't need a per-tab fetch.
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch(`/api/engagements/${engagementId}/permanent-file?section=audit_plan_tab_signoffs`);
+        if (!res.ok) return;
+        const json = await res.json();
+        const saved = json?.data?.signoffs;
+        if (!cancelled && saved && typeof saved === 'object') setTabSignoffs(saved);
+      } catch { /* silent — empty signoffs is the safe default */ }
+    })();
+    return () => { cancelled = true; };
+  }, [engagementId]);
+
+  // Toggle a single dot. If the role is already explicitly signed by
+  // ANY user, clicking unsigns (matches the pattern on the per-row R
+  // / RI chips). Otherwise it stamps the current user + ISO timestamp
+  // and persists. Optimistic — local state updates immediately and
+  // the PUT runs in the background.
+  const toggleTabSignoff = useCallback((tabKey: string, role: 'preparer' | 'reviewer' | 'ri') => {
+    if (!currentUserId) return;
+    setTabSignoffs(prev => {
+      const next: Record<string, TabSignoffEntry> = { ...prev };
+      const slot: TabSignoffEntry = { ...(next[tabKey] || {}) };
+      if (slot[role]?.timestamp) {
+        delete slot[role];
+      } else {
+        slot[role] = {
+          userId: currentUserId,
+          userName: currentUserName || 'User',
+          timestamp: new Date().toISOString(),
+        };
+      }
+      next[tabKey] = slot;
+      // Fire-and-forget persistence — failures don't roll back the
+      // optimistic update because the next page load re-fetches and
+      // the auditor can re-click if a save dropped.
+      fetch(`/api/engagements/${engagementId}/permanent-file`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ sectionKey: 'audit_plan_tab_signoffs', data: { signoffs: next } }),
+      }).catch(() => {});
+      return next;
+    });
+  }, [engagementId, currentUserId, currentUserName]);
+
   function toggleMergeSelect(rowId: string) {
     setSelectedForMerge(prev => {
       const next = new Set(prev);
@@ -1170,6 +1236,22 @@ export function AuditPlanPanel({ engagementId, clientId, periodId, onClose, peri
     return t;
   }, [filteredRows]);
 
+  // Per-tab totals strip rendered at the top of the table body. Splits
+  // CY and PY into Dr / Cr buckets so the totals line up under the
+  // existing Dr / Cr sub-headers without any extra layout work. Sums
+  // are taken straight off the filteredRows the user is currently
+  // looking at — they re-compute when the tab / filter changes.
+  const tabTotals = useMemo(() => {
+    let cyDr = 0, cyCr = 0, pyDr = 0, pyCr = 0;
+    for (const r of filteredRows) {
+      const cy = Number(r.currentYear) || 0;
+      const py = Number(r.priorYear) || 0;
+      if (cy > 0) cyDr += cy; else if (cy < 0) cyCr += -cy;
+      if (py > 0) pyDr += py; else if (py < 0) pyCr += -py;
+    }
+    return { cyDr, cyCr, pyDr, pyCr };
+  }, [filteredRows]);
+
   /**
    * Row-level test-gate (cumulative-from-smallest).
    *
@@ -1551,7 +1633,11 @@ export function AuditPlanPanel({ engagementId, clientId, periodId, onClose, peri
               activeStatement === stmt && !activeOtherTab ? 'border-blue-600 text-blue-700' : 'border-transparent text-slate-500 hover:text-slate-700'
             }`}>
             <span>{stmt}</span>
-            <TabRollupDots rollup={tabRollups[stmt]} />
+            <TabRollupDots
+              rollup={tabRollups[stmt]}
+              explicit={tabSignoffs[tabSlug(stmt)]}
+              onToggle={(role) => toggleTabSignoff(tabSlug(stmt), role)}
+            />
           </button>
         ))}
         <div className="w-px bg-slate-300 mx-1.5 my-1" />
@@ -1563,7 +1649,11 @@ export function AuditPlanPanel({ engagementId, clientId, periodId, onClose, peri
               activeOtherTab === tab ? 'border-purple-600 text-purple-700' : 'border-transparent text-slate-500 hover:text-slate-700'
             }`}>
             <span>{tab}</span>
-            <TabRollupDots rollup={tabRollups[tab]} />
+            <TabRollupDots
+              rollup={tabRollups[tab]}
+              explicit={tabSignoffs[tabSlug(tab)]}
+              onToggle={(role) => toggleTabSignoff(tabSlug(tab), role)}
+            />
           </button>
         ))}
       </div>
@@ -1580,7 +1670,11 @@ export function AuditPlanPanel({ engagementId, clientId, periodId, onClose, peri
                 activeLevel === level ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-700'
               }`}>
               <span>{level}</span>
-              <TabRollupDots rollup={levelRollups[level]} />
+              <TabRollupDots
+                rollup={levelRollups[level]}
+                explicit={tabSignoffs[tabSlug(level)]}
+                onToggle={(role) => toggleTabSignoff(tabSlug(level), role)}
+              />
             </button>
           ))}
         </div>
@@ -1808,7 +1902,11 @@ export function AuditPlanPanel({ engagementId, clientId, periodId, onClose, peri
                   isSig ? 'bg-red-50 text-red-700 border-red-200' : 'bg-white text-slate-500 border-slate-200'
                 }`}>
                 <span>{note}{isSig && <span className="ml-0.5 text-red-500">⚠</span>}</span>
-                <TabRollupDots rollup={noteRollups[note]} />
+                <TabRollupDots
+                  rollup={noteRollups[note]}
+                  explicit={tabSignoffs[tabSlug(`note:${activeLevel}:${note}`)]}
+                  onToggle={(role) => toggleTabSignoff(tabSlug(`note:${activeLevel}:${note}`), role)}
+                />
               </button>
             );
           })}
@@ -1883,11 +1981,11 @@ export function AuditPlanPanel({ engagementId, clientId, periodId, onClose, peri
               <col style={{width: '60px'}} />
               <col />
               {isThreeLevel && <col style={{width: '80px'}} />}
-              <col style={{width: '70px'}} />
-              <col style={{width: '70px'}} />
-              <col style={{width: '12px'}} />{/* spacer between CY and PY */}
-              <col style={{width: '70px'}} />
-              <col style={{width: '70px'}} />
+              <col style={{width: '96px'}} />
+              <col style={{width: '96px'}} />
+              <col style={{width: '20px'}} />{/* spacer between CY and PY — widened so 7-figure values either side don't crowd each other */}
+              <col style={{width: '96px'}} />
+              <col style={{width: '96px'}} />
               <col style={{width: '70px'}} />{/* Assertions */}
               <col style={{width: '60px'}} />{/* Coverage — applicable tests for this FS row */}
               <col style={{width: '50px'}} />{/* Risk */}
@@ -1899,9 +1997,9 @@ export function AuditPlanPanel({ engagementId, clientId, periodId, onClose, peri
                 <th className="pl-1 pr-0.5 py-0.5 text-left font-semibold text-slate-600" rowSpan={2}>Code</th>
                 <th className="px-0.5 py-0.5 text-left font-semibold text-slate-600" rowSpan={2}>Description</th>
                 {isThreeLevel && <th className="px-0.5 py-0.5 text-left font-semibold text-slate-600" rowSpan={2}>FS Note</th>}
-                <th className="px-0.5 py-0 text-left font-semibold text-slate-600 whitespace-nowrap border-b border-slate-200" colSpan={2}>{fmtDate(periodEndDate) || 'CY'}</th>
-                <th rowSpan={2} className="w-3"></th>{/* spacer between CY/PY blocks */}
-                <th className="px-0.5 py-0 text-left font-semibold text-slate-600 whitespace-nowrap border-b border-slate-200" colSpan={2}>{dayBefore(periodStartDate) || 'PY'}</th>
+                <th className="px-2 py-0 text-right font-semibold text-slate-600 whitespace-nowrap border-b border-slate-200" colSpan={2}>{fmtDate(periodEndDate) || 'CY'}</th>
+                <th rowSpan={2} className="w-5"></th>{/* spacer between CY/PY blocks — 20px to match the colgroup */}
+                <th className="px-2 py-0 text-right font-semibold text-slate-600 whitespace-nowrap border-b border-slate-200" colSpan={2}>{dayBefore(periodStartDate) || 'PY'}</th>
                 <th className="px-0.5 py-0.5 text-left font-semibold text-slate-600" rowSpan={2}>Assertions</th>
                 <th className="px-0.5 py-0.5 text-left font-semibold text-slate-600" rowSpan={2}>Coverage</th>
                 <th className="px-0.5 py-0.5 text-center font-semibold text-slate-600" rowSpan={2} title="Risk classification — red Significant Risk, orange Area of Focus, green Normal, hollow Immaterial">
@@ -1909,16 +2007,35 @@ export function AuditPlanPanel({ engagementId, clientId, periodId, onClose, peri
                 </th>
               </tr>
               <tr>
-                {/* Dr/Cr sub-headers — left-aligned to match the
-                    body cells. min-w keeps the column wide enough
-                    for 7-figure values without truncation. */}
-                <th className="px-1 py-0 text-left text-[8px] text-slate-400 font-medium min-w-[80px]">Dr</th>
-                <th className="px-1 py-0 text-left text-[8px] text-slate-400 font-medium min-w-[80px]">Cr</th>
-                <th className="px-1 py-0 text-left text-[8px] text-slate-400 font-medium min-w-[80px]">Dr</th>
-                <th className="px-1 py-0 text-left text-[8px] text-slate-400 font-medium min-w-[80px]">Cr</th>
+                {/* Dr/Cr sub-headers — right-aligned to match the
+                    body cells. min-w sized for 7-figure values
+                    rendered with parentheses, e.g. (5,000,000). */}
+                <th className="px-2 py-0 text-right text-[8px] text-slate-400 font-medium min-w-[96px]">Dr</th>
+                <th className="px-2 py-0 text-right text-[8px] text-slate-400 font-medium min-w-[96px]">Cr</th>
+                <th className="px-2 py-0 text-right text-[8px] text-slate-400 font-medium min-w-[96px]">Dr</th>
+                <th className="px-2 py-0 text-right text-[8px] text-slate-400 font-medium min-w-[96px]">Cr</th>
               </tr>
             </thead>
             <tbody>
+              {/* Top-of-tab totals strip — sums Dr / Cr for both CY
+                  and PY across every visible row. Sticky so it stays
+                  in view when the tab is long enough to scroll. */}
+              <tr className="bg-slate-100 sticky top-0 z-10 font-semibold text-slate-700">
+                <td></td>
+                <td></td>
+                <td className="pl-1 pr-0.5 py-0.5 text-[9px] uppercase tracking-wide text-slate-500">Total</td>
+                <td className="px-0.5 py-0.5 text-slate-500">{filteredRows.length} row{filteredRows.length === 1 ? '' : 's'}</td>
+                {isThreeLevel && <td></td>}
+                <td className="px-2 py-0.5 text-right whitespace-nowrap tabular-nums font-mono text-[10px]">{tabTotals.cyDr > 0 ? formatRounded(tabTotals.cyDr, roundingMode) : ''}</td>
+                <td className="px-2 py-0.5 text-right whitespace-nowrap tabular-nums font-mono text-[10px]">{tabTotals.cyCr > 0 ? `(${formatRounded(tabTotals.cyCr, roundingMode)})` : ''}</td>
+                <td></td>
+                <td className="px-2 py-0.5 text-right whitespace-nowrap tabular-nums font-mono text-[10px] text-slate-500">{tabTotals.pyDr > 0 ? formatRounded(tabTotals.pyDr, roundingMode) : ''}</td>
+                <td className="px-2 py-0.5 text-right whitespace-nowrap tabular-nums font-mono text-[10px] text-slate-500">{tabTotals.pyCr > 0 ? `(${formatRounded(tabTotals.pyCr, roundingMode)})` : ''}</td>
+                <td></td>
+                <td></td>
+                <td></td>
+              </tr>
+
               {filteredRows.filter(Boolean).map(row => {
                 try {
                 if (!row) return null;
@@ -2088,18 +2205,18 @@ export function AuditPlanPanel({ engagementId, clientId, periodId, onClose, peri
                       <td className="pl-1 pr-0.5 py-px font-mono text-slate-500">{displayCode}</td>
                       <td className="px-0.5 py-px text-slate-700">{row.description}</td>
                       {isThreeLevel && <td className="px-0.5 py-px text-slate-400">{row.fsNoteLevel || ''}</td>}
-                      {/* Dr/Cr cells — left-aligned with a fixed
-                          min-width so a long Cr value (e.g. a
-                          7-figure trade payables balance rendered
-                          as "(5,000,000)") can't overflow leftward
-                          into the Description / FS Note columns
-                          that the auditor flagged. tabular-nums
-                          keeps digit columns aligned across rows. */}
-                      <td className="px-1 py-px text-left whitespace-nowrap min-w-[80px] tabular-nums"><DrCell value={row.currentYear} /></td>
-                      <td className="px-1 py-px text-left whitespace-nowrap min-w-[80px] tabular-nums"><CrCell value={row.currentYear} /></td>
-                      <td className="w-3"></td>{/* spacer between CY and PY blocks */}
-                      <td className="px-1 py-px text-left whitespace-nowrap min-w-[80px] tabular-nums"><DrCell value={row.priorYear} className="text-slate-500" /></td>
-                      <td className="px-1 py-px text-left whitespace-nowrap min-w-[80px] tabular-nums"><CrCell value={row.priorYear} className="text-slate-500" /></td>
+                      {/* Dr/Cr cells — right-aligned with a fixed
+                          min-width so 7-figure values rendered as
+                          "(5,000,000)" sit cleanly against the
+                          column edge and never crowd the spacer
+                          between CY and PY. tabular-nums keeps
+                          digit columns vertically aligned across
+                          rows. */}
+                      <td className="px-2 py-px text-right whitespace-nowrap min-w-[96px] tabular-nums"><DrCell value={row.currentYear} /></td>
+                      <td className="px-2 py-px text-right whitespace-nowrap min-w-[96px] tabular-nums"><CrCell value={row.currentYear} /></td>
+                      <td className="w-5"></td>{/* 20px spacer between CY and PY blocks */}
+                      <td className="px-2 py-px text-right whitespace-nowrap min-w-[96px] tabular-nums"><DrCell value={row.priorYear} className="text-slate-500" /></td>
+                      <td className="px-2 py-px text-right whitespace-nowrap min-w-[96px] tabular-nums"><CrCell value={row.priorYear} className="text-slate-500" /></td>
                       <td className="px-0.5 py-px">
                         {rmmMatch?.assertions && rmmMatch.assertions.length > 0 ? (
                           <div className="flex flex-wrap gap-px">
@@ -2736,17 +2853,66 @@ export function AuditPlanPanel({ engagementId, clientId, periodId, onClose, peri
 // No text labels — the dot convention is already used throughout the
 // tool (Test Bank, Walkthroughs, etc.) and the user explicitly asked
 // for the labels to be removed to keep the tab strip narrow.
-function TabRollupDots({ rollup }: { rollup?: { preparer: 'green' | 'orange' | 'pending'; reviewer: 'green' | 'orange' | 'pending'; ri: 'green' | 'orange' | 'pending' } }) {
+interface TabSignoffRec { userId: string; userName: string; timestamp: string }
+type TabSignoffEntry = { preparer?: TabSignoffRec; reviewer?: TabSignoffRec; ri?: TabSignoffRec };
+
+function TabRollupDots({
+  rollup,
+  explicit,
+  onToggle,
+}: {
+  rollup?: { preparer: 'green' | 'orange' | 'pending'; reviewer: 'green' | 'orange' | 'pending'; ri: 'green' | 'orange' | 'pending' };
+  /** Per-role explicit sign-off records — when present, the dot
+   *  renders solid green and the hover tooltip surfaces the signer +
+   *  date. Independent of `rollup`, which is the cascade from row-
+   *  level conclusions. */
+  explicit?: TabSignoffEntry;
+  /** When provided, each dot becomes a button — clicking toggles the
+   *  current user's sign-off for that role on this tab. Mirrors the
+   *  per-row R / RI chip behaviour: an explicit sign-off unsigns on
+   *  the second click. */
+  onToggle?: (role: 'preparer' | 'reviewer' | 'ri') => void;
+}) {
   const r = rollup || { preparer: 'pending' as const, reviewer: 'pending' as const, ri: 'pending' as const };
-  const cls = (s: 'green' | 'orange' | 'pending') =>
-    s === 'green'  ? 'bg-green-500'
-    : s === 'orange' ? 'bg-amber-400'
-    : 'bg-white border border-slate-300';
+  // Effective colour — explicit signoff always wins (solid green),
+  // otherwise fall back to the rollup state.
+  function effectiveCls(role: 'preparer' | 'reviewer' | 'ri'): string {
+    if (explicit?.[role]?.timestamp) return 'bg-green-500';
+    const s = r[role];
+    if (s === 'green') return 'bg-green-500';
+    if (s === 'orange') return 'bg-amber-400';
+    return 'bg-white border border-slate-300';
+  }
+  function tooltip(role: 'preparer' | 'reviewer' | 'ri', label: string): string {
+    const ex = explicit?.[role];
+    if (ex) {
+      try {
+        return `${label}: signed by ${ex.userName} on ${new Date(ex.timestamp).toLocaleString('en-GB')} — click to unsign`;
+      } catch {
+        return `${label}: signed by ${ex.userName}`;
+      }
+    }
+    if (onToggle) return `${label}: ${r[role]} (rolled up) — click to sign as ${label}`;
+    return `${label}: ${r[role]}`;
+  }
+  const Dot = ({ role, label }: { role: 'preparer' | 'reviewer' | 'ri'; label: string }) => {
+    const cls = `inline-block w-2 h-2 rounded-full ${effectiveCls(role)}`;
+    if (!onToggle) return <span className={cls} title={tooltip(role, label)} />;
+    return (
+      <button
+        type="button"
+        onClick={e => { e.stopPropagation(); onToggle(role); }}
+        className={`${cls} cursor-pointer hover:ring-2 hover:ring-blue-300`}
+        title={tooltip(role, label)}
+        aria-label={tooltip(role, label)}
+      />
+    );
+  };
   return (
     <span className="inline-flex items-center gap-1 leading-none">
-      <span className={`inline-block w-2 h-2 rounded-full ${cls(r.preparer)}`} title={`Preparer: ${r.preparer}`} />
-      <span className={`inline-block w-2 h-2 rounded-full ${cls(r.reviewer)}`} title={`Reviewer: ${r.reviewer}`} />
-      <span className={`inline-block w-2 h-2 rounded-full ${cls(r.ri)}`}       title={`RI: ${r.ri}`} />
+      <Dot role="preparer" label="Preparer" />
+      <Dot role="reviewer" label="Reviewer" />
+      <Dot role="ri" label="RI" />
     </span>
   );
 }
