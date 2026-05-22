@@ -9,6 +9,7 @@ import { SuperAdminsAdmin } from './SuperAdminsAdmin';
 import { AuditTrailAdmin } from './AuditTrailAdmin';
 import { MessagingProvidersClient } from './MessagingProvidersClient';
 import { MessagingUsageAdmin } from './MessagingUsageAdmin';
+import { CloneEngagementAdmin } from './CloneEngagementAdmin';
 
 export function AdminClient() {
   return (
@@ -22,6 +23,7 @@ export function AdminClient() {
         <TabsTrigger value="messaging-providers">Messaging Providers</TabsTrigger>
         <TabsTrigger value="messaging-usage">Messaging Usage</TabsTrigger>
         <TabsTrigger value="audit-trail">Audit Trail</TabsTrigger>
+        <TabsTrigger value="clone-engagement">Clone Engagement</TabsTrigger>
       </TabsList>
       <TabsContent value="super-admins">
         <SuperAdminsAdmin />
@@ -52,6 +54,9 @@ export function AdminClient() {
       </TabsContent>
       <TabsContent value="audit-trail">
         <AuditTrailAdmin />
+      </TabsContent>
+      <TabsContent value="clone-engagement">
+        <CloneEngagementAdmin />
       </TabsContent>
     </Tabs>
   );

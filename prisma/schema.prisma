@@ -2387,6 +2387,17 @@ model AuditEngagement {
   completedAt             DateTime? @map("completed_at")
   priorPeriodEngagementId String?   @map("prior_period_engagement_id")
 
+  // Super-Admin clone bookkeeping. cloneOfId points back to the source
+  // engagement (null for originals), cloneIndex disambiguates multiple
+  // clones living against the same (clientId, periodId, auditType)
+  // tuple (the unique constraint at the bottom of the model is
+  // widened to include it), cloneLabel is an optional human tag
+  // ("Demo 2026-05", "Sandbox") so the engagement list can tell
+  // clones apart at a glance.
+  cloneOfId               String?   @map("clone_of_id")
+  cloneIndex              Int       @default(0) @map("clone_index")
+  cloneLabel              String?   @map("clone_label")
+
   // Industry classification for this engagement, drawn from the firm's
   // MethodologyIndustry catalogue (managed in My Account → Industries).
   // SetNull on industry deletion so a firm can prune the catalogue
@@ -2520,11 +2531,12 @@ model AuditEngagement {
   monitoringReports     AuditFileMonitoringReport[]
   monitoringRuns        AuditFileMonitoringRun[]
 
-  @@unique([clientId, periodId, auditType])
+  @@unique([clientId, periodId, auditType, cloneIndex])
   @@index([firmId])
   @@index([createdById])
   @@index([priorPeriodEngagementId])
   @@index([methodologyIndustryId])
+  @@index([cloneOfId])
   @@map("audit_engagements")
 }
 
